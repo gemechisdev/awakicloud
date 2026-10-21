@@ -59,13 +59,13 @@ func (c *Channel) handleCommand(ctx context.Context, chatID int64, reply transpo
 		return
 	}
 
-	name, ok := commandMap[cmdText]
+	name, ok := commandMap[cmdName]
 	if !ok {
 		c.send(ctx, chatID, "Unknown command\\. Try /help")
 		return
 	}
 
-	cmd := &channel.Command{Name: name, Result: &channel.CommandResult{}}
+	cmd := &channel.Command{Name: name, Args: map[string]string{"raw": rawArgs}, Result: &channel.CommandResult{}}
 	c.handler(ctx, channel.Message{Reply: reply, Command: cmd})
 
 	if cmd.Result.Error != nil {

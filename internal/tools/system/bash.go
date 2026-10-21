@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -80,13 +79,8 @@ func executeBash(ctx context.Context, input map[string]any) types.Result {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "bash", "-c", command)
-	// Run the command in its own process group so that on cancel/timeout we can
-	// signal the whole group (negative PID), killing spawned children too —
-	// otherwise long-running grandchildren (apt, docker build, servers) leak.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error {
-		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-	}
+	// Unix: own process group so cancel kills grandchildren. Windows: no-op.
+	configureProcessGroup(cmd)
 	cmd.WaitDelay = 5 * time.Second
 	if workdir != "" {
 		cmd.Dir = workdir
