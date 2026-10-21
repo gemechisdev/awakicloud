@@ -68,6 +68,8 @@ func envFirst(keys ...string) string {
 }
 
 func Load() (*Config, error) {
+	loadDotEnv()
+
 	transport := envFirst("AWAKI_TRANSPORT", "GOGOGOT_TRANSPORT")
 	if transport == "" {
 		transport = "telegram"
