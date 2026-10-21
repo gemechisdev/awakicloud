@@ -15,7 +15,7 @@ func Init(logLevel string) {
 		Out:        os.Stderr,
 		TimeFormat: "15:04:05",
 		FormatMessage: func(i interface{}) string {
-			return fmt.Sprintf("\033[1mgogogot\033[0m %s", i)
+			return fmt.Sprintf("\033[1mawaki\033[0m %s", i)
 		},
 	}
 

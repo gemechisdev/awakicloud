@@ -56,7 +56,7 @@ func main() {
 		return
 	}
 
-	fmt.Printf("Awaki is running [%s / %s]. Press Ctrl+C to stop.\n", ch.Name(), cfg.LLM.Provider)
+	fmt.Printf("Awaki is running [%s]. Configure LLM with /providers if needed. Press Ctrl+C to stop.\n", ch.Name())
 	if err := eng.Run(ctx); err != nil && ctx.Err() == nil {
 		log.Error().Err(err).Msg("engine run error")
 	}
@@ -99,20 +99,26 @@ func buildEngine(ctx context.Context, cfg *config.Config, ch channel.Channel) (*
 	)
 	extra = append(extra, identity.IdentityTools(st, sched.SetLocation)...)
 
-	// Resolve LLM: prefer runtime providers.json (Awaki-style); fall back to env once.
-	llmProv, err := resolveLLMProvider(cfg, provStore)
-	if err != nil {
-		return nil, err
+	// LLM is optional at startup — owner configures via Telegram /provider_add.
+	var client llm.LLM = llm.Unconfigured{}
+	labelRef := "not configured"
+	if llmProv, err := resolveLLMProvider(cfg, provStore); err == nil {
+		c := llm.NewClient(*llmProv, nil)
+		client = c
+		labelRef = llmProv.Label
+		log.Info().Str("model", llmProv.Label).Msg("LLM ready")
+	} else {
+		log.Warn().Err(err).Msg("LLM not configured yet — bot will accept /providers commands")
 	}
 
-	client := llm.NewClient(*llmProv, nil)
 	chatMgr := chat.NewManager(st, client)
 
-	reg := tools.NewRegistry(st, cfg.BraveAPIKey, chatMgr.SearchRelevant, extra...)
-	client.SetTools(reg.Definitions())
+	reg := tools.NewRegistry(st, chatMgr.SearchRelevant, extra...)
+	if c, ok := client.(*llm.Client); ok {
+		c.SetTools(reg.Definitions())
+	}
 
 	transportName := ch.Name()
-	labelRef := llmProv.Label
 	instructions := func() string {
 		skills, _ := st.LoadSkills()
 		label := labelRef
@@ -142,6 +148,7 @@ func buildEngine(ctx context.Context, cfg *config.Config, ch channel.Channel) (*
 		c.SetTools(reg.Definitions())
 		ag.SetClient(c)
 		chatMgr.SetLLM(c)
+		log.Info().Str("model", lp.Label).Msg("LLM reloaded")
 		return nil
 	}
 

@@ -175,6 +175,23 @@ func (e *Engine) setActive(run *activeRun) func() {
 func (e *Engine) runAgent(ctx context.Context, msg channel.Message) {
 	reply := msg.Reply
 
+	// No model selected yet — guide the owner instead of failing mid-run.
+	if e.providers != nil {
+		if _, _, err := e.providers.ActivePair(); err != nil {
+			_ = reply.SendText(ctx, "No LLM configured yet.
+
+1) /provider_add name|protocol|base_url|api_key
+2) /model_add provider|model_id|Display Name
+3) /models to select
+
+Example:
+/provider_add OpenRouter|openai_chat_completions|https://openrouter.ai/api/v1|sk-or-v1-...
+/model_add OpenRouter|anthropic/claude-sonnet-4.6|Claude")
+			return
+		}
+	}
+
+
 	agentCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 

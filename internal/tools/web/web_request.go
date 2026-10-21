@@ -71,7 +71,7 @@ func webRequest(ctx context.Context, input map[string]any) types.Result {
 		return types.Errf("bad request: %v", err)
 	}
 
-	req.Header.Set("User-Agent", "SofieBot/1.0")
+	req.Header.Set("User-Agent", "AwakiCloudBot/1.0")
 	for k, v := range headers {
 		if s, ok := v.(string); ok {
 			req.Header.Set(k, s)

@@ -64,7 +64,7 @@ func webDownload(ctx context.Context, input map[string]any) types.Result {
 	if err != nil {
 		return types.Errf("bad url: %v", err)
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; SofieBot/1.0)")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; AwakiCloudBot/1.0)")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

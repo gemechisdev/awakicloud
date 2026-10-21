@@ -18,7 +18,7 @@ func ProcessAttachments(chatID, task string, attachments []Attachment) ([]types.
 		return []types.ContentBlock{types.TextBlock(task)}, func() {}
 	}
 
-	tmpDir := filepath.Join(os.TempDir(), "gogogot-uploads",
+	tmpDir := filepath.Join(os.TempDir(), "awaki-uploads",
 		fmt.Sprintf("%s-%d", chatID, time.Now().UnixNano()))
 	if err := os.MkdirAll(tmpDir, 0755); err != nil {
 		log.Error().Err(err).Msg("failed to create upload dir")

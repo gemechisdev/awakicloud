@@ -21,7 +21,7 @@ type Registry struct {
 // ChatSearchFunc searches past chats by semantic relevance.
 type ChatSearchFunc = store.ChatSearchFunc
 
-func NewRegistry(st store.Store, braveAPIKey string, searchFn ChatSearchFunc, extra ...types.Tool) *Registry {
+func NewRegistry(st store.Store, searchFn ChatSearchFunc, extra ...types.Tool) *Registry {
 	all := []types.Tool{
 		systemtools.BashTool(),
 		systemtools.EditFileTool(),
@@ -31,7 +31,7 @@ func NewRegistry(st store.Store, braveAPIKey string, searchFn ChatSearchFunc, ex
 	all = append(all, systemtools.FileTools()...)
 	all = append(all, systemtools.BatchFileTools()...)
 	all = append(all, systemtools.GitTools()...)
-	all = append(all, webtools.WebSearchTool(braveAPIKey))
+	all = append(all, webtools.WebSearchTool())
 	all = append(all, webtools.WebFetchTool())
 	all = append(all, webtools.WebRequestTool())
 	all = append(all, webtools.WebDownloadTool())

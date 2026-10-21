@@ -178,13 +178,13 @@ func resolveAnthropicUnknown(model string) (*Provider, error) {
 }
 
 func resolveOpenAI(model string) (*Provider, error) {
-	apiKey := firstEnv("OPENAI_API_KEY", "AWAKI_API_KEY")
+	apiKey := firstEnv("AWAKI_API_KEY", "OPENAI_API_KEY")
 	if apiKey == "" {
-		return nil, fmt.Errorf("OPENAI_API_KEY not set for model %q", model)
+		return nil, fmt.Errorf("AWAKI_API_KEY (or OPENAI_API_KEY) not set for model %q", model)
 	}
-	base := firstEnv("OPENAI_BASE_URL", "AWAKI_BASE_URL")
+	base := firstEnv("AWAKI_BASE_URL", "OPENAI_BASE_URL")
 	if base == "" {
-		return nil, fmt.Errorf("OPENAI_BASE_URL (or AWAKI_BASE_URL) required — no hardcoded endpoint (Awaki-style)")
+		return nil, fmt.Errorf("AWAKI_BASE_URL required — no hardcoded endpoint")
 	}
 	if def, ok := getOpenAICatalog()[model]; ok {
 		return providerFromDef(def, model, apiKey, base, "openai"), nil
@@ -193,13 +193,13 @@ func resolveOpenAI(model string) (*Provider, error) {
 }
 
 func resolveOpenAIUnknown(model string) (*Provider, error) {
-	apiKey := firstEnv("OPENAI_API_KEY", "AWAKI_API_KEY")
+	apiKey := firstEnv("AWAKI_API_KEY", "OPENAI_API_KEY")
 	if apiKey == "" {
-		return nil, fmt.Errorf("OPENAI_API_KEY not set for model %q", model)
+		return nil, fmt.Errorf("AWAKI_API_KEY not set for model %q", model)
 	}
-	base := firstEnv("OPENAI_BASE_URL", "AWAKI_BASE_URL")
+	base := firstEnv("AWAKI_BASE_URL", "OPENAI_BASE_URL")
 	if base == "" {
-		return nil, fmt.Errorf("OPENAI_BASE_URL (or AWAKI_BASE_URL) required — no hardcoded endpoint")
+		return nil, fmt.Errorf("AWAKI_BASE_URL required — no hardcoded endpoint")
 	}
 	return &Provider{
 		ID: model, Label: model, Model: model,
@@ -257,16 +257,16 @@ func resolveOpenRouter(id, slug string) (*Provider, error) {
 }
 
 func resolveCustom(model string) (*Provider, error) {
-	base := firstEnv("AWAKI_BASE_URL", "OPENAI_BASE_URL")
+	base := firstEnv("AWAKI_BASE_URL")
 	if base == "" {
-		return nil, fmt.Errorf("custom provider requires AWAKI_BASE_URL (or OPENAI_BASE_URL)")
+		return nil, fmt.Errorf("custom provider requires AWAKI_BASE_URL")
 	}
-	apiKey := firstEnv("AWAKI_API_KEY", "OPENAI_API_KEY")
+	apiKey := firstEnv("AWAKI_API_KEY")
 	if apiKey == "" {
 		return nil, fmt.Errorf("custom provider requires AWAKI_API_KEY (or OPENAI_API_KEY)")
 	}
 	if model == "" || model == "default" {
-		model = firstEnv("AWAKI_MODEL", "GOGOGOT_MODEL")
+		model = firstEnv("AWAKI_MODEL")
 		if model == "" {
 			model = "default"
 		}

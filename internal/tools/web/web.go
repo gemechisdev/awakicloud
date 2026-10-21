@@ -2,33 +2,18 @@ package web
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"github.com/gemechischala/awaki/internal/tools/types"
-	"io"
-	"net/http"
-	"net/url"
 	"strings"
-	"time"
 
-	"github.com/rs/zerolog/log"
+	"github.com/gemechischala/awaki/internal/tools/types"
 )
 
-type braveResponse struct {
-	Web struct {
-		Results []struct {
-			Title       string `json:"title"`
-			URL         string `json:"url"`
-			Description string `json:"description"`
-		} `json:"results"`
-	} `json:"web"`
-}
-
-func WebSearchTool(braveAPIKey string) types.Tool {
+// WebSearchTool searches the web (Parallel MCP → DuckDuckGo).
+func WebSearchTool() types.Tool {
 	return types.Tool{
-		Name:        "web_search",
-		Label:       "Searching the web",
-		Description: "Search the web for information using Brave Search. Returns top 5 results with title, URL, and description.",
+		Name:  "web_search",
+		Label: "Searching the web",
+		Description: "Search the web for current information. Uses Parallel Search MCP first (keyless), " +
+			"then DuckDuckGo as fallback. Returns titles, URLs, and snippets.",
 		DetailFunc: func(input map[string]any) string {
 			s, _ := input["query"].(string)
 			return s
@@ -38,61 +23,57 @@ func WebSearchTool(braveAPIKey string) types.Tool {
 				"type":        "string",
 				"description": "The search query",
 			},
+			"limit": map[string]any{
+				"type":        "integer",
+				"description": "Max results (default 5, max 10)",
+			},
 		},
 		Required: []string{"query"},
-		Handler: func(ctx context.Context, input map[string]any) types.Result {
-			return webSearch(ctx, input, braveAPIKey)
-		},
+		Handler:  webSearch,
 	}
 }
 
-func webSearch(ctx context.Context, input map[string]any, apiKey string) types.Result {
+func webSearch(ctx context.Context, input map[string]any) types.Result {
 	query, err := types.GetString(input, "query")
 	if err != nil {
 		return types.ErrResult(err)
 	}
-	if apiKey == "" {
-		log.Warn().Msg("web_search: BRAVE_API_KEY not set")
-		return types.Result{Output: "BRAVE_API_KEY not set — web search disabled", IsErr: true}
+	limit := 5
+	if v, ok := input["limit"].(float64); ok && v > 0 {
+		limit = int(v)
+		if limit > 10 {
+			limit = 10
+		}
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
+	var notes []string
 
-	u := fmt.Sprintf("https://api.search.brave.com/res/v1/web/search?q=%s&count=5", url.QueryEscape(query))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	// 1) Parallel MCP (keyless)
+	hits, err := parallelSearch(ctx, query, limit)
+	if err == nil && len(hits) > 0 {
+		logWeb("parallel", "web_search ok", nil)
+		return types.Result{Output: formatHits(hits, "parallel")}
+	}
 	if err != nil {
-		return types.Errf("request error: %v", err)
+		notes = append(notes, "Parallel: "+err.Error())
+		logWeb("parallel", "web_search", err)
 	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("X-Subscription-Token", apiKey)
 
-	resp, err := http.DefaultClient.Do(req)
+	// 2) DuckDuckGo HTML (keyless)
+	hits, err = searchDuckDuckGo(ctx, query, limit)
+	if err == nil && len(hits) > 0 {
+		logWeb("duckduckgo", "web_search ok", nil)
+		out := formatHits(hits, "duckduckgo")
+		if len(notes) > 0 {
+			out = strings.Join(notes, "\n") + "\n\n" + out
+		}
+		return types.Result{Output: out}
+	}
 	if err != nil {
-		return types.Errf("http error: %v", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
-	if err != nil {
-		return types.Errf("read body error: %v", err)
+		notes = append(notes, "DuckDuckGo: "+err.Error())
+		logWeb("duckduckgo", "web_search", err)
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		return types.Errf("brave API %d: %s", resp.StatusCode, string(body))
-	}
-
-	var br braveResponse
-	if err := json.Unmarshal(body, &br); err != nil {
-		return types.Errf("json decode error: %v", err)
-	}
-
-	var sb strings.Builder
-	for i, r := range br.Web.Results {
-		fmt.Fprintf(&sb, "%d. %s\n   %s\n   %s\n\n", i+1, r.Title, r.URL, r.Description)
-	}
-	if sb.Len() == 0 {
-		return types.Result{Output: "no results found"}
-	}
-	return types.Result{Output: sb.String()}
+	return types.Errf("web_search failed:\n%s", strings.Join(notes, "\n"))
 }
+
