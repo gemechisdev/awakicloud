@@ -1,0 +1,29 @@
+services:
+  awaki:
+    image: awaki/awaki:${IMAGE_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_OWNER_ID: ${TELEGRAM_OWNER_ID}
+      AWAKI_PROVIDER: ${AWAKI_PROVIDER:-anthropic}
+      AWAKI_MODEL: ${AWAKI_MODEL:-claude-sonnet-4-6}
+      AWAKI_BASE_URL: ${AWAKI_BASE_URL:-}
+      AWAKI_API_KEY: ${AWAKI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      BRAVE_API_KEY: ${BRAVE_API_KEY:-}
+      AWAKI_DATA_DIR: /data
+      AWAKI_WORK_DIR: /work
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - awaki-data:/data
+      - awaki-work:/work
+
+volumes:
+  awaki-data:
+  awaki-work:

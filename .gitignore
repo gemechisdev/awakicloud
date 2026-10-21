@@ -1,0 +1,48 @@
+# Binaries
+gogogot
+gogogot-*
+
+# Test
+*.test
+*.out
+coverage.html
+coverage.txt
+
+# Go
+vendor/
+go.work
+go.work.sum
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.claude
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Environment / secrets
+.env
+*.env
+.env.*
+deploy/.env
+deploy/deploy.sh
+
+# Data / state
+data/
+*.log
+tmp/
+docs/
+
+# Docker
+docker-compose.override.yml
+
+# Debug
+__debug_bin*
+*.prof
+*.pprof
