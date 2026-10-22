@@ -6,6 +6,7 @@ import (
 )
 
 const (
+	CmdStart   = "start"
 	CmdNewChat = "new_chat"
 	CmdStop    = "stop"
 	CmdHistory = "history"
@@ -31,10 +32,11 @@ type CommandResult struct {
 }
 
 type Message struct {
-	Text        string
-	Attachments []transport.Attachment
-	Command     *Command
-	Reply       transport.Replier
+	Text          string
+	Attachments   []transport.Attachment
+	Command       *Command
+	Reply         transport.Replier
+	EditMessageID int // if set, UI keyboards should edit this Telegram message
 }
 
 type Handler func(ctx context.Context, msg Message)

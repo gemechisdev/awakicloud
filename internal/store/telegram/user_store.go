@@ -1,3 +1,5 @@
+//go:build !nogotd
+
 package telegram
 
 import (
@@ -31,18 +33,6 @@ type UserStore struct {
 }
 
 var _ store.Store = (*UserStore)(nil)
-
-// UserConfig configures Telegrive-like user-account storage.
-type UserConfig struct {
-	APIID       int
-	APIHash     string
-	Phone       string
-	Password    string // 2FA
-	SessionPath string
-	CodeFile    string
-	CacheDir    string
-	ChannelTitle string
-}
 
 // StartUserStore authenticates as a Telegram user (phone + code / session file),
 // ensures the private "Awaki" channel exists, and returns a Store.

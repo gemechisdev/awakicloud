@@ -32,6 +32,7 @@ type Engine struct {
 	scheduler *scheduler.Scheduler
 	registry  *tools.Registry
 	providers *providers.Store
+	ui        uiState
 	// rebuildAgent recreates the LLM client from the active provider/model pair.
 	rebuildAgent func() error
 
@@ -84,7 +85,8 @@ func (e *Engine) Channel() channel.Channel {
 }
 
 func (e *Engine) handleMessage(ctx context.Context, msg channel.Message) {
-	if msg.Command == nil && e.handleProviderCallback(ctx, msg) {
+	// UI callbacks, reply-keyboard labels, and provider wizards
+	if msg.Command == nil && e.handleUICallback(ctx, msg) {
 		return
 	}
 	if msg.Command != nil {
@@ -147,7 +149,13 @@ func (e *Engine) handleCommand(ctx context.Context, msg channel.Message) {
 		if user := e.store.ReadUser(); user != "" {
 			cmd.Result.Data = map[string]string{"text": "👤 **User:**\n\n" + user}
 		}
-	case channel.CmdProviders, channel.CmdModels, channel.CmdProviderAdd, channel.CmdModelAdd:
+	case channel.CmdStart:
+		e.uiHome(ctx, msg)
+	case channel.CmdProviders:
+		e.uiProvidersList(ctx, msg, 0)
+	case channel.CmdModels:
+		e.uiAllModels(ctx, msg, 0)
+	case channel.CmdProviderAdd, channel.CmdModelAdd:
 		e.handleProvidersCommand(ctx, cmd)
 	}
 }

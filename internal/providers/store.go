@@ -267,6 +267,34 @@ func (s *Store) DeleteModel(id string) error {
 	return s.save()
 }
 
+func (s *Store) UpdateModel(id string, displayName, modelID *string, contextWindow *int, caps *Capabilities) (Model, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, m := range s.cfg.Models {
+		if m.ID != id {
+			continue
+		}
+		if displayName != nil && strings.TrimSpace(*displayName) != "" {
+			m.DisplayName = strings.TrimSpace(*displayName)
+		}
+		if modelID != nil && strings.TrimSpace(*modelID) != "" {
+			m.ModelID = strings.TrimSpace(*modelID)
+		}
+		if contextWindow != nil && *contextWindow > 0 {
+			m.ContextWindow = *contextWindow
+		}
+		if caps != nil {
+			m.Capabilities = *caps
+		}
+		s.cfg.Models[i] = m
+		if err := s.save(); err != nil {
+			return Model{}, err
+		}
+		return m, nil
+	}
+	return Model{}, fmt.Errorf("model %q not found", id)
+}
+
 func (s *Store) SetActiveModel(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

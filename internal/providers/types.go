@@ -1,5 +1,7 @@
 package providers
 
+import "strings"
+
 // Protocol is the wire format used to talk to a provider endpoint.
 // Mirrors com.awaki.settings.model.LLMProtocol — providers are pure connection
 // configuration; models reference a provider and inherit its transport.
@@ -95,4 +97,26 @@ type ConfigFile struct {
 	ActiveModelID string     `json:"active_model_id"`
 	Providers     []Provider `json:"providers"`
 	Models        []Model    `json:"models"`
+}
+
+// MaskKey redacts an API key for display (never log or show full secrets).
+func MaskKey(key string) string {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return "(empty)"
+	}
+	if len(key) <= 8 {
+		return "••••"
+	}
+	return key[:4] + "…" + key[len(key)-4:]
+}
+
+// AllProtocols lists supported wire protocols for UI selection.
+func AllProtocols() []Protocol {
+	return []Protocol{
+		ProtocolOpenAIChat,
+		ProtocolOpenAIResponses,
+		ProtocolAnthropic,
+		ProtocolGemini,
+	}
 }

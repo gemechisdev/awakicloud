@@ -43,14 +43,17 @@ func (c *Channel) handleCallback(ctx context.Context, cb *models.CallbackQuery) 
 	_ = c.client.AnswerCallbackQuery(ctx, cb.ID)
 
 	var chatID int64
+	var editID int
 	if cb.Message.Message != nil {
 		chatID = cb.Message.Message.Chat.ID
+		editID = cb.Message.Message.ID
 	} else {
 		chatID = cb.From.ID
 	}
 	c.handler(ctx, channel.Message{
-		Text:  cb.Data,
-		Reply: c.newReplier(chatID),
+		Text:          cb.Data,
+		Reply:         c.newReplier(chatID),
+		EditMessageID: editID,
 	})
 }
 

@@ -51,11 +51,14 @@ func (c *Channel) Run(ctx context.Context, handler channel.Handler) error {
 	c.handler = handler
 
 	c.client.SetMyCommands(ctx, []models.BotCommand{
+		{Command: "start", Description: "Main menu"},
 		{Command: "new", Description: "Start a fresh conversation"},
+		{Command: "providers", Description: "Manage AI providers"},
+		{Command: "models", Description: "List and select models"},
 		{Command: "history", Description: "View past conversations"},
 		{Command: "memory", Description: "List memory files"},
-		{Command: "soul", Description: "Show agent identity (soul.md)"},
-		{Command: "user", Description: "Show user profile (user.md)"},
+		{Command: "soul", Description: "Show agent identity"},
+		{Command: "user", Description: "Show user profile"},
 		{Command: "stop", Description: "Cancel the current task"},
 		{Command: "help", Description: "Show available commands"},
 	})

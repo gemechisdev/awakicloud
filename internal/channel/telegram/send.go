@@ -38,8 +38,23 @@ func (c *Channel) sendLong(ctx context.Context, chatID int64, text string) {
 	}
 }
 
-
 func (c *Channel) sendKeyboard(ctx context.Context, chatID int64, km channel.KeyboardMessage) {
+	c.sendOrEditKeyboard(ctx, chatID, 0, km)
+}
+
+func (c *Channel) sendOrEditKeyboard(ctx context.Context, chatID int64, editMsgID int, km channel.KeyboardMessage) {
+	text := km.Text
+	if text == "" {
+		text = "Choose:"
+	}
+
+	// Reply keyboard only when explicitly provided (e.g. /start) — new message.
+	if len(km.ReplyKeyboard) > 0 && editMsgID == 0 {
+		if _, err := c.client.SendMessageWithReplyKeyboard(ctx, chatID, "Navigation", km.ReplyKeyboard); err != nil {
+			log.Warn().Err(err).Msg("telegram reply keyboard failed")
+		}
+	}
+
 	var rows [][]models.InlineKeyboardButton
 	for _, row := range km.Rows {
 		var r []models.InlineKeyboardButton
@@ -48,12 +63,34 @@ func (c *Channel) sendKeyboard(ctx context.Context, chatID int64, km channel.Key
 		}
 		rows = append(rows, r)
 	}
-	text := km.Text
-	if text == "" {
-		text = "Choose:"
+
+	if editMsgID > 0 {
+		err := c.client.EditMessageWithKeyboard(ctx, chatID, editMsgID, text, "", rows)
+		if err != nil {
+			log.Warn().Err(err).Int("msg_id", editMsgID).Msg("telegram edit keyboard failed; sending new")
+			// fall through to send new
+		} else {
+			return
+		}
+	}
+
+	if len(rows) == 0 {
+		c.send(ctx, chatID, text)
+		return
 	}
 	_, err := c.client.SendMessageWithKeyboard(ctx, chatID, text, "", rows)
 	if err != nil {
+		log.Warn().Err(err).Msg("telegram inline keyboard failed")
 		c.send(ctx, chatID, text+"\n(keyboard failed)")
 	}
+}
+
+// SendKeyboardToOwner implements core.keyboardSender for UI screens.
+func (c *Channel) SendKeyboardToOwner(ctx context.Context, km channel.KeyboardMessage) {
+	c.sendOrEditKeyboard(ctx, c.ownerID, 0, km)
+}
+
+// SendOrEditKeyboardToOwner edits the callback message when editMsgID > 0.
+func (c *Channel) SendOrEditKeyboardToOwner(ctx context.Context, editMsgID int, km channel.KeyboardMessage) {
+	c.sendOrEditKeyboard(ctx, c.ownerID, editMsgID, km)
 }

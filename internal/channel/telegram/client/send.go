@@ -90,3 +90,27 @@ func (c *Client) SendTyping(ctx context.Context, chatID int64) error {
 	})
 	return err
 }
+
+
+func (c *Client) SendMessageWithReplyKeyboard(ctx context.Context, chatID int64, text string, rows [][]string) (int, error) {
+	var keyboard [][]models.KeyboardButton
+	for _, row := range rows {
+		var r []models.KeyboardButton
+		for _, label := range row {
+			r = append(r, models.KeyboardButton{Text: label})
+		}
+		keyboard = append(keyboard, r)
+	}
+	sent, err := c.b.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID: chatID,
+		Text:   text,
+		ReplyMarkup: &models.ReplyKeyboardMarkup{
+			Keyboard:       keyboard,
+			ResizeKeyboard: true,
+		},
+	})
+	if err != nil {
+		return 0, err
+	}
+	return sent.ID, nil
+}

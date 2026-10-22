@@ -1,3 +1,5 @@
+//go:build !nogotd
+
 package user
 
 import (

@@ -7,11 +7,12 @@ import (
 	"github.com/gemechischala/awaki/internal/channel/telegram/client"
 	"github.com/gemechischala/awaki/internal/transport"
 	"github.com/gemechischala/awaki/internal/store"
+	"github.com/rs/zerolog/log"
 	"strings"
 )
 
 var commandMap = map[string]string{
-	"/start":   channel.CmdNewChat,
+	"/start":   channel.CmdStart,
 	"/new":     channel.CmdNewChat,
 	"/stop":    channel.CmdStop,
 	"/history": channel.CmdHistory,
@@ -48,14 +49,18 @@ func (c *Channel) handleCommand(ctx context.Context, chatID int64, reply transpo
 	}
 
 	if cmdName == "/help" {
-		c.send(ctx, chatID, "*Commands:*\n"+
-			"/new — start a fresh conversation\n"+
-			"/history — view past conversations\n"+
-			"/memory — list memory files\n"+
-			"/soul — show agent identity\n"+
-			"/user — show user profile\n"+
-			"/stop — cancel the current task\n"+
-			"/help — show this help")
+		help := "Commands:\n" +
+			"/start — main menu with buttons\n" +
+			"/new — start a fresh conversation\n" +
+			"/providers — manage AI providers\n" +
+			"/models — list and select models\n" +
+			"/provider_add name|protocol|base_url|key — quick add\n" +
+			"/model_add provider|model_id|name — quick add\n" +
+			"/history — past conversations\n" +
+			"/memory /soul /user /stop /help"
+		if _, err := c.client.SendMessage(ctx, chatID, help, ""); err != nil {
+			log.Error().Err(err).Msg("help send failed")
+		}
 		return
 	}
 

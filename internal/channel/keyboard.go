@@ -10,4 +10,8 @@ type Button struct {
 type KeyboardMessage struct {
 	Text string
 	Rows [][]Button
+	// ReplyKeyboard is a persistent bottom reply keyboard (label rows).
+	ReplyKeyboard [][]string
+	// RemoveReplyKeyboard clears the persistent keyboard when true.
+	RemoveReplyKeyboard bool
 }

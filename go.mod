@@ -3,7 +3,7 @@ module github.com/gemechischala/awaki
 go 1.25.0
 
 require (
-	github.com/PuerkitoBio/goquery v1.12.0
+	github.com/PuerkitoBio/goquery v1.10.1
 	github.com/anthropics/anthropic-sdk-go v1.46.0
 	github.com/go-telegram/bot v1.21.0
 	github.com/google/uuid v1.6.0
