@@ -38,6 +38,9 @@ func (e *Engine) handleUICallback(ctx context.Context, msg channel.Message) bool
 	case navProfile:
 		e.uiProfile(ctx, msg)
 		return true
+	case "📁 Projects":
+		e.cmdListProjects(ctx, msg)
+		return true
 	case "/cancel", "cancel":
 		if e.ui.get() != nil {
 			e.ui.clear()
@@ -75,6 +78,14 @@ func (e *Engine) routeUI(ctx context.Context, msg channel.Message, data string) 
 	switch parts[1] {
 	case "home":
 		e.uiHome(ctx, msg)
+	case "projects":
+		e.cmdListProjects(ctx, msg)
+	case "projnew":
+		e.cmdNewProject(ctx, msg, "")
+	case "projopen":
+		if len(parts) >= 3 {
+			e.openProjectBySlug(ctx, msg, parts[2])
+		}
 	case "settings":
 		e.uiSettings(ctx, msg)
 	case "profile":
@@ -275,6 +286,14 @@ func (e *Engine) handleWizardInput(ctx context.Context, msg channel.Message, w *
 		return e.wizardAddModel(ctx, msg, w, text)
 	case "edit_model":
 		return e.wizardEditModel(ctx, msg, w, text)
+	case "new_project":
+		e.ui.clear()
+		e.cmdNewProject(ctx, msg, text)
+		return true
+	case "upgrade_project":
+		e.ui.clear()
+		e.cmdUpgradeProject(ctx, msg, text)
+		return true
 	}
 	e.ui.clear()
 	return false

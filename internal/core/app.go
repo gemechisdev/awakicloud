@@ -14,6 +14,7 @@ import (
 	"github.com/gemechischala/awaki/internal/tools"
 	"github.com/gemechischala/awaki/internal/store"
 	"github.com/gemechischala/awaki/internal/providers"
+	"github.com/gemechischala/awaki/internal/project"
 	"sync"
 
 	"github.com/rs/zerolog/log"
@@ -32,6 +33,7 @@ type Engine struct {
 	scheduler *scheduler.Scheduler
 	registry  *tools.Registry
 	providers *providers.Store
+	projects  *project.Manager
 	ui        uiState
 	// rebuildAgent recreates the LLM client from the active provider/model pair.
 	rebuildAgent func() error
@@ -48,6 +50,7 @@ type Params struct {
 	Scheduler    *scheduler.Scheduler
 	Registry     *tools.Registry
 	Providers    *providers.Store
+	Projects     *project.Manager
 	RebuildAgent func() error
 }
 
@@ -60,6 +63,7 @@ func New(p Params) *Engine {
 		scheduler:    p.Scheduler,
 		registry:     p.Registry,
 		providers:    p.Providers,
+		projects:     p.Projects,
 		rebuildAgent: p.RebuildAgent,
 	}
 
@@ -151,6 +155,22 @@ func (e *Engine) handleCommand(ctx context.Context, msg channel.Message) {
 		}
 	case channel.CmdStart:
 		e.uiHome(ctx, msg)
+	case channel.CmdProjects:
+		e.cmdListProjects(ctx, msg)
+	case channel.CmdProject:
+		name := ""
+		if cmd.Args != nil {
+			name = cmd.Args["raw"]
+		}
+		e.cmdNewProject(ctx, msg, name)
+	case channel.CmdProjectUpgrade:
+		name := ""
+		if cmd.Args != nil {
+			name = cmd.Args["raw"]
+		}
+		e.cmdUpgradeProject(ctx, msg, name)
+	case channel.CmdProjectSync:
+		e.cmdSyncProject(ctx, msg)
 	case channel.CmdProviders:
 		e.uiProvidersList(ctx, msg, 0)
 	case channel.CmdModels:
@@ -216,6 +236,7 @@ func (e *Engine) runAgent(ctx context.Context, msg channel.Message) {
 		_ = reply.SendText(ctx, "Error: "+err.Error())
 		return
 	}
+	e.bindWorkspaceForChat(ctx, ch.ID, ch.Mode, ch.ProjectSlug)
 
 	agentCtx = transport.WithReplier(agentCtx, reply)
 
@@ -260,6 +281,7 @@ func (e *Engine) runAgent(ctx context.Context, msg channel.Message) {
 	}
 
 	e.chats.SummarizeIfNeeded(context.WithoutCancel(ctx), ch)
+	e.syncActiveProject(context.WithoutCancel(ctx))
 }
 
 func (e *Engine) stopAgent(cmd *channel.Command) {

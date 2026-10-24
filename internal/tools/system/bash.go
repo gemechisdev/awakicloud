@@ -5,6 +5,7 @@ import (
 	"github.com/gemechischala/awaki/internal/tools/types"
 	"os"
 	"os/exec"
+	"github.com/gemechischala/awaki/internal/workspace"
 	"strings"
 	"time"
 
@@ -66,6 +67,9 @@ func executeBash(ctx context.Context, input map[string]any) types.Result {
 	}
 
 	workdir := types.GetStringOpt(input, "workdir")
+	if workdir == "" {
+		workdir = workspace.Root()
+	}
 
 	timeout := defaultBashTimeout
 	if v, ok := input["timeout"].(float64); ok && v > 0 {

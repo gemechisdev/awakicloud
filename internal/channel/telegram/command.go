@@ -23,6 +23,10 @@ var commandMap = map[string]string{
 	"/models":       channel.CmdModels,
 	"/provider_add": channel.CmdProviderAdd,
 	"/model_add":    channel.CmdModelAdd,
+	"/projects":     channel.CmdProjects,
+	"/project":      channel.CmdProject,
+	"/upgrade":      channel.CmdProjectUpgrade,
+	"/sync":         channel.CmdProjectSync,
 }
 
 var commandSuccess = map[string]string{

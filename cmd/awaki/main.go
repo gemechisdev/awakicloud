@@ -19,11 +19,12 @@ import (
 	"github.com/gemechischala/awaki/internal/core/prompt"
 	"github.com/gemechischala/awaki/internal/llm"
 	"github.com/gemechischala/awaki/internal/providers"
+	"github.com/gemechischala/awaki/internal/project"
+tgstore "github.com/gemechischala/awaki/internal/store/telegram"
 	"github.com/gemechischala/awaki/internal/logger"
 	"github.com/gemechischala/awaki/internal/scheduler"
 	"github.com/gemechischala/awaki/internal/store"
 	"github.com/gemechischala/awaki/internal/store/local"
-	tgstore "github.com/gemechischala/awaki/internal/store/telegram"
 	"github.com/gemechischala/awaki/internal/tools"
 	"github.com/gemechischala/awaki/internal/tools/comm"
 	"github.com/gemechischala/awaki/internal/tools/identity"
@@ -152,7 +153,18 @@ func buildEngine(ctx context.Context, cfg *config.Config, ch channel.Channel) (*
 		return nil
 	}
 
-	return core.New(core.Params{
+	
+	// Project workspaces (local cache + optional Telegram durability)
+	var blobs project.BlobStore = project.NewLocalBlobStore(filepath.Join(cfg.DataDir, "project-archives"))
+	if ts, ok := st.(*tgstore.Store); ok {
+		blobs = &project.MultiBlobStore{
+			Primary:   project.NewLocalBlobStore(filepath.Join(cfg.DataDir, "project-archives")),
+			Secondary: tgstore.NewProjectBlob(ts),
+		}
+	}
+	projMgr := project.NewManager(cfg.DataDir, blobs)
+
+return core.New(core.Params{
 		Channel:      ch,
 		Store:        st,
 		Agent:        ag,
@@ -160,6 +172,7 @@ func buildEngine(ctx context.Context, cfg *config.Config, ch channel.Channel) (*
 		Scheduler:    sched,
 		Registry:     reg,
 		Providers:    provStore,
+		Projects:     projMgr,
 		RebuildAgent: rebuild,
 	}), nil
 }

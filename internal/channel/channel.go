@@ -17,6 +17,10 @@ const (
 	CmdModels      = "models"
 	CmdProviderAdd = "provider_add"
 	CmdModelAdd    = "model_add"
+	CmdProjects        = "projects"
+	CmdProject         = "project"
+	CmdProjectUpgrade  = "project_upgrade"
+	CmdProjectSync     = "project_sync"
 )
 
 type Command struct {

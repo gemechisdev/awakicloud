@@ -26,15 +26,19 @@ func mainMenuKeyboard() channel.KeyboardMessage {
 		Rows: [][]channel.Button{
 			{
 				{Text: "💬 New Chat", CallbackData: "ui:new"},
-				{Text: "📜 History", CallbackData: "ui:hist:0"},
+				{Text: "📁 Projects", CallbackData: "ui:projects"},
 			},
 			{
+				{Text: "📜 History", CallbackData: "ui:hist:0"},
 				{Text: "⚙️ Settings", CallbackData: "ui:settings"},
+			},
+			{
 				{Text: "👤 Profile", CallbackData: "ui:profile"},
+				{Text: "📁 New Project", CallbackData: "ui:projnew"},
 			},
 		},
 		ReplyKeyboard: [][]string{
-			{navNewChat, navHistory},
+			{navNewChat, "📁 Projects"},
 			{navSettings, navProfile},
 		},
 	}
@@ -44,6 +48,7 @@ func settingsKeyboard() channel.KeyboardMessage {
 	return channel.KeyboardMessage{
 		Text: "⚙️ Settings\n\nConfigure AI providers, models, and agent identity.",
 		Rows: [][]channel.Button{
+			{{Text: "📁 Projects", CallbackData: "ui:projects"}},
 			{{Text: "🔌 Manage AI Providers", CallbackData: "ui:providers:0"}},
 			{{Text: "🧠 Models (all)", CallbackData: "ui:models:0"}},
 			{{Text: "🧬 Soul", CallbackData: "ui:soul"}, {Text: "🧠 Memory", CallbackData: "ui:memory"}},

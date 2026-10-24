@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"github.com/gemechischala/awaki/internal/workspace"
 	"strings"
 
 	"github.com/gemechischala/awaki/internal/tools/types"
@@ -77,7 +78,10 @@ func globFiles(_ context.Context, input map[string]any) types.Result {
 	}
 	root := types.GetStringOpt(input, "root")
 	if root == "" {
-		root, _ = os.Getwd()
+		root = workspace.Root()
+		if root == "" {
+			root, _ = os.Getwd()
+		}
 	}
 	max := maxGlobResults
 	if v, ok := input["max"].(float64); ok && v > 0 {
@@ -142,7 +146,10 @@ func globFiles(_ context.Context, input map[string]any) types.Result {
 func directoryTree(_ context.Context, input map[string]any) types.Result {
 	root := types.GetStringOpt(input, "path")
 	if root == "" {
-		root, _ = os.Getwd()
+		root = workspace.Root()
+		if root == "" {
+			root, _ = os.Getwd()
+		}
 	}
 	maxDepth := 3
 	if v, ok := input["max_depth"].(float64); ok && v > 0 {

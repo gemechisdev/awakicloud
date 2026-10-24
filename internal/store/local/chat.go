@@ -98,13 +98,15 @@ func (s *LocalStore) ListChats() ([]store.ChatInfo, error) {
 			var ch store.Chat
 			if json.Unmarshal(data, &ch) == nil {
 				out = append(out, store.ChatInfo{
-					ID:        ch.ID,
-					Title:     ch.Title,
-					Summary:   ch.Summary,
-					Tags:      ch.Tags,
-					Status:    ch.Status,
-					StartedAt: ch.StartedAt,
-					EndedAt:   ch.EndedAt,
+					ID:          ch.ID,
+					Title:       ch.Title,
+					Summary:     ch.Summary,
+					Tags:        ch.Tags,
+					Status:      ch.Status,
+					Mode:        ch.Mode,
+					ProjectSlug: ch.ProjectSlug,
+					StartedAt:   ch.StartedAt,
+					EndedAt:     ch.EndedAt,
 				})
 			}
 		}

@@ -28,6 +28,10 @@ type Chat struct {
 	Summary   string    `json:"summary"`
 	Tags      []string  `json:"tags"`
 	Status    string    `json:"status"` // "active" | "closed"
+	Mode      string    `json:"mode,omitempty"` // "chat" | "project"
+	ProjectID string    `json:"project_id,omitempty"`
+	ProjectSlug string  `json:"project_slug,omitempty"`
+	ProjectHash string  `json:"project_hash,omitempty"`
 	UserTurns int       `json:"user_turns"`
 	StartedAt time.Time `json:"started_at"`
 	EndedAt   time.Time `json:"ended_at,omitempty"`

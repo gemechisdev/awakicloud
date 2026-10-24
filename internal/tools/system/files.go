@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/gemechischala/awaki/internal/workspace"
 )
 
 func pathDetail(input map[string]any) string {
@@ -70,6 +72,7 @@ func readFile(_ context.Context, input map[string]any) types.Result {
 	if err != nil {
 		return types.ErrResult(err)
 	}
+	path = workspace.Resolve(path)
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -84,6 +87,7 @@ func writeFile(_ context.Context, input map[string]any) types.Result {
 	if err != nil {
 		return types.ErrResult(err)
 	}
+	path = workspace.Resolve(path)
 	content := types.GetStringOpt(input, "content")
 
 	dir := filepath.Dir(path)
@@ -102,6 +106,7 @@ func listFiles(_ context.Context, input map[string]any) types.Result {
 	if path == "" {
 		path = "."
 	}
+	path = workspace.Resolve(path)
 
 	entries, err := os.ReadDir(path)
 	if err != nil {

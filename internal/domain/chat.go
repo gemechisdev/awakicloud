@@ -42,9 +42,11 @@ func (u *Usage) Add(other Usage) {
 
 // ChatInfo is a lightweight summary view of a stored chat.
 type ChatInfo struct {
-	ID        string
-	Title     string
-	Summary   string
+	ID          string
+	Title       string
+	Summary     string
+	Mode        string
+	ProjectSlug string
 	Tags      []string
 	Status    string
 	StartedAt time.Time
