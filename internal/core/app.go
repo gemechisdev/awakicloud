@@ -35,6 +35,7 @@ type Engine struct {
 	providers *providers.Store
 	projects  *project.Manager
 	ui        uiState
+	steer     steerState
 	// rebuildAgent recreates the LLM client from the active provider/model pair.
 	rebuildAgent func() error
 
@@ -103,12 +104,14 @@ func (e *Engine) handleMessage(ctx context.Context, msg channel.Message) {
 	e.mu.Unlock()
 
 	if run != nil {
+		// Prefer delivering to ask_user if the agent is waiting for input.
 		select {
 		case run.replyInbox <- msg.Text:
 			return
 		default:
 		}
-		_ = msg.Reply.SendText(ctx, "Still working on the previous task, please wait...")
+		// Otherwise offer Stop-now vs Queue (steer).
+		e.offerSteerWhenBusy(ctx, msg)
 		return
 	}
 
@@ -225,7 +228,11 @@ func (e *Engine) runAgent(ctx context.Context, msg channel.Message) {
 		cancel:     cancel,
 		replyInbox: make(chan string),
 	}
-	defer e.setActive(run)()
+	releaseActive := e.setActive(run)
+	defer func() {
+		releaseActive()
+		e.drainSteerAfterRun(context.WithoutCancel(ctx))
+	}()
 
 	bus, recv := transport.NewBus(64)
 

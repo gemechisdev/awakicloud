@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"github.com/gemechischala/awaki/internal/channel"
+	"strings"
 	"time"
 
 	"github.com/go-telegram/bot/models"
@@ -41,6 +42,11 @@ func (c *Channel) handleCallback(ctx context.Context, cb *models.CallbackQuery) 
 		return
 	}
 	_ = c.client.AnswerCallbackQuery(ctx, cb.ID)
+
+	// Read-only plan checklist buttons — acknowledge only
+	if strings.HasPrefix(cb.Data, "plan:noop") {
+		return
+	}
 
 	var chatID int64
 	var editID int

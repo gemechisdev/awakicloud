@@ -17,6 +17,9 @@ func (e *Engine) handleUICallback(ctx context.Context, msg channel.Message) bool
 	if text == "" {
 		return false
 	}
+	if strings.HasPrefix(text, "steer:") {
+		return e.handleSteerCallback(ctx, msg, text)
+	}
 
 	// Persistent reply-keyboard labels
 	switch text {
