@@ -24,6 +24,8 @@ type RunInput struct {
 	// PlanMode forces a read-only tool set and a plan-oriented system prompt
 	// (Awaki Android parity). No file writes, bash mutations, or git writes.
 	PlanMode bool
+	// ExtraSystem is appended to the system prompt for this run only (e.g. scheduled tasks).
+	ExtraSystem string
 }
 
 // Run executes the agent loop synchronously, emitting typed events to the sink.
@@ -91,7 +93,10 @@ func (a *Agent) Run(ctx context.Context, input RunInput, sink transport.Sink) er
 		}
 
 		sys := a.instructions()
-		tokensBefore := hook.EstimateTokens(msgs)
+		if input.ExtraSystem != "" {
+			sys = sys + "\n\n" + input.ExtraSystem
+		}
+				tokensBefore := hook.EstimateTokens(msgs)
 
 		iterCtx := &hook.IterationContext{
 			Iteration:     iteration,

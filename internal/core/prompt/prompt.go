@@ -157,10 +157,14 @@ You have full bash access but be mindful of the ephemeral environment.`
 }
 
 func buildSchedulingSection() string {
-	return `SELF-SCHEDULING: You have a built-in scheduler for recurring tasks.
+	return `SELF-SCHEDULING: You have a built-in scheduler for one-shot timers, intervals, and cron.
 Use schedule_add, schedule_list, schedule_remove, schedule_pause tools — NOT crontab or system cron.
-The built-in scheduler persists to /data and restores automatically across restarts.
-Cron schedules run in the owner's local timezone (from user.md).
+Examples: schedule="in 5m" (one-shot), "every 10m" (interval), "0 8 * * *" (cron), "at 15:30".
+One-shot tasks auto-remove after firing. Optional max_runs limits intervals.
+REMINDERS: Put the exact words the owner should see in the command, e.g.
+command="Remind the owner with this exact message: ⏰ Time to call your girlfriend!"
+When the timer fires, your final Telegram message must BE that reminder text — not "I sent it".
+Schedules persist and restore across restarts; times use the owner's timezone (user.md).
 
 HOW IT WORKS: When a scheduled task fires, YOU wake up — the same agent with
 full access to all your tools (bash, web_search, file operations, send_file),
@@ -275,14 +279,28 @@ IMPORTANT: You must ask for their timezone immediately and include a "timezone: 
 func ScheduledTaskPrompt(taskID, command, skill string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "[Scheduled Task: %s]\n", taskID)
-	b.WriteString("You woke up from a scheduled trigger. Execute the following instruction " +
-		"using your tools, memory, and skills. Do not write standalone scripts.\n\n")
+	b.WriteString("A scheduled timer just fired for the owner. Carry out the instruction below.\n\n")
+	b.WriteString("OUTPUT RULES (critical):\n")
+	b.WriteString("- Your FINAL assistant message is delivered DIRECTLY to the owner in Telegram.\n")
+	b.WriteString("- For reminders, the final message MUST BE the reminder itself (e.g. \"⏰ Time to call your girlfriend!\"), not a status report.\n")
+	b.WriteString("- Do NOT say \"I sent the reminder\", \"Done\", \"I have notified\", or describe what you did.\n")
+	b.WriteString("- Speak TO the owner in second person (\"you\"), not about them in third person.\n")
+	b.WriteString("- Do not call schedule_remove for one-shot tasks — they auto-remove after firing.\n")
+	b.WriteString("- Simple reminders need no tools — write the reminder text as your final message.\n\n")
 	fmt.Fprintf(&b, "Instruction: %s", command)
 	if skill != "" {
 		fmt.Fprintf(&b, "\nSkill: Read skill %q with skill_read and follow its instructions.", skill)
 	}
 	return b.String()
 }
+
+// ScheduledTaskSystem is appended to the system prompt for scheduled runs only.
+func ScheduledTaskSystem() string {
+	return `SCHEDULED RUN MODE: You were woken by the scheduler, not by a live user message.
+Your final reply is shown to the owner as-is. For reminders and alerts, that final reply
+must be the user-facing content (the reminder text), never a meta completion summary.`
+}
+
 
 func sanitizePromptValue(s string) string {
 	s = strings.ReplaceAll(s, "\n", " ")

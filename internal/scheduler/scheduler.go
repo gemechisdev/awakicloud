@@ -54,10 +54,14 @@ type TaskState struct {
 type TaskData struct {
 	ID        string    `json:"id"`
 	Schedule  string    `json:"schedule"`
+	Kind      string    `json:"kind,omitempty"` // cron | once | interval (empty = cron)
 	Command   string    `json:"command"`
 	Skill     string    `json:"skill,omitempty"`
 	Label     string    `json:"label"`
 	Paused    bool      `json:"paused,omitempty"`
+	RunAt     time.Time `json:"run_at,omitempty"` // absolute fire time for once
+	MaxRuns   int       `json:"max_runs,omitempty"` // 0 = unlimited; once defaults to 1
+	Runs      int       `json:"runs,omitempty"`     // successful+attempted fires
 	CreatedAt time.Time `json:"created_at"`
 	State     TaskState `json:"state"`
 }
@@ -65,6 +69,7 @@ type TaskData struct {
 type Task struct {
 	TaskData
 	entryID cron.EntryID
+	timer   *time.Timer // one-shot
 	running atomic.Bool
 }
 
@@ -83,12 +88,22 @@ type Scheduler struct {
 	opts     Options
 }
 
+func newCron(loc *time.Location) *cron.Cron {
+	return cron.New(
+		cron.WithLocation(loc),
+		cron.WithParser(cron.NewParser(
+			cron.Minute|cron.Hour|cron.Dom|cron.Month|cron.Dow|cron.Descriptor,
+		)),
+	)
+}
+
 func New(dataDir string, executor TaskExecutor, loc *time.Location, opts Options) *Scheduler {
+
 	if loc == nil {
 		loc = time.UTC
 	}
 	return &Scheduler{
-		cron:     cron.New(cron.WithLocation(loc)),
+		cron:     newCron(loc),
 		tasks:    make(map[string]*Task),
 		path:     filepath.Join(dataDir, "schedules.json"),
 		executor: executor,
@@ -111,8 +126,11 @@ func (s *Scheduler) SetLocation(loc *time.Location) {
 	ctx := s.cron.Stop()
 	<-ctx.Done()
 
-	s.cron = cron.New(cron.WithLocation(loc))
+	s.cron = newCron(loc)
 	for _, t := range s.tasks {
+		if t.Kind == "once" {
+			continue // timer already armed with absolute time
+		}
 		entryID, err := s.cron.AddFunc(t.Schedule, s.makeRunner(t.ID, t.Command, t.Skill))
 		if err != nil {
 			log.Error().Err(err).Str("id", t.ID).Msg("failed to re-add task after timezone change")
@@ -138,32 +156,82 @@ func (s *Scheduler) Stop() {
 	<-ctx.Done()
 }
 
+// Add registers a task. schedule accepts cron, @every, "in 5m", "at <RFC3339>", etc.
+// maxRuns: 0 = unlimited (cron/interval); once always maxRuns=1.
 func (s *Scheduler) Add(id, schedule, command, skill, label string) error {
+	return s.AddWithOptions(id, schedule, command, skill, label, 0)
+}
+
+func (s *Scheduler) AddWithOptions(id, schedule, command, skill, label string, maxRuns int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if existing, ok := s.tasks[id]; ok {
-		s.cron.Remove(existing.entryID)
+		s.removeLocked(existing)
 	}
 
-	entryID, err := s.cron.AddFunc(schedule, s.makeRunner(id, command, skill))
+	now := time.Now().In(s.cron.Location())
+	parsed, err := ParseSchedule(schedule, now)
 	if err != nil {
-		return fmt.Errorf("invalid cron expression %q: %w", schedule, err)
+		return err
 	}
 
-	s.tasks[id] = &Task{
+	task := &Task{
 		TaskData: TaskData{
 			ID:        id,
-			Schedule:  schedule,
+			Schedule:  parsed.Display,
+			Kind:      parsed.Kind,
 			Command:   command,
 			Skill:     skill,
 			Label:     label,
-			CreatedAt: time.Now(),
+			CreatedAt: now,
+			MaxRuns:   maxRuns,
 		},
-		entryID: entryID,
+	}
+	if parsed.Kind == "once" {
+		task.RunAt = parsed.RunAt
+		task.MaxRuns = 1
+		s.armOnceLocked(task)
+	} else {
+		expr := parsed.CronExpr
+		if expr == "" {
+			expr = schedule
+		}
+		entryID, err := s.cron.AddFunc(expr, s.makeRunner(id, command, skill))
+		if err != nil {
+			return fmt.Errorf("invalid schedule %q: %w", schedule, err)
+		}
+		task.entryID = entryID
+		task.Schedule = expr
+		if parsed.Display != "" {
+			task.Schedule = parsed.Display
+		}
+		// store cron expr in Schedule for restore — use CronExpr for re-add
+		task.Schedule = expr
 	}
 
+	s.tasks[id] = task
 	return s.save()
+}
+
+func (s *Scheduler) removeLocked(task *Task) {
+	if task.entryID != 0 {
+		s.cron.Remove(task.entryID)
+	}
+	if task.timer != nil {
+		task.timer.Stop()
+		task.timer = nil
+	}
+	delete(s.tasks, task.ID)
+}
+
+func (s *Scheduler) armOnceLocked(task *Task) {
+	delay := time.Until(task.RunAt)
+	if delay < 0 {
+		delay = 0
+	}
+	id, command, skill := task.ID, task.Command, task.Skill
+	task.timer = time.AfterFunc(delay, s.makeRunner(id, command, skill))
 }
 
 func (s *Scheduler) Remove(id string) error {
@@ -174,9 +242,7 @@ func (s *Scheduler) Remove(id string) error {
 	if !ok {
 		return fmt.Errorf("task %q not found", id)
 	}
-
-	s.cron.Remove(task.entryID)
-	delete(s.tasks, id)
+	s.removeLocked(task)
 	return s.save()
 }
 
@@ -203,8 +269,12 @@ func (s *Scheduler) List() []TaskInfo {
 		info := TaskInfo{
 			TaskData: t.TaskData,
 		}
-		if entry := s.cron.Entry(t.entryID); !entry.Next.IsZero() {
-			info.NextRun = entry.Next
+		if t.Kind == "once" && !t.RunAt.IsZero() {
+			info.NextRun = t.RunAt
+		} else if t.entryID != 0 {
+			if entry := s.cron.Entry(t.entryID); !entry.Next.IsZero() {
+				info.NextRun = entry.Next
+			}
 		}
 		out = append(out, info)
 	}
@@ -287,6 +357,13 @@ func (s *Scheduler) makeRunner(id, command, skill string) func() {
 		s.mu.Lock()
 		if t, ok := s.tasks[id]; ok {
 			t.State = state
+			t.Runs++
+			// One-shot or max_runs exhausted → remove after fire
+			done := t.Kind == "once" || (t.MaxRuns > 0 && t.Runs >= t.MaxRuns)
+			if done {
+				s.removeLocked(t)
+				log.Info().Str("id", id).Str("kind", t.Kind).Int("runs", t.Runs).Msg("scheduler: task completed and removed")
+			}
 			_ = s.save()
 		}
 		s.mu.Unlock()
@@ -305,6 +382,22 @@ func (s *Scheduler) load() error {
 	}
 
 	for _, t := range tasks {
+		if t.Kind == "" {
+			t.Kind = "cron"
+		}
+		if t.Kind == "once" {
+			if t.RunAt.IsZero() {
+				log.Warn().Str("id", t.ID).Msg("once task missing run_at, dropping")
+				continue
+			}
+			if time.Now().After(t.RunAt.Add(1 * time.Hour)) {
+				log.Warn().Str("id", t.ID).Time("run_at", t.RunAt).Msg("once task expired, dropping")
+				continue
+			}
+			s.armOnceLocked(t)
+			s.tasks[t.ID] = t
+			continue
+		}
 		entryID, err := s.cron.AddFunc(t.Schedule, s.makeRunner(t.ID, t.Command, t.Skill))
 		if err != nil {
 			log.Error().Err(err).Str("id", t.ID).Str("schedule", t.Schedule).Msg("failed to restore scheduled task")

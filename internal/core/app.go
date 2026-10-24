@@ -344,8 +344,9 @@ func (e *Engine) RunScheduledTask(ctx context.Context, reply transport.Replier, 
 	blocks := []types.ContentBlock{types.TextBlock(promptText)}
 
 	input := agent.RunInput{
-		Messages:   ch.Messages(),
-		UserBlocks: blocks,
+		Messages:    ch.Messages(),
+		UserBlocks:  blocks,
+		ExtraSystem: prompt.ScheduledTaskSystem(),
 	}
 	sink := newAgentSink(agentCtx, ch, bus)
 
