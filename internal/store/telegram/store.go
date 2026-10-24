@@ -70,7 +70,18 @@ func New(cfg Config) (store.Store, error) {
 		idx:      loadIndex(filepath.Join(cfg.CacheDir, "tg_index.json")),
 		timeout:  45 * time.Second,
 	}
-	log.Info().Int64("storage_chat", cfg.ChatID).Str("cache", cfg.CacheDir).Msg("telegram store ready")
+	// Cold-start recovery: empty local index → try pinned message on storage chat.
+	if len(s.idx.Entries) == 0 {
+		ctx, cancel := s.ctx()
+		s.BootstrapFromPinned(ctx)
+		cancel()
+	} else {
+		// Index present but local files may be missing after a volume wipe with
+		// a restored index file — rehydrate content from Telegram.
+		s.hydrateAllFromIndex()
+	}
+	s.EnsureIdentityCloud()
+	log.Info().Int64("storage_chat", cfg.ChatID).Str("cache", cfg.CacheDir).Int("index_entries", len(s.idx.Entries)).Msg("telegram store ready")
 	return s, nil
 }
 
@@ -94,7 +105,11 @@ func (s *Store) WriteSoul(content string) error {
 	if err := s.local.WriteSoul(content); err != nil {
 		return err
 	}
-	return s.upsertText("soul", "soul", "soul.md", content, map[string]string{"name": "soul"})
+	if err := s.upsertText("soul", "soul", "soul.md", content, map[string]string{"name": "soul"}); err != nil {
+		return err
+	}
+	_ = s.persistIndex()
+	return nil
 }
 
 func (s *Store) ReadUser() string {
@@ -109,7 +124,11 @@ func (s *Store) WriteUser(content string) error {
 	if err := s.local.WriteUser(content); err != nil {
 		return err
 	}
-	return s.upsertText("user", "user", "user.md", content, map[string]string{"name": "user"})
+	if err := s.upsertText("user", "user", "user.md", content, map[string]string{"name": "user"}); err != nil {
+		return err
+	}
+	_ = s.persistIndex()
+	return nil
 }
 
 func (s *Store) LoadTimezone() *time.Location {
@@ -160,7 +179,11 @@ func (s *Store) WriteMemory(filename, content string) error {
 		return err
 	}
 	key := strings.TrimSuffix(filepath.Base(filename), ".md")
-	return s.upsertText("memory", key, key+".md", content, map[string]string{"name": key})
+	if err := s.upsertText("memory", key, key+".md", content, map[string]string{"name": key}); err != nil {
+		return err
+	}
+	_ = s.persistIndex()
+	return nil
 }
 
 func (s *Store) DeleteMemory(filename string) error {

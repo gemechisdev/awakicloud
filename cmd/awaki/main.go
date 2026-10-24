@@ -118,6 +118,13 @@ func buildEngine(ctx context.Context, cfg *config.Config, ch channel.Channel) (*
 		MaxConcurrent: cfg.Scheduler.MaxConcurrent,
 	})
 
+	// Durable config on Telegram storage chat (survives empty local disk / redeploys).
+	if ts, ok := st.(*tgstore.Store); ok {
+		provStore.SetCloud(tgstore.ProvidersCloud{S: ts})
+		sched.SetCloud(tgstore.SchedulesCloud{S: ts})
+		log.Info().Msg("providers + schedules cloud sync enabled (telegram storage)")
+	}
+
 	extra := append(comm.ChannelTools(),
 		system.ScheduleTools(sched)...,
 	)

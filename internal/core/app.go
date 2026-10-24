@@ -373,6 +373,13 @@ func (e *Engine) RunScheduledTask(ctx context.Context, reply transport.Replier, 
 	}
 
 	if finalText != "" {
+		if prompt.LooksLikeReminder(taskID, command) {
+			finalText = prompt.FormatReminderMessage(finalText)
+		}
+		_ = reply.SendText(ctx, finalText)
+	} else if prompt.LooksLikeReminder(taskID, command) {
+		// Model returned empty — still deliver a card from the stored command.
+		finalText = prompt.FormatReminderMessage(command)
 		_ = reply.SendText(ctx, finalText)
 	}
 

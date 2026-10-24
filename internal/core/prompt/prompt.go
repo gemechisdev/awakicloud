@@ -161,9 +161,12 @@ func buildSchedulingSection() string {
 Use schedule_add, schedule_list, schedule_remove, schedule_pause tools — NOT crontab or system cron.
 Examples: schedule="in 5m" (one-shot), "every 10m" (interval), "0 8 * * *" (cron), "at 15:30".
 One-shot tasks auto-remove after firing. Optional max_runs limits intervals.
-REMINDERS: Put the exact words the owner should see in the command, e.g.
-command="Remind the owner with this exact message: ⏰ Time to call your girlfriend!"
-When the timer fires, your final Telegram message must BE that reminder text — not "I sent it".
+REMINDERS: Prefer id starting with "remind-". Put the second-person action in command, e.g.
+command="Time to <do the thing>."
+When it fires, the owner must see:
+📆 Reminder:
+Time to <do the thing>.
+Never schedule third-person text like "Remind <name> to…".
 Schedules persist and restore across restarts; times use the owner's timezone (user.md).
 
 HOW IT WORKS: When a scheduled task fires, YOU wake up — the same agent with
@@ -281,12 +284,15 @@ func ScheduledTaskPrompt(taskID, command, skill string) string {
 	fmt.Fprintf(&b, "[Scheduled Task: %s]\n", taskID)
 	b.WriteString("A scheduled timer just fired for the owner. Carry out the instruction below.\n\n")
 	b.WriteString("OUTPUT RULES (critical):\n")
-	b.WriteString("- Your FINAL assistant message is delivered DIRECTLY to the owner in Telegram.\n")
-	b.WriteString("- For reminders, the final message MUST BE the reminder itself (e.g. \"⏰ Time to call your girlfriend!\"), not a status report.\n")
-	b.WriteString("- Do NOT say \"I sent the reminder\", \"Done\", \"I have notified\", or describe what you did.\n")
-	b.WriteString("- Speak TO the owner in second person (\"you\"), not about them in third person.\n")
-	b.WriteString("- Do not call schedule_remove for one-shot tasks — they auto-remove after firing.\n")
-	b.WriteString("- Simple reminders need no tools — write the reminder text as your final message.\n\n")
+	b.WriteString("- Your FINAL message is shown as-is in Telegram to the owner.\n")
+	b.WriteString("- If this is a REMINDER, output EXACTLY this shape (nothing else):\n")
+	b.WriteString("  📆 Reminder:\n")
+	b.WriteString("  Time to <do the thing>.\n")
+	b.WriteString("  (second line = real reminder body in second person, from the instruction)\n")
+	b.WriteString("- Body must address the owner as YOU: \"Time to …\", NOT \"Remind <name> to…\".\n")
+	b.WriteString("- Never third-person (\"Remind X to…\", \"Tell them…\", \"I sent a reminder…\", \"Done!\").\n")
+	b.WriteString("- Do not call schedule_remove for one-shot tasks — they auto-remove.\n")
+	b.WriteString("- Simple reminders: no tools — only the formatted reminder text.\n\n")
 	fmt.Fprintf(&b, "Instruction: %s", command)
 	if skill != "" {
 		fmt.Fprintf(&b, "\nSkill: Read skill %q with skill_read and follow its instructions.", skill)
@@ -296,11 +302,69 @@ func ScheduledTaskPrompt(taskID, command, skill string) string {
 
 // ScheduledTaskSystem is appended to the system prompt for scheduled runs only.
 func ScheduledTaskSystem() string {
-	return `SCHEDULED RUN MODE: You were woken by the scheduler, not by a live user message.
-Your final reply is shown to the owner as-is. For reminders and alerts, that final reply
-must be the user-facing content (the reminder text), never a meta completion summary.`
+	return "SCHEDULED RUN MODE: You were woken by the scheduler.\n" +
+		"For reminders, your entire final reply must be:\n\n" +
+		"📆 Reminder:\n" +
+		"<second-person action line>\n\n" +
+		"Example:\n" +
+		"📆 Reminder:\n" +
+		"Time to <do the thing>.\n\n" +
+		"Never narrate, never third-person, never \"I sent…\"."
 }
 
+// LooksLikeReminder reports whether a scheduled task should use reminder formatting.
+func LooksLikeReminder(taskID, command string) bool {
+	s := strings.ToLower(taskID + " " + command)
+	for _, k := range []string{"remind", "reminder", "remainder", "alarm", "ping me", "tell me to", "call my", "don't forget"} {
+		if strings.Contains(s, k) {
+			return true
+		}
+	}
+	return false
+}
+
+// FormatReminderMessage normalizes model output into the standard reminder card.
+func FormatReminderMessage(raw string) string {
+	body := strings.TrimSpace(raw)
+	body = strings.ReplaceAll(body, "\r\n", "\n")
+	lower := strings.ToLower(body)
+	for _, h := range []string{"📆 reminder:", "📆 remainder:", "reminder:", "remainder:", "⏰ reminder:"} {
+		if strings.HasPrefix(lower, h) {
+			body = strings.TrimSpace(body[len(h):])
+			lower = strings.ToLower(body)
+			break
+		}
+	}
+	metaPrefixes := []string{
+		"done!", "done.", "i sent", "i've sent", "i have sent", "i notified",
+		"reminder sent", "here is your reminder", "here's your reminder",
+	}
+	for _, pfx := range metaPrefixes {
+		if strings.HasPrefix(lower, pfx) {
+			lines := strings.Split(body, "\n")
+			body = strings.TrimSpace(lines[len(lines)-1])
+			lower = strings.ToLower(body)
+			break
+		}
+	}
+	if strings.HasPrefix(lower, "remind ") {
+		rest := strings.TrimSpace(body[len("Remind "):])
+		if i := strings.Index(strings.ToLower(rest), " to "); i >= 0 {
+			rest = strings.TrimSpace(rest[i+4:])
+		}
+		rest = strings.TrimSpace(rest)
+		if rest != "" && !strings.HasPrefix(strings.ToLower(rest), "time to ") {
+			body = "Time to " + rest
+		} else {
+			body = rest
+		}
+	}
+	body = strings.TrimSpace(body)
+	if body == "" {
+		body = "Time's up."
+	}
+	return "📆 Reminder:\n" + body
+}
 
 func sanitizePromptValue(s string) string {
 	s = strings.ReplaceAll(s, "\n", " ")

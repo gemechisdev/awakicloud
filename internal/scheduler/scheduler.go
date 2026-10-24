@@ -78,6 +78,11 @@ type TaskInfo struct {
 	NextRun time.Time `json:"next_run"`
 }
 
+type Cloud interface {
+	LoadSchedulesJSON() ([]byte, error)
+	SaveSchedulesJSON(data []byte) error
+}
+
 type Scheduler struct {
 	mu       sync.Mutex
 	cron     *cron.Cron
@@ -86,6 +91,7 @@ type Scheduler struct {
 	executor TaskExecutor
 	sem      chan struct{}
 	opts     Options
+	cloud    Cloud
 }
 
 func newCron(loc *time.Location) *cron.Cron {
@@ -116,6 +122,52 @@ func (s *Scheduler) SetExecutor(exec TaskExecutor) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.executor = exec
+}
+
+func (s *Scheduler) SetCloud(cloud Cloud) {
+	s.mu.Lock()
+	s.cloud = cloud
+	s.mu.Unlock()
+	if cloud == nil {
+		return
+	}
+	// hydrate when local empty
+	s.mu.Lock()
+	empty := len(s.tasks) == 0
+	s.mu.Unlock()
+	if !empty {
+		return
+	}
+	data, err := cloud.LoadSchedulesJSON()
+	if err != nil || len(data) == 0 {
+		return
+	}
+	var tasks []*Task
+	if json.Unmarshal(data, &tasks) != nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, t := range tasks {
+		if t.Kind == "" {
+			t.Kind = "cron"
+		}
+		if t.Kind == "once" {
+			if !t.RunAt.IsZero() {
+				s.armOnceLocked(t)
+				s.tasks[t.ID] = t
+			}
+			continue
+		}
+		entryID, err := s.cron.AddFunc(t.Schedule, s.makeRunner(t.ID, t.Command, t.Skill))
+		if err != nil {
+			continue
+		}
+		t.entryID = entryID
+		s.tasks[t.ID] = t
+	}
+	_ = s.saveLocalLocked()
+	log.Info().Int("count", len(s.tasks)).Msg("scheduler hydrated from cloud")
 }
 
 // SetLocation stops the cron, recreates it with a new timezone, and re-adds all tasks.
@@ -411,20 +463,35 @@ func (s *Scheduler) load() error {
 	return nil
 }
 
-func (s *Scheduler) save() error {
+func (s *Scheduler) saveLocalLocked() error {
 	tasks := make([]*Task, 0, len(s.tasks))
 	for _, t := range s.tasks {
 		tasks = append(tasks, t)
 	}
-
 	data, err := json.MarshalIndent(tasks, "", "  ")
 	if err != nil {
 		return err
 	}
-
 	dir := filepath.Dir(s.path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
 	return os.WriteFile(s.path, data, 0o644)
+}
+
+func (s *Scheduler) save() error {
+	if err := s.saveLocalLocked(); err != nil {
+		return err
+	}
+	if s.cloud != nil {
+		tasks := make([]*Task, 0, len(s.tasks))
+		for _, t := range s.tasks {
+			tasks = append(tasks, t)
+		}
+		data, err := json.MarshalIndent(tasks, "", "  ")
+		if err == nil {
+			_ = s.cloud.SaveSchedulesJSON(data)
+		}
+	}
+	return nil
 }

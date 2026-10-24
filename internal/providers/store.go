@@ -11,24 +11,67 @@ import (
 	"github.com/google/uuid"
 )
 
+// Cloud is optional durable storage (e.g. Telegram storage chat).
+type Cloud interface {
+	LoadProvidersJSON() ([]byte, error)
+	SaveProvidersJSON(data []byte) error
+}
+
 // Store persists providers and models as JSON (runtime-configurable, Awaki-style).
 type Store struct {
-	mu   sync.RWMutex
-	path string
-	cfg  ConfigFile
+	mu    sync.RWMutex
+	path  string
+	cfg   ConfigFile
+	cloud Cloud
 }
 
 func NewStore(dataDir string) (*Store, error) {
+	return NewStoreWithCloud(dataDir, nil)
+}
+
+func NewStoreWithCloud(dataDir string, cloud Cloud) (*Store, error) {
 	path := filepath.Join(dataDir, "providers.json")
-	s := &Store{path: path}
+	s := &Store{path: path, cloud: cloud}
 	if err := s.load(); err != nil {
 		if !os.IsNotExist(err) {
 			return nil, err
 		}
 		s.cfg = ConfigFile{}
-		_ = s.save()
+	}
+	// Prefer cloud when local has no providers (fresh deploy).
+	if len(s.cfg.Providers) == 0 && cloud != nil {
+		if data, err := cloud.LoadProvidersJSON(); err == nil && len(data) > 0 {
+			if json.Unmarshal(data, &s.cfg) == nil && len(s.cfg.Providers) > 0 {
+				_ = os.MkdirAll(filepath.Dir(path), 0o755)
+				_ = os.WriteFile(path, data, 0o600)
+			}
+		}
+	}
+	if len(s.cfg.Providers) == 0 {
+		_ = s.saveLocalOnly()
 	}
 	return s, nil
+}
+
+func (s *Store) SetCloud(cloud Cloud) {
+	s.mu.Lock()
+	s.cloud = cloud
+	s.mu.Unlock()
+	// hydrate if still empty
+	s.mu.RLock()
+	empty := len(s.cfg.Providers) == 0
+	s.mu.RUnlock()
+	if empty && cloud != nil {
+		if data, err := cloud.LoadProvidersJSON(); err == nil && len(data) > 0 {
+			var cfg ConfigFile
+			if json.Unmarshal(data, &cfg) == nil {
+				s.mu.Lock()
+				s.cfg = cfg
+				s.mu.Unlock()
+				_ = s.saveLocalOnly()
+			}
+		}
+	}
 }
 
 func (s *Store) load() error {
@@ -39,7 +82,7 @@ func (s *Store) load() error {
 	return json.Unmarshal(data, &s.cfg)
 }
 
-func (s *Store) save() error {
+func (s *Store) saveLocalOnly() error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
 		return err
 	}
@@ -48,6 +91,22 @@ func (s *Store) save() error {
 		return err
 	}
 	return os.WriteFile(s.path, data, 0o600)
+}
+
+func (s *Store) save() error {
+	if err := s.saveLocalOnly(); err != nil {
+		return err
+	}
+	if s.cloud != nil {
+		data, err := json.MarshalIndent(s.cfg, "", "  ")
+		if err == nil {
+			if err := s.cloud.SaveProvidersJSON(data); err != nil {
+				// local is source of truth for this process; cloud is best-effort durable
+				_ = err
+			}
+		}
+	}
+	return nil
 }
 
 func (s *Store) Snapshot() ConfigFile {

@@ -92,3 +92,16 @@ func (a *api) downloadFile(ctx context.Context, fileID string) ([]byte, error) {
 	}
 	return io.ReadAll(resp.Body)
 }
+
+func (a *api) pinMessage(ctx context.Context, chatID int64, messageID int) error {
+	_, err := a.b.PinChatMessage(ctx, &bot.PinChatMessageParams{
+		ChatID:              chatID,
+		MessageID:           messageID,
+		DisableNotification: true,
+	})
+	return err
+}
+
+func (a *api) getChat(ctx context.Context, chatID int64) (*models.ChatFullInfo, error) {
+	return a.b.GetChat(ctx, &bot.GetChatParams{ChatID: chatID})
+}
