@@ -13,6 +13,7 @@ import (
 	"github.com/gemechischala/awaki/internal/channel/telegram"
 	"github.com/gemechischala/awaki/internal/config"
 	"github.com/gemechischala/awaki/internal/core"
+	"github.com/gemechischala/awaki/internal/health"
 	"github.com/gemechischala/awaki/internal/core/agent"
 	"github.com/gemechischala/awaki/internal/core/agent/hook"
 	"github.com/gemechischala/awaki/internal/core/chat"
@@ -57,11 +58,26 @@ func main() {
 		return
 	}
 
-	fmt.Printf("Awaki is running [%s]. Configure LLM with /providers if needed. Press Ctrl+C to stop.\n", ch.Name())
+	// HTTP health endpoints for Koyeb / Render / Railway (PORT or AWAKI_HTTP_PORT, default 8000).
+	hs := health.New(health.AddrFromEnv(), func() map[string]any {
+		return map[string]any{
+			"service":   "awaki",
+			"transport": ch.Name(),
+			"busy":      eng.Busy(),
+		}
+	})
+	if err := hs.Start(ctx); err != nil {
+		log.Error().Err(err).Msg("health server failed to bind — platform may kill the instance")
+	} else {
+		hs.SetReady(true)
+	}
+
+	fmt.Printf("Awaki is running [%s]. Health on %s. Configure LLM with /providers if needed. Press Ctrl+C to stop.\n", ch.Name(), health.AddrFromEnv())
 	if err := eng.Run(ctx); err != nil && ctx.Err() == nil {
 		log.Error().Err(err).Msg("engine run error")
 	}
 	fmt.Println("Shutting down.")
+
 }
 
 func notifyOwnerAndBlock(ch channel.Channel, providerErr error) {
@@ -74,9 +90,16 @@ func notifyOwnerAndBlock(ch channel.Channel, providerErr error) {
 
 	fmt.Fprintf(os.Stderr, "error: %v\nBlocking to prevent restart loop. Fix env vars and restart manually.\n", providerErr)
 
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
-	<-sig
+	// Keep HTTP health alive so the platform does not restart-loop on TCP checks.
+	bg, bgStop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer bgStop()
+	hs := health.New(health.AddrFromEnv(), func() map[string]any {
+		return map[string]any{"service": "awaki", "error": providerErr.Error()}
+	})
+	_ = hs.Start(bg)
+	hs.SetReady(true)
+
+	<-bg.Done()
 }
 
 func buildEngine(ctx context.Context, cfg *config.Config, ch channel.Channel) (*core.Engine, error) {

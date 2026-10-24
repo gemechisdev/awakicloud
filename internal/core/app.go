@@ -89,6 +89,14 @@ func (e *Engine) Channel() channel.Channel {
 	return e.ch
 }
 
+// Busy reports whether an agent run is in progress (for health status).
+func (e *Engine) Busy() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.active != nil
+}
+
+
 func (e *Engine) handleMessage(ctx context.Context, msg channel.Message) {
 	// UI callbacks, reply-keyboard labels, and provider wizards
 	if msg.Command == nil && e.handleUICallback(ctx, msg) {
