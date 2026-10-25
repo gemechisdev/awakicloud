@@ -40,6 +40,10 @@ type CallOptions struct {
 	NoTools      bool
 	ExtraTools   []ToolDef
 	MaxTokens    int
+	// PreviousID anchors server-side history (Gemini interaction / OpenAI response id).
+	PreviousID string
+	// Stateless forces full-history mode even when the adapter supports continuation.
+	Stateless bool
 }
 
 type Client struct {
@@ -154,4 +158,3 @@ func (c *Client) SupportsContinuation() bool {
 	cont, ok := c.adapter.(Continuer)
 	return ok && cont.SupportsContinuation()
 }
-
