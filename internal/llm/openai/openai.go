@@ -158,24 +158,76 @@ func messagesToOpenAI(supportsVision, reasoning bool, system string, msgs []type
 func toolDefsToOpenAI(defs []types.ToolDef) []openai.ChatCompletionToolParam {
 	var out []openai.ChatCompletionToolParam
 	for _, d := range defs {
-		params := shared.FunctionParameters{
-			"type": "object",
-		}
-		if d.Parameters != nil {
-			params["properties"] = d.Parameters
-		}
-		if len(d.Required) > 0 {
-			params["required"] = d.Required
-		}
-
 		fd := shared.FunctionDefinitionParam{
 			Name:        d.Name,
 			Description: openai.String(d.Description),
-			Parameters:  params,
+			Parameters:  normalizeFunctionParameters(d.Parameters, d.Required),
 		}
 		out = append(out, openai.ChatCompletionToolParam{Function: fd})
 	}
 	return out
+}
+
+// normalizeFunctionParameters accepts either:
+//   - a full JSON Schema object: {"type":"object","properties":{...},"required":[...]}
+//   - a properties-only map: {"name":{"type":"string"}, ...}  (Awaki tool convention)
+// Strict OpenAI-compatible gateways reject the latter when wrongly nested under properties.
+func normalizeFunctionParameters(params map[string]any, required []string) shared.FunctionParameters {
+	out := shared.FunctionParameters{"type": "object"}
+	if params == nil {
+		out["properties"] = map[string]any{}
+		if len(required) > 0 {
+			out["required"] = required
+		}
+		return out
+	}
+	// Full schema already?
+	if typ, ok := params["type"].(string); ok && typ == "object" {
+		for k, v := range params {
+			out[k] = v
+		}
+		if _, ok := out["properties"]; !ok {
+			out["properties"] = map[string]any{}
+		}
+		// Sanitize property schemas (arrays need items for strict validators).
+		if props, ok := out["properties"].(map[string]any); ok {
+			out["properties"] = sanitizePropertySchemas(props)
+		}
+		if len(required) > 0 {
+			if _, has := out["required"]; !has {
+				out["required"] = required
+			}
+		}
+		return out
+	}
+	out["properties"] = sanitizePropertySchemas(params)
+	if len(required) > 0 {
+		out["required"] = required
+	}
+	return out
+}
+
+func sanitizePropertySchemas(props map[string]any) map[string]any {
+	clean := make(map[string]any, len(props))
+	for name, raw := range props {
+		schema, ok := raw.(map[string]any)
+		if !ok {
+			// Skip invalid entries (e.g. bare strings) that break strict gateways.
+			continue
+		}
+		// Copy so we do not mutate tool definitions in place.
+		cp := make(map[string]any, len(schema)+1)
+		for k, v := range schema {
+			cp[k] = v
+		}
+		if typ, _ := cp["type"].(string); typ == "array" {
+			if _, hasItems := cp["items"]; !hasItems {
+				cp["items"] = map[string]any{"type": "string"}
+			}
+		}
+		clean[name] = cp
+	}
+	return clean
 }
 
 func openaiToResponse(resp *openai.ChatCompletion) *types.Response {

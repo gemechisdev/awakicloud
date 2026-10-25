@@ -68,11 +68,12 @@ func (a *ResponsesAdapter) CallContinue(
 	if len(tools) > 0 {
 		var oaiTools []map[string]any
 		for _, t := range tools {
+			params := normalizeFunctionParameters(t.Parameters, t.Required)
 			oaiTools = append(oaiTools, map[string]any{
-				"type": "function",
-				"name": t.Name,
+				"type":        "function",
+				"name":        t.Name,
 				"description": t.Description,
-				"parameters": t.Parameters,
+				"parameters":   map[string]any(params),
 			})
 		}
 		body["tools"] = oaiTools
