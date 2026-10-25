@@ -39,6 +39,10 @@ type Response struct {
 	StopReason   string // "end_turn", "tool_use", "max_tokens"
 	InputTokens  int
 	OutputTokens int
+	// ContinuationID is a provider server-side conversation/interaction id
+	// (Gemini previous_interaction_id, OpenAI previous_response_id). Empty when
+	// the provider is stateless or continuation is disabled.
+	ContinuationID string
 }
 
 func TextBlock(text string) ContentBlock {

@@ -30,6 +30,7 @@ type LLM interface {
 	ContextWindow() int
 	InputPricePerM() float64
 	OutputPricePerM() float64
+	SupportsContinuation() bool
 }
 
 type CallOptions struct {
@@ -52,11 +53,13 @@ type Client struct {
 func NewClient(p Provider, toolDefs []ToolDef) *Client {
 	var adapter Adapter
 	switch p.Format {
+	case "openai_responses":
+		adapter = oaipkg.NewResponsesAdapter(p.BaseURL, p.APIKey)
 	case "openai":
 		adapter = oaipkg.NewAdapter(p.BaseURL, p.APIKey, p.SupportsVision)
 	case "gemini":
 		adapter = geminipkg.NewAdapter(p.BaseURL, p.APIKey)
-	default: // anthropic
+	default: // anthropic — no server-side conversation id; full history each call
 		adapter = anthpkg.NewAdapter(p.APIKey, p.BaseURL)
 	}
 
@@ -124,10 +127,31 @@ func (c *Client) Call(ctx context.Context, messages []Message, opts CallOptions)
 
 	maxTokens := opts.MaxTokens
 	if maxTokens <= 0 {
-		maxTokens = 4096
+		maxTokens = 8192
 	}
 
 	callCtx, cancel := c.callCtx(ctx)
 	defer cancel()
+
+	useCont := ContinuationEnabled() && !opts.Stateless
+	if useCont {
+		if cont, ok := c.adapter.(Continuer); ok && cont.SupportsContinuation() {
+			resp, err := cont.CallContinue(callCtx, c.model, sys, opts.PreviousID, messages, tools, maxTokens)
+			if err == nil {
+				return resp, nil
+			}
+			// Fall back to full-history generateContent / chat completions.
+		}
+	}
+
 	return c.adapter.Call(callCtx, c.model, sys, messages, tools, maxTokens)
 }
+
+func (c *Client) SupportsContinuation() bool {
+	if !ContinuationEnabled() {
+		return false
+	}
+	cont, ok := c.adapter.(Continuer)
+	return ok && cont.SupportsContinuation()
+}
+

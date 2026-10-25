@@ -26,13 +26,17 @@ tgstore "github.com/gemechischala/awaki/internal/store/telegram"
 	"github.com/gemechischala/awaki/internal/scheduler"
 	"github.com/gemechischala/awaki/internal/store"
 	"github.com/gemechischala/awaki/internal/store/local"
+	sqlstore "github.com/gemechischala/awaki/internal/store/sqlite"
 	"github.com/gemechischala/awaki/internal/tools"
 	"github.com/gemechischala/awaki/internal/tools/comm"
 	"github.com/gemechischala/awaki/internal/tools/identity"
 	"github.com/gemechischala/awaki/internal/tools/system"
+	"github.com/gemechischala/awaki/internal/tasks"
 
 	"github.com/rs/zerolog/log"
 )
+
+var dbSyncer *sqlstore.Syncer
 
 func main() {
 	cfg, err := config.Load()
@@ -76,8 +80,10 @@ func main() {
 	if err := eng.Run(ctx); err != nil && ctx.Err() == nil {
 		log.Error().Err(err).Msg("engine run error")
 	}
+	if dbSyncer != nil {
+		dbSyncer.Stop()
+	}
 	fmt.Println("Shutting down.")
-
 }
 
 func notifyOwnerAndBlock(ch channel.Channel, providerErr error) {
@@ -118,16 +124,41 @@ func buildEngine(ctx context.Context, cfg *config.Config, ch channel.Channel) (*
 		MaxConcurrent: cfg.Scheduler.MaxConcurrent,
 	})
 
-	// Durable config on Telegram storage chat (survives empty local disk / redeploys).
-	if ts, ok := st.(*tgstore.Store); ok {
+	// Providers/schedules live in SQLite (and thus in versioned TG db snapshots).
+	if ss, ok := st.(*sqlstore.Store); ok {
+		cloud := sqlstore.ConfigCloud{S: ss}
+		provStore.SetCloud(cloud)
+		sched.SetCloud(cloud)
+		log.Info().Msg("providers + schedules backed by sqlite cloud")
+	} else if ts, ok := st.(*tgstore.Store); ok {
 		provStore.SetCloud(tgstore.ProvidersCloud{S: ts})
 		sched.SetCloud(tgstore.SchedulesCloud{S: ts})
 		log.Info().Msg("providers + schedules cloud sync enabled (telegram storage)")
 	}
 
+	// Background task board (todo-style, in-process, max 1 concurrent on free tier).
+	taskMgr := tasks.NewManager(1)
+	if ss, ok := st.(*sqlstore.Store); ok {
+		taskMgr.SetPersister(sqlstore.TasksPersister{S: ss})
+		taskMgr.Load()
+	}
+	taskMgr.SetNotify(func(t tasks.Task) {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		msg := tasks.FormatBoard([]tasks.Task{t})
+		if t.Status == tasks.StatusCompleted && t.Output != "" {
+			msg = t.Status.Emoji() + " Task `" + t.ID + "` done: **" + t.Title + "**\n\n" + t.Output
+			if len(msg) > 3500 {
+				msg = msg[:3500] + "…"
+			}
+		}
+		_ = ch.OwnerReplier().SendText(ctx, msg)
+	})
+
 	extra := append(comm.ChannelTools(),
 		system.ScheduleTools(sched)...,
 	)
+	extra = append(extra, tasks.Tools(taskMgr)...)
 	extra = append(extra, identity.IdentityTools(st, sched.SetLocation)...)
 
 	// LLM is optional at startup — owner configures via Telegram /provider_add.
@@ -168,6 +199,9 @@ func buildEngine(ctx context.Context, cfg *config.Config, ch channel.Channel) (*
 
 	ag := agent.New(client, instructions, reg)
 	ag.AddBeforeHook(hook.NewCompaction().BeforeHook())
+	taskMgr.SetExecutor(func(ctx context.Context, task tasks.Task) (string, error) {
+		return ag.RunBackground(ctx, task.Prompt)
+	})
 
 	rebuild := func() error {
 		lp, err := resolveLLMProvider(cfg, provStore)
@@ -184,9 +218,20 @@ func buildEngine(ctx context.Context, cfg *config.Config, ch channel.Channel) (*
 	}
 
 	
-	// Project workspaces (local cache + optional Telegram durability)
+	// Project workspaces: zip binaries on Telegram, pointers in SQLite.
 	var blobs project.BlobStore = project.NewLocalBlobStore(filepath.Join(cfg.DataDir, "project-archives"))
-	if ts, ok := st.(*tgstore.Store); ok {
+	if ss, ok := st.(*sqlstore.Store); ok && cfg.Telegram.StorageID != 0 && cfg.Telegram.Token != "" {
+		if api, err := tgstore.NewDBSyncAPI(cfg.Telegram.Token); err == nil {
+			blobs = &project.MultiBlobStore{
+				Primary: project.NewLocalBlobStore(filepath.Join(cfg.DataDir, "project-archives")),
+				Secondary: &sqlstore.ProjectBlobStore{
+					Store:  ss,
+					API:    api,
+					ChatID: cfg.Telegram.StorageID,
+				},
+			}
+		}
+	} else if ts, ok := st.(*tgstore.Store); ok {
 		blobs = &project.MultiBlobStore{
 			Primary:   project.NewLocalBlobStore(filepath.Join(cfg.DataDir, "project-archives")),
 			Secondary: tgstore.NewProjectBlob(ts),
@@ -203,6 +248,7 @@ return core.New(core.Params{
 		Registry:     reg,
 		Providers:    provStore,
 		Projects:     projMgr,
+		Tasks:        taskMgr,
 		RebuildAgent: rebuild,
 	}), nil
 }
@@ -258,15 +304,72 @@ func buildStore(ctx context.Context, cfg *config.Config) (store.Store, error) {
 			ChannelTitle: cfg.Telegram.ChannelTitle,
 		})
 	}
-	// Legacy bot-mode storage channel
+
+	dbPath := filepath.Join(cfg.DataDir, "awaki.db")
+
+	// Bot storage chat: SQLite is source of truth; Telegram holds versioned DB snapshots.
+	// Startup order:
+	//   1) usable local awaki.db → open it
+	//   2) else restore previous version from Telegram (pinned manifest / db)
+	//   3) else create a fresh database (first install)
 	if cfg.Telegram.StorageID != 0 && cfg.Telegram.Token != "" {
-		return tgstore.New(tgstore.Config{
-			Token:    cfg.Telegram.Token,
-			ChatID:   cfg.Telegram.StorageID,
-			CacheDir: cfg.DataDir,
-		})
+		api, err := tgstore.NewDBSyncAPI(cfg.Telegram.Token)
+		if err != nil {
+			return nil, fmt.Errorf("telegram db sync api: %w", err)
+		}
+
+		if sqlstore.LocalDBUsable(dbPath) {
+			log.Info().Str("path", dbPath).Msg("sqlite: using existing local database")
+		} else {
+			if sqlstore.LocalDBUsable(dbPath) == false && fileExists(dbPath) {
+				// Corrupt / empty local file — move aside before restore.
+				_ = os.Rename(dbPath, dbPath+".broken-"+fmt.Sprint(time.Now().Unix()))
+				log.Warn().Msg("sqlite: local db unusable; moved aside, will try telegram")
+			}
+			bctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+			ok, berr := sqlstore.BootstrapFromTelegram(bctx, api, cfg.Telegram.StorageID, dbPath)
+			cancel()
+			if ok {
+				log.Info().Msg("sqlite: restored previous version from telegram cloud")
+			} else {
+				if berr != nil {
+					log.Warn().Err(berr).Msg("sqlite: telegram restore failed; will create fresh db if needed")
+				} else {
+					log.Info().Msg("sqlite: no previous version on telegram; fresh database")
+				}
+			}
+		}
+
+		st, err := sqlstore.Open(cfg.DataDir)
+		if err != nil {
+			return nil, err
+		}
+		// Import legacy files only when DB still has no identity/config content.
+		st.MigrateFromDir(cfg.DataDir)
+		dbSyncer = sqlstore.NewSyncer(st, api, cfg.Telegram.StorageID, 30*time.Second)
+		dbSyncer.Start()
+		log.Info().Msg("sqlite + telegram versioned db sync enabled (debounce 30s)")
+		return st, nil
 	}
-	return local.New(cfg.DataDir)
+
+	// Local-only: still prefer existing sqlite, else create fresh, else fs fallback.
+	if sqlstore.LocalDBUsable(dbPath) {
+		log.Info().Str("path", dbPath).Msg("sqlite: using existing local database")
+	} else {
+		log.Info().Msg("sqlite: no local db; creating fresh")
+	}
+	st, err := sqlstore.Open(cfg.DataDir)
+	if err != nil {
+		log.Warn().Err(err).Msg("sqlite open failed; falling back to filesystem store")
+		return local.New(cfg.DataDir)
+	}
+	st.MigrateFromDir(cfg.DataDir)
+	return st, nil
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func buildChannel(cfg *config.Config) (channel.Channel, error) {

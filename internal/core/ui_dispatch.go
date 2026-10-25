@@ -91,6 +91,20 @@ func (e *Engine) routeUI(ctx context.Context, msg channel.Message, data string) 
 		}
 	case "settings":
 		e.uiSettings(ctx, msg)
+	case "tasks":
+		e.uiTasksBoard(ctx, msg)
+	case "taskstop":
+		if len(parts) >= 3 {
+			e.uiTaskStop(ctx, msg, parts[2])
+		}
+	case "taskstart":
+		if len(parts) >= 3 {
+			e.uiTaskStart(ctx, msg, parts[2])
+		}
+	case "taskget":
+		if len(parts) >= 3 {
+			e.uiTaskGet(ctx, msg, parts[2])
+		}
 	case "profile":
 		e.uiProfile(ctx, msg)
 	case "new":

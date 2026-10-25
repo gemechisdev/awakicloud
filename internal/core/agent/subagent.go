@@ -202,3 +202,19 @@ func (s *recordingSink) Emit(ev transport.Event) {
 		s.finalText = e.Text
 	}
 }
+
+
+// RunBackground runs a general-purpose worker agent to completion and returns
+// its final text. Used by the background task board (async, not the main UI run).
+func (a *Agent) RunBackground(ctx context.Context, prompt string) (string, error) {
+	role, ok := roleByID("general")
+	if !ok {
+		role = BuiltinRoles[len(BuiltinRoles)-1]
+	}
+	// Prevent nested background boards inside workers.
+	role.ToolDeny = append(append([]string{}, role.ToolDeny...),
+		"bg_task_add", "bg_task_list", "bg_task_get", "bg_task_start", "bg_task_stop",
+		"schedule_add", "schedule_remove",
+	)
+	return a.runSubagent(ctx, role, prompt, "", 1)
+}

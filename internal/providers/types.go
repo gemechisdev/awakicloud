@@ -36,8 +36,9 @@ func (p Protocol) Format() string {
 		return "anthropic"
 	case ProtocolGemini:
 		return "gemini"
+	case ProtocolOpenAIResponses:
+		return "openai_responses"
 	default:
-		// OpenAI chat completions and responses both use the OpenAI-compatible adapter for now
 		return "openai"
 	}
 }

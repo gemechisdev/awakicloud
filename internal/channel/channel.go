@@ -21,6 +21,10 @@ const (
 	CmdProject         = "project"
 	CmdProjectUpgrade  = "project_upgrade"
 	CmdProjectSync     = "project_sync"
+	CmdPlan            = "plan"
+	CmdHelp            = "help"
+	CmdTasks           = "tasks"
+	CmdTaskAdd         = "task"
 )
 
 type Command struct {

@@ -85,6 +85,8 @@ func (a *Agent) Run(ctx context.Context, input RunInput, sink transport.Sink) er
 	var total types.Usage
 	var finalText string // last assistant text produced; reported in DoneEvent
 	var toolCallCounter int
+	var contID string
+	var contMsgCount int // messages already covered by server-side continuation
 
 	for iteration := 1; ; iteration++ {
 		if err := ctx.Err(); err != nil {
@@ -120,10 +122,29 @@ func (a *Agent) Run(ctx context.Context, input RunInput, sink transport.Sink) er
 		}
 
 		callStart := time.Now()
-		resp, err := a.client.Call(ctx, buildLLMMessages(msgs), llm.CallOptions{
+		allMsgs := buildLLMMessages(msgs)
+		sendMsgs := allMsgs
+		prevID := contID
+		if prevID != "" && a.client.SupportsContinuation() && contMsgCount > 0 && contMsgCount < len(allMsgs) {
+			sendMsgs = allMsgs[contMsgCount:]
+		} else {
+			prevID = "" // full context this turn
+		}
+		resp, err := a.client.Call(ctx, sendMsgs, llm.CallOptions{
 			System:     sys,
 			ExtraTools: a.localToolDefs(),
+			PreviousID: prevID,
 		})
+		if err != nil && prevID != "" {
+			// Server lost the chain — retry once with full history.
+			resp, err = a.client.Call(ctx, allMsgs, llm.CallOptions{
+				System:     sys,
+				ExtraTools: a.localToolDefs(),
+				Stateless:  true,
+			})
+			contID = ""
+			contMsgCount = 0
+		}
 		if err != nil {
 			// Clean cancellation (user /stop or shutdown): exit quietly, no event.
 			if errors.Is(err, context.Canceled) {
@@ -138,6 +159,9 @@ func (a *Agent) Run(ctx context.Context, input RunInput, sink transport.Sink) er
 			return err
 		}
 		llmDuration := time.Since(callStart)
+		if resp.ContinuationID != "" {
+			contID = resp.ContinuationID
+		}
 
 		parsed := parseResponseBlocks(resp.Content)
 
@@ -148,6 +172,7 @@ func (a *Agent) Run(ctx context.Context, input RunInput, sink transport.Sink) er
 		}
 		a.emit(transport.MessageEvent{Turn: assistantTurn})
 		msgs = append(msgs, assistantTurn)
+		contMsgCount = len(buildLLMMessages(msgs))
 
 		if parsed.textContent != "" {
 			finalText = parsed.textContent
@@ -176,6 +201,7 @@ func (a *Agent) Run(ctx context.Context, input RunInput, sink transport.Sink) er
 			Content:   toolResults,
 			Timestamp: time.Now(),
 		}
+		// Keep contMsgCount at pre-tool length so the next Call sends only tool results.
 		a.emit(transport.MessageEvent{Turn: toolTurn})
 		msgs = append(msgs, toolTurn)
 

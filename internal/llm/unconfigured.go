@@ -18,6 +18,7 @@ func (Unconfigured) ModelLabel() string     { return "not configured" }
 func (Unconfigured) ContextWindow() int     { return 0 }
 func (Unconfigured) InputPricePerM() float64  { return 0 }
 func (Unconfigured) OutputPricePerM() float64 { return 0 }
+func (Unconfigured) SupportsContinuation() bool { return false }
 
 // Ensure Unconfigured implements LLM.
 var _ LLM = Unconfigured{}

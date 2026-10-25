@@ -3,23 +3,29 @@ package telegram
 import (
 	"context"
 	"fmt"
+	"strings"
+
 	"github.com/gemechischala/awaki/internal/channel"
 	"github.com/gemechischala/awaki/internal/channel/telegram/client"
-	"github.com/gemechischala/awaki/internal/transport"
 	"github.com/gemechischala/awaki/internal/store"
-	"github.com/rs/zerolog/log"
-	"strings"
+	"github.com/gemechischala/awaki/internal/transport"
 )
 
+// commandMap maps Telegram slash commands to engine command names.
+// Keep in sync with SetMyCommands in channel.go and /help text.
 var commandMap = map[string]string{
-	"/start":   channel.CmdStart,
-	"/new":     channel.CmdNewChat,
-	"/stop":    channel.CmdStop,
-	"/history": channel.CmdHistory,
-	"/memory":  channel.CmdMemory,
-	"/soul":    channel.CmdSoul,
-	"/user":      channel.CmdUser,
-	"/providers": channel.CmdProviders,
+	"/start":        channel.CmdStart,
+	"/new":          channel.CmdNewChat,
+	"/stop":         channel.CmdStop,
+	"/help":         channel.CmdHelp,
+	"/plan":         channel.CmdPlan,
+	"/tasks":        channel.CmdTasks,
+	"/task":         channel.CmdTaskAdd,
+	"/history":      channel.CmdHistory,
+	"/memory":       channel.CmdMemory,
+	"/soul":         channel.CmdSoul,
+	"/user":         channel.CmdUser,
+	"/providers":    channel.CmdProviders,
 	"/models":       channel.CmdModels,
 	"/provider_add": channel.CmdProviderAdd,
 	"/model_add":    channel.CmdModelAdd,
@@ -40,6 +46,35 @@ var commandEmpty = map[string]string{
 	channel.CmdUser:    "User profile not configured yet — no user.md.",
 }
 
+func helpText() string {
+	return strings.TrimSpace(`
+Commands:
+
+/start — main menu
+/new — new conversation
+/stop — cancel current agent run
+/help — this list
+/plan <task> — read-only plan mode for one turn
+/tasks — background task board
+/task <work> — queue background task manually
+
+/history — past conversations
+/memory — list memory files
+/soul — agent identity (soul.md)
+/user — user profile (user.md)
+
+/providers — manage LLM providers
+/models — list / select models
+/provider_add name|protocol|base_url|api_key
+/model_add provider|model_id|Display Name
+
+/projects — list projects
+/project <name> — create project
+/upgrade [name] — upgrade chat → project
+/sync — sync active project to Telegram storage
+`)
+}
+
 func (c *Channel) handleCommand(ctx context.Context, chatID int64, reply transport.Replier, cmdText string) {
 	cmdText = strings.TrimSpace(cmdText)
 	fields := strings.Fields(cmdText)
@@ -47,25 +82,13 @@ func (c *Channel) handleCommand(ctx context.Context, chatID int64, reply transpo
 	rawArgs := ""
 	if len(fields) > 0 {
 		cmdName = fields[0]
+		// Telegram may send /plan@BotName
+		if i := strings.Index(cmdName, "@"); i > 0 {
+			cmdName = cmdName[:i]
+		}
 		if len(fields) > 1 {
 			rawArgs = strings.TrimSpace(strings.TrimPrefix(cmdText, fields[0]))
 		}
-	}
-
-	if cmdName == "/help" {
-		help := "Commands:\n" +
-			"/start — main menu with buttons\n" +
-			"/new — start a fresh conversation\n" +
-			"/providers — manage AI providers\n" +
-			"/models — list and select models\n" +
-			"/provider_add name|protocol|base_url|key — quick add\n" +
-			"/model_add provider|model_id|name — quick add\n" +
-			"/history — past conversations\n" +
-			"/memory /soul /user /stop /help"
-		if _, err := c.client.SendMessage(ctx, chatID, help, ""); err != nil {
-			log.Error().Err(err).Msg("help send failed")
-		}
-		return
 	}
 
 	name, ok := commandMap[cmdName]
@@ -75,7 +98,7 @@ func (c *Channel) handleCommand(ctx context.Context, chatID int64, reply transpo
 	}
 
 	cmd := &channel.Command{Name: name, Args: map[string]string{"raw": rawArgs}, Result: &channel.CommandResult{}}
-	c.handler(ctx, channel.Message{Reply: reply, Command: cmd})
+	c.handler(ctx, channel.Message{Text: cmdText, Reply: reply, Command: cmd})
 
 	if cmd.Result.Error != nil {
 		c.send(ctx, chatID, "Error: "+client.EscapeMarkdown(cmd.Result.Error.Error()))

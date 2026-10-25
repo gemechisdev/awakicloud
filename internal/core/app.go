@@ -10,6 +10,7 @@ import (
 	"github.com/gemechischala/awaki/internal/core/prompt"
 	"github.com/gemechischala/awaki/internal/transport"
 	"github.com/gemechischala/awaki/internal/scheduler"
+	"github.com/gemechischala/awaki/internal/tasks"
 	types "github.com/gemechischala/awaki/internal/domain"
 	"github.com/gemechischala/awaki/internal/tools"
 	"github.com/gemechischala/awaki/internal/store"
@@ -34,6 +35,7 @@ type Engine struct {
 	registry  *tools.Registry
 	providers *providers.Store
 	projects  *project.Manager
+	tasksMgr  *tasks.Manager
 	ui        uiState
 	steer     steerState
 	// rebuildAgent recreates the LLM client from the active provider/model pair.
@@ -52,6 +54,7 @@ type Params struct {
 	Registry     *tools.Registry
 	Providers    *providers.Store
 	Projects     *project.Manager
+	Tasks        *tasks.Manager
 	RebuildAgent func() error
 }
 
@@ -65,6 +68,7 @@ func New(p Params) *Engine {
 		registry:     p.Registry,
 		providers:    p.Providers,
 		projects:     p.Projects,
+		tasksMgr:     p.Tasks,
 		rebuildAgent: p.RebuildAgent,
 	}
 
@@ -182,6 +186,30 @@ func (e *Engine) handleCommand(ctx context.Context, msg channel.Message) {
 		e.cmdUpgradeProject(ctx, msg, name)
 	case channel.CmdProjectSync:
 		e.cmdSyncProject(ctx, msg)
+	case channel.CmdHelp:
+		cmd.Result.Data = map[string]string{"text": helpCommandText()}
+	case channel.CmdTasks:
+		e.uiTasksBoard(ctx, msg)
+		return
+	case channel.CmdTaskAdd:
+		raw := ""
+		if cmd.Args != nil {
+			raw = strings.TrimSpace(cmd.Args["raw"])
+		}
+		e.cmdAddBackgroundTask(ctx, msg, raw)
+		return
+	case channel.CmdPlan:
+		raw := ""
+		if cmd.Args != nil {
+			raw = strings.TrimSpace(cmd.Args["raw"])
+		}
+		if raw == "" {
+			cmd.Result.Data = map[string]string{"text": "Usage: /plan <task description>\n\nRuns this turn in read-only plan mode (no file writes / mutating shell).\nExample: /plan How should we structure the payment module?"}
+			return
+		}
+		// Hand off to agent with /plan prefix so runAgent enables PlanMode.
+		go e.runAgent(ctx, channel.Message{Text: "/plan " + raw, Reply: msg.Reply})
+		return
 	case channel.CmdProviders:
 		e.uiProvidersList(ctx, msg, 0)
 	case channel.CmdModels:
@@ -384,4 +412,32 @@ func (e *Engine) RunScheduledTask(ctx context.Context, reply transport.Replier, 
 	}
 
 	return finalText, nil
+}
+
+
+func helpCommandText() string {
+	return `Commands:
+
+/start — main menu
+/new — new conversation
+/stop — cancel current agent run
+/help — this list
+/plan <task> — read-only plan mode for one turn
+/tasks — background task board (todo-style)
+/task <work> — queue a background task manually
+
+/history — past conversations
+/memory — list memory files
+/soul — agent identity
+/user — user profile
+
+/providers — manage LLM providers
+/models — list / select models
+/provider_add name|protocol|base_url|api_key
+/model_add provider|model_id|Display Name
+
+/projects — list projects
+/project <name> — create project
+/upgrade [name] — upgrade chat → project
+/sync — sync active project to Telegram storage`
 }

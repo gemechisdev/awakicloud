@@ -34,6 +34,9 @@ func mainMenuKeyboard() channel.KeyboardMessage {
 			},
 			{
 				{Text: "👤 Profile", CallbackData: "ui:profile"},
+				{Text: "📋 Tasks", CallbackData: "ui:tasks"},
+			},
+			{
 				{Text: "📁 New Project", CallbackData: "ui:projnew"},
 			},
 		},
