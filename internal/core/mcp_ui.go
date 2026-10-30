@@ -234,7 +234,6 @@ func parseHeaderOrToken(text string) map[string]string {
 	return map[string]string{"Authorization": token}
 }
 
-
 func (e *Engine) startMCPOAuth(ctx context.Context, msg channel.Message, name string) {
 	if e.mcp == nil {
 		_ = msg.Reply.SendText(ctx, "MCP not available.")

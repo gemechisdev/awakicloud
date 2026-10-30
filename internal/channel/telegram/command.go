@@ -32,9 +32,7 @@ var commandMap = map[string]string{
 	"/projects":     channel.CmdProjects,
 	"/project":      channel.CmdProject,
 	"/upgrade":      channel.CmdProjectUpgrade,
-	"/mcp — list MCP servers
-/mcp_add — add MCP server (wizard)
-/sync":         channel.CmdProjectSync,
+	"/sync":         channel.CmdProjectSync,
 	"/mcp":          channel.CmdMCP,
 	"/mcp_add":      channel.CmdMCPAdd,
 }
@@ -76,6 +74,9 @@ Commands:
 /project <name> — create project
 /upgrade [name] — upgrade chat → project
 /sync — sync active project to Telegram storage
+
+/mcp — list MCP servers
+/mcp_add — add MCP server (wizard)
 `)
 }
 
@@ -204,4 +205,3 @@ func FormatMemory(files []store.MemoryFile) string {
 	}
 	return sb.String()
 }
-

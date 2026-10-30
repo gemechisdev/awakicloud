@@ -236,10 +236,10 @@ func FinishAuth(ctx context.Context, pending PendingAuth, codeOrURL string, clie
 		return nil, fmt.Errorf("no access_token in response")
 	}
 	out := &OAuthConfig{
-		ClientID:     pending.ClientID,
-		AccessToken:  tok.AccessToken,
-		RefreshToken: tok.RefreshToken,
-		TokenType:    tok.TokenType,
+		ClientID:      pending.ClientID,
+		AccessToken:   tok.AccessToken,
+		RefreshToken:  tok.RefreshToken,
+		TokenType:     tok.TokenType,
 		TokenEndpoint: pending.TokenURL,
 	}
 	if out.TokenType == "" {

@@ -78,7 +78,6 @@ func (r *Registry) Register(t types.Tool) {
 	r.tt[t.Name] = t
 }
 
-
 // RestrictTo returns a new registry containing only the named tools.
 // Unknown names are ignored. Used for plan mode / role-scoped agents.
 func (r *Registry) RestrictTo(names []string) *Registry {
@@ -115,7 +114,6 @@ func (r *Registry) Has(name string) bool {
 	_, ok := r.tt[name]
 	return ok
 }
-
 
 // Unregister removes a single tool by name.
 func (r *Registry) Unregister(name string) {
