@@ -14,57 +14,83 @@ import (
 	"time"
 )
 
-const defaultRedirectURI = "urn:ietf:wg:oauth:2.0:oob"
+const defaultRedirectURI = "http://127.0.0.1/callback"
 
 // DiscoverAuth probes the MCP URL for protected-resource / AS metadata.
+// Supports:
+//   - RFC 9728 path-aware well-known URLs
+//   - WWW-Authenticate resource_metadata= on 401 (Firecrawl-style)
+//   - RFC 8414 authorization-server metadata on the AS host
 func DiscoverAuth(ctx context.Context, resourceURL string) (*OAuthConfig, error) {
 	cfg := &OAuthConfig{}
 	client := &http.Client{Timeout: 15 * time.Second}
 
-	// 1) Try RFC 9728 protected resource metadata
-	metaURL := strings.TrimRight(resourceURL, "/")
-	// common locations
-	candidates := []string{
-		metaURL + "/.well-known/oauth-protected-resource",
-		origin(resourceURL) + "/.well-known/oauth-protected-resource",
+	u, err := url.Parse(resourceURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid resource URL: %w", err)
 	}
+	path := strings.TrimSuffix(u.Path, "/")
+	originBase := u.Scheme + "://" + u.Host
+
 	var authServers []string
-	for _, u := range candidates {
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-		resp, err := client.Do(req)
-		if err != nil || resp.StatusCode != 200 {
-			if resp != nil {
-				resp.Body.Close()
-			}
-			continue
-		}
-		var body struct {
-			AuthorizationServers []string `json:"authorization_servers"`
-			Resource             string   `json:"resource"`
-		}
-		_ = json.NewDecoder(resp.Body).Decode(&body)
-		resp.Body.Close()
-		if len(body.AuthorizationServers) > 0 {
-			authServers = body.AuthorizationServers
+	var scopes []string
+
+	// 1) RFC 9728 candidates (path-aware first — required for Firecrawl)
+	candidates := []string{}
+	if path != "" && path != "/" {
+		// https://host/.well-known/oauth-protected-resource/v2/mcp-oauth
+		candidates = append(candidates, originBase+"/.well-known/oauth-protected-resource"+path)
+	}
+	candidates = append(candidates,
+		strings.TrimRight(resourceURL, "/")+"/.well-known/oauth-protected-resource",
+		originBase+"/.well-known/oauth-protected-resource",
+	)
+
+	for _, meta := range candidates {
+		as, sc, ok := fetchPRM(ctx, client, meta)
+		if ok {
+			authServers = as
+			scopes = sc
 			break
 		}
 	}
 
-	// 2) Fallback: probe 401 WWW-Authenticate or same-origin AS metadata
+	// 2) Probe resource with unauthenticated MCP initialize → parse WWW-Authenticate
 	if len(authServers) == 0 {
-		authServers = []string{origin(resourceURL)}
+		if metaURL, ok := probeResourceMetadata(ctx, client, resourceURL); ok {
+			as, sc, ok2 := fetchPRM(ctx, client, metaURL)
+			if ok2 {
+				authServers = as
+				scopes = sc
+			}
+		}
 	}
 
-	as := authServers[0]
+	// 3) Fallback: treat MCP origin as AS
+	if len(authServers) == 0 {
+		authServers = []string{originBase}
+	}
+
+	as := strings.TrimRight(authServers[0], "/")
 	cfg.AuthServer = as
-
-	// AS metadata (RFC 8414)
-	asMetaURLs := []string{
-		strings.TrimRight(as, "/") + "/.well-known/oauth-authorization-server",
-		strings.TrimRight(as, "/") + "/.well-known/openid-configuration",
+	if len(scopes) > 0 {
+		cfg.Scopes = strings.Join(scopes, " ")
 	}
-	for _, u := range asMetaURLs {
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+
+	// AS metadata (RFC 8414) — also try issuer path variants
+	asMetaURLs := []string{
+		as + "/.well-known/oauth-authorization-server",
+		as + "/.well-known/openid-configuration",
+	}
+	// path-aware AS metadata if AS URL has a path
+	if asu, e := url.Parse(as); e == nil && asu.Path != "" && asu.Path != "/" {
+		asMetaURLs = append([]string{
+			asu.Scheme + "://" + asu.Host + "/.well-known/oauth-authorization-server" + asu.Path,
+		}, asMetaURLs...)
+	}
+
+	for _, mu := range asMetaURLs {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, mu, nil)
 		resp, err := client.Do(req)
 		if err != nil || resp.StatusCode != 200 {
 			if resp != nil {
@@ -92,6 +118,75 @@ func DiscoverAuth(ctx context.Context, resourceURL string) (*OAuthConfig, error)
 	return cfg, nil
 }
 
+func fetchPRM(ctx context.Context, client *http.Client, metaURL string) (authServers, scopes []string, ok bool) {
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, metaURL, nil)
+	resp, err := client.Do(req)
+	if err != nil || resp.StatusCode != 200 {
+		if resp != nil {
+			resp.Body.Close()
+		}
+		return nil, nil, false
+	}
+	defer resp.Body.Close()
+	var body struct {
+		AuthorizationServers []string `json:"authorization_servers"`
+		ScopesSupported      []string `json:"scopes_supported"`
+		Resource             string   `json:"resource"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, nil, false
+	}
+	if len(body.AuthorizationServers) == 0 {
+		return nil, nil, false
+	}
+	return body.AuthorizationServers, body.ScopesSupported, true
+}
+
+// probeResourceMetadata POSTs a minimal MCP initialize and parses
+// WWW-Authenticate: Bearer resource_metadata="…".
+func probeResourceMetadata(ctx context.Context, client *http.Client, resourceURL string) (string, bool) {
+	payload := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"awaki","version":"1.0"}}}`
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, resourceURL, strings.NewReader(payload))
+	if err != nil {
+		return "", false
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", false
+	}
+	defer resp.Body.Close()
+	wa := resp.Header.Get("WWW-Authenticate")
+	if wa == "" {
+		return "", false
+	}
+	// resource_metadata="https://..."
+	const key = "resource_metadata="
+	i := strings.Index(strings.ToLower(wa), key)
+	if i < 0 {
+		return "", false
+	}
+	rest := wa[i+len(key):]
+	rest = strings.TrimSpace(rest)
+	if strings.HasPrefix(rest, `"`) {
+		rest = rest[1:]
+		j := strings.Index(rest, `"`)
+		if j < 0 {
+			return "", false
+		}
+		return rest[:j], true
+	}
+	// unquoted until comma/space
+	for _, sep := range []string{",", " "} {
+		if j := strings.Index(rest, sep); j >= 0 {
+			rest = rest[:j]
+			break
+		}
+	}
+	return strings.Trim(rest, `"`), rest != ""
+}
+
 // StartAuth builds a PKCE authorize URL and pending session.
 func StartAuth(ctx context.Context, srv Server) (authURL string, pending PendingAuth, err error) {
 	oauth := srv.OAuth
@@ -109,6 +204,9 @@ func StartAuth(ctx context.Context, srv Server) (authURL string, pending Pending
 		oauth.AuthorizationEndpoint = discovered.AuthorizationEndpoint
 		oauth.TokenEndpoint = discovered.TokenEndpoint
 		oauth.RegistrationEndpoint = discovered.RegistrationEndpoint
+		if oauth.Scopes == "" && discovered.Scopes != "" {
+			oauth.Scopes = discovered.Scopes
+		}
 	}
 	redirect := oauth.RedirectURI
 	if redirect == "" {
@@ -147,8 +245,11 @@ func StartAuth(ctx context.Context, srv Server) (authURL string, pending Pending
 	q.Set("resource", resource)
 	if oauth.Scopes != "" {
 		q.Set("scope", oauth.Scopes)
+		if !strings.Contains(oauth.Scopes, "offline_access") {
+			q.Set("scope", oauth.Scopes+" offline_access")
+		}
 	} else {
-		q.Set("scope", "openid offline_access")
+		q.Set("scope", "offline_access")
 	}
 
 	authURL = oauth.AuthorizationEndpoint
@@ -306,9 +407,16 @@ func RefreshAccessToken(ctx context.Context, oauth *OAuthConfig, resource string
 }
 
 func dynamicRegister(ctx context.Context, regURL, redirect string) (string, error) {
+	uris := []string{redirect}
+	// Firecrawl (and many ASes) reject urn:ietf:wg:oauth:2.0:oob; always include localhost.
+	for _, extra := range []string{"http://127.0.0.1/callback", "http://localhost/callback"} {
+		if extra != redirect {
+			uris = append(uris, extra)
+		}
+	}
 	payload := map[string]any{
 		"client_name":                "Awaki",
-		"redirect_uris":              []string{redirect},
+		"redirect_uris":              uris,
 		"grant_types":                []string{"authorization_code", "refresh_token"},
 		"response_types":             []string{"code"},
 		"token_endpoint_auth_method": "none",
