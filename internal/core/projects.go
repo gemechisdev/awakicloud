@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/gemechischala/awaki/internal/channel"
 	"github.com/gemechischala/awaki/internal/project"
@@ -25,6 +26,11 @@ func (e *Engine) bindWorkspaceForChat(ctx context.Context, chatID, mode, slug st
 	}
 }
 
+// SyncActiveProject uploads zip if current chat is a project.
+func (e *Engine) SyncActiveProject(ctx context.Context) {
+	e.syncActiveProject(ctx)
+}
+
 // syncActiveProject uploads zip if current chat is a project.
 func (e *Engine) syncActiveProject(ctx context.Context) {
 	if e.projects == nil {
@@ -44,6 +50,27 @@ func (e *Engine) syncActiveProject(ctx context.Context) {
 	}
 	ch.ProjectHash = meta.Hash
 	_ = ch.Save()
+}
+
+// startProjectAutoSync launches a background ticker that auto-syncs the active
+// project whenever the project manager reports dirty (file changes, DB updates,
+// etc.). Runs every 30s to match the DB snapshot cadence.
+func (e *Engine) startProjectAutoSync(ctx context.Context) {
+	if e.projects == nil {
+		return
+	}
+	go func() {
+		t := time.NewTicker(30 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				e.syncActiveProject(context.WithoutCancel(ctx))
+			}
+		}
+	}()
 }
 
 func (e *Engine) cmdNewProject(ctx context.Context, msg channel.Message, name string) {

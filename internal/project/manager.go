@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -42,6 +43,10 @@ type BlobStore interface {
 type Manager struct {
 	dataDir string
 	blobs   BlobStore
+
+	mu       sync.Mutex
+	dirty    bool
+	onChange func()
 }
 
 func NewManager(dataDir string, blobs BlobStore) *Manager {
@@ -49,6 +54,24 @@ func NewManager(dataDir string, blobs BlobStore) *Manager {
 		blobs = NewLocalBlobStore(filepath.Join(dataDir, "project-archives"))
 	}
 	return &Manager{dataDir: dataDir, blobs: blobs}
+}
+
+// SetOnChange registers a callback fired after project-affecting operations,
+// so an auto-syncer can debounce zip uploads to cloud storage.
+func (m *Manager) SetOnChange(fn func()) {
+	m.mu.Lock()
+	m.onChange = fn
+	m.mu.Unlock()
+}
+
+func (m *Manager) touch() {
+	m.mu.Lock()
+	m.dirty = true
+	fn := m.onChange
+	m.mu.Unlock()
+	if fn != nil {
+		fn()
+	}
 }
 
 func (m *Manager) projectsRoot() string {
@@ -179,6 +202,23 @@ func (m *Manager) Sync(ctx context.Context, slug string) (Meta, error) {
 	_ = m.writeMeta(meta)
 	log.Info().Str("slug", slug).Str("hash", hash).Int("bytes", len(data)).Msg("project synced")
 	return meta, nil
+}
+
+// MarkDirty marks the project tree as changed so a debounced auto-sync will
+// pick it up on the next tick.
+func (m *Manager) MarkDirty() {
+	m.mu.Lock()
+	m.dirty = true
+	m.mu.Unlock()
+}
+
+// IsDirtyAndClear returns the dirty flag and resets it.
+func (m *Manager) IsDirtyAndClear() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d := m.dirty
+	m.dirty = false
+	return d
 }
 
 // ListLocal returns projects present on disk.
@@ -321,5 +361,6 @@ func (m *Manager) PromoteFromWorkspace(name, chatID, currentRoot string) (Meta, 
 	}
 	// Ensure workspace is bound to the new project
 	_ = workspace.SetRoot(m.ProjectDir(meta.Slug))
+	m.touch()
 	return meta, n, nil
 }

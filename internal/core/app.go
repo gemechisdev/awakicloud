@@ -3,20 +3,20 @@ package core
 import (
 	"context"
 	"fmt"
-	"strings"
 	"github.com/gemechischala/awaki/internal/channel"
 	"github.com/gemechischala/awaki/internal/core/agent"
 	"github.com/gemechischala/awaki/internal/core/chat"
 	"github.com/gemechischala/awaki/internal/core/prompt"
-	"github.com/gemechischala/awaki/internal/transport"
-	"github.com/gemechischala/awaki/internal/scheduler"
-	"github.com/gemechischala/awaki/internal/tasks"
 	types "github.com/gemechischala/awaki/internal/domain"
-	"github.com/gemechischala/awaki/internal/tools"
-	"github.com/gemechischala/awaki/internal/store"
-	"github.com/gemechischala/awaki/internal/providers"
 	"github.com/gemechischala/awaki/internal/mcp"
 	"github.com/gemechischala/awaki/internal/project"
+	"github.com/gemechischala/awaki/internal/providers"
+	"github.com/gemechischala/awaki/internal/scheduler"
+	"github.com/gemechischala/awaki/internal/store"
+	"github.com/gemechischala/awaki/internal/tasks"
+	"github.com/gemechischala/awaki/internal/tools"
+	"github.com/gemechischala/awaki/internal/transport"
+	"strings"
 	"sync"
 
 	"github.com/rs/zerolog/log"
@@ -90,6 +90,9 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 	defer e.scheduler.Stop()
 
+	// Auto-sync active project zip on a ticker (matches 30s DB snapshot cadence).
+	e.startProjectAutoSync(ctx)
+
 	return e.ch.Run(ctx, e.handleMessage)
 }
 
@@ -103,7 +106,6 @@ func (e *Engine) Busy() bool {
 	defer e.mu.Unlock()
 	return e.active != nil
 }
-
 
 func (e *Engine) handleMessage(ctx context.Context, msg channel.Message) {
 	// UI callbacks, reply-keyboard labels, and provider wizards
@@ -264,7 +266,6 @@ func (e *Engine) runAgent(ctx context.Context, msg channel.Message) {
 		}
 	}
 
-
 	agentCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -421,7 +422,6 @@ func (e *Engine) RunScheduledTask(ctx context.Context, reply transport.Replier, 
 
 	return finalText, nil
 }
-
 
 func helpCommandText() string {
 	return `Commands:

@@ -63,6 +63,18 @@ func main() {
 		return
 	}
 
+	// Wire DB syncer's onSuccess callback to also trigger project zip sync,
+	// so project and DB stay in step on every cloud snapshot.
+	if dbSyncer != nil {
+		dbSyncer.SetOnSync(func() {
+			go func() {
+				sCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+				defer cancel()
+				eng.SyncActiveProject(sCtx)
+			}()
+		})
+	}
+
 	// HTTP health endpoints for Koyeb / Render / Railway (PORT or AWAKI_HTTP_PORT, default 8000).
 	hs := health.New(health.AddrFromEnv(), func() map[string]any {
 		return map[string]any{

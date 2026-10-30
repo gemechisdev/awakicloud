@@ -26,12 +26,12 @@ type TGAPI interface {
 
 // Manifest is pinned in the storage chat and points at versioned DB snapshots.
 type Manifest struct {
-	LatestVer    int              `json:"latest_ver"`
-	LatestFileID string           `json:"latest_file_id"`
-	LatestHash   string           `json:"latest_hash"`
-	LatestMsgID  int              `json:"latest_msg_id"`
-	History      []ManifestEntry  `json:"history"`
-	UpdatedAt    string           `json:"updated_at"`
+	LatestVer    int             `json:"latest_ver"`
+	LatestFileID string          `json:"latest_file_id"`
+	LatestHash   string          `json:"latest_hash"`
+	LatestMsgID  int             `json:"latest_msg_id"`
+	History      []ManifestEntry `json:"history"`
+	UpdatedAt    string          `json:"updated_at"`
 }
 
 type ManifestEntry struct {
@@ -45,17 +45,18 @@ type ManifestEntry struct {
 
 // Syncer debounces uploads of awaki.db to Telegram (append-only versions).
 type Syncer struct {
-	mu        sync.Mutex
-	store     *Store
-	api       TGAPI
-	chatID    int64
-	interval  time.Duration
-	dirty     bool
-	lastHash  string
-	stopCh    chan struct{}
-	doneCh    chan struct{}
-	manifest  Manifest
-	manMsgID  int // text/doc message id for manifest pin target
+	mu       sync.Mutex
+	store    *Store
+	api      TGAPI
+	chatID   int64
+	interval time.Duration
+	dirty    bool
+	lastHash string
+	stopCh   chan struct{}
+	doneCh   chan struct{}
+	manifest Manifest
+	manMsgID int    // text/doc message id for manifest pin target
+	onSync   func() // fired after a successful DB upload to cloud
 }
 
 func NewSyncer(store *Store, api TGAPI, chatID int64, interval time.Duration) *Syncer {
@@ -72,6 +73,14 @@ func NewSyncer(store *Store, api TGAPI, chatID int64, interval time.Duration) *S
 	}
 	store.SetOnChange(s.MarkDirty)
 	return s
+}
+
+// SetOnSync registers a callback fired after a successful DB upload to cloud storage.
+// Intended to also trigger a project zip sync so DB + project stay in step.
+func (s *Syncer) SetOnSync(fn func()) {
+	s.mu.Lock()
+	s.onSync = fn
+	s.mu.Unlock()
 }
 
 func (s *Syncer) MarkDirty() {
@@ -177,6 +186,12 @@ func (s *Syncer) flush(force bool) {
 	_ = s.api.PinMessage(ctx, s.chatID, msgID)
 
 	log.Info().Int("ver", ver).Str("hash", hash[:12]).Int("bytes", len(data)).Msg("sqlite sync: uploaded db snapshot")
+	s.mu.Lock()
+	onSync := s.onSync
+	s.mu.Unlock()
+	if onSync != nil {
+		onSync()
+	}
 }
 
 func (s *Syncer) snapshotBytes() ([]byte, string, error) {
