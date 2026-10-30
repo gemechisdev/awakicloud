@@ -7,6 +7,7 @@ import (
 
 	"github.com/gemechischala/awaki/internal/channel"
 	"github.com/gemechischala/awaki/internal/project"
+	"github.com/gemechischala/awaki/internal/workspace"
 	"github.com/rs/zerolog/log"
 )
 
@@ -84,6 +85,10 @@ func (e *Engine) cmdNewProject(ctx context.Context, msg channel.Message, name st
 }
 
 func (e *Engine) cmdUpgradeProject(ctx context.Context, msg channel.Message, name string) {
+	if e.projects == nil {
+		_ = msg.Reply.SendText(ctx, "Projects not available.")
+		return
+	}
 	ch, err := e.chats.Resolve()
 	if err != nil {
 		_ = msg.Reply.SendText(ctx, err.Error())
@@ -99,25 +104,48 @@ func (e *Engine) cmdUpgradeProject(ctx context.Context, msg channel.Message, nam
 	if strings.TrimSpace(name) == "" {
 		e.ui.set(&uiWizard{Kind: "upgrade_project", Step: "name", Draft: map[string]string{}})
 		e.deliverKeyboard(ctx, msg, channel.KeyboardMessage{
-			Text: "📁 Upgrade chat → project\n\nSend a name for this project.",
+			Text: "📁 Upgrade chat → project\n\nSend a name for this project.\nCurrent workspace files will be copied into the project and synced.",
 			Rows: [][]channel.Button{{{Text: "❌ Cancel", CallbackData: "ui:home"}}},
 		})
 		return
 	}
-	meta, err := e.projects.Create(name, ch.ID)
+
+	// Capture current workspace (usually scratch) before Create rebinds it.
+	prevRoot := workspace.Root()
+
+	meta, n, err := e.projects.PromoteFromWorkspace(name, ch.ID, prevRoot)
 	if err != nil {
-		_ = msg.Reply.SendText(ctx, err.Error())
+		_ = msg.Reply.SendText(ctx, "Promote failed: "+err.Error())
 		return
 	}
+
 	ch.Mode = project.ModeProject
 	ch.ProjectID = meta.ID
 	ch.ProjectSlug = meta.Slug
 	if ch.Title == "" {
 		ch.Title = meta.Name
 	}
+	_ = ch.Save() // persists mode/slug into chat DB
+
+	synced, err := e.projects.Sync(ctx, meta.Slug)
+	if err != nil {
+		log.Warn().Err(err).Str("slug", meta.Slug).Msg("project sync after promote failed")
+		_ = msg.Reply.SendText(ctx, fmt.Sprintf(
+			"🟢 Promoted to project «%s» (%s)\nCopied %d files from previous workspace.\nSync deferred: %v",
+			meta.Name, meta.Slug, n, err,
+		))
+		return
+	}
+	ch.ProjectHash = synced.Hash
 	_ = ch.Save()
-	_, _ = e.projects.Sync(ctx, meta.Slug)
-	_ = msg.Reply.SendText(ctx, fmt.Sprintf("🟢 Upgraded to project «%s» (%s)", meta.Name, meta.Slug))
+
+	_ = msg.Reply.SendText(ctx, fmt.Sprintf(
+		"🟢 Promoted to project «%s» (%s)\n"+
+			"Copied %d files from previous workspace into /data/projects/%s/\n"+
+			"Chat bound + synced (hash %s).\n"+
+			"Agent file tools now use this durable project directory.",
+		meta.Name, meta.Slug, n, meta.Slug, synced.Hash,
+	))
 }
 
 func (e *Engine) cmdListProjects(ctx context.Context, msg channel.Message) {

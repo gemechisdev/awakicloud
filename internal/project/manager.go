@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -215,8 +216,110 @@ func (m *Manager) EnsureSessionWorkspace(ctx context.Context, mode, slug, chatID
 	return m.ActivateScratch(chatID)
 }
 
-
 // ListCloud returns archives from the blob backend (Telegram + local).
 func (m *Manager) ListCloud(ctx context.Context) ([]Meta, error) {
 	return m.blobs.ListArchives(ctx)
+}
+
+// CopyTreeIgnoring copies files from src into dest, applying DefaultIgnore rules.
+// Existing files in dest are overwritten. Directories are created as needed.
+// Returns the number of files copied.
+func CopyTreeIgnoring(src, dest string) (int, error) {
+	if src == "" || dest == "" {
+		return 0, fmt.Errorf("src and dest required")
+	}
+	srcAbs, err := filepath.Abs(src)
+	if err != nil {
+		return 0, err
+	}
+	destAbs, err := filepath.Abs(dest)
+	if err != nil {
+		return 0, err
+	}
+	if srcAbs == destAbs {
+		return 0, nil
+	}
+	// Avoid copying a parent into a child
+	if strings.HasPrefix(destAbs+string(os.PathSeparator), srcAbs+string(os.PathSeparator)) {
+		return 0, fmt.Errorf("refusing to copy parent into child")
+	}
+	if err := os.MkdirAll(destAbs, 0o755); err != nil {
+		return 0, err
+	}
+	copied := 0
+	err = filepath.Walk(srcAbs, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(srcAbs, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		relSlash := filepath.ToSlash(rel)
+		if shouldIgnore(relSlash) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		target := filepath.Join(destAbs, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		in, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer in.Close()
+		out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode())
+		if err != nil {
+			return err
+		}
+		_, copyErr := io.Copy(out, in)
+		closeErr := out.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		copied++
+		return nil
+	})
+	return copied, err
+}
+
+// PromoteFromWorkspace creates a project and copies the current workspace
+// (usually scratch) into it. Caller is responsible for updating chat mode/slug
+// and calling Sync. Returns meta and how many files were copied.
+func (m *Manager) PromoteFromWorkspace(name, chatID, currentRoot string) (Meta, int, error) {
+	meta, err := m.Create(name, chatID)
+	if err != nil {
+		return Meta{}, 0, err
+	}
+	n := 0
+	if currentRoot != "" {
+		// Create already set workspace to the new project dir — copy from the
+		// previous root before that happened would be ideal, so callers should
+		// pass the old root. If currentRoot is already the project dir, skip.
+		projDir := m.ProjectDir(meta.Slug)
+		if filepath.Clean(currentRoot) != filepath.Clean(projDir) {
+			n, err = CopyTreeIgnoring(currentRoot, projDir)
+			if err != nil {
+				return meta, n, fmt.Errorf("copy workspace into project: %w", err)
+			}
+		}
+	}
+	// Ensure workspace is bound to the new project
+	_ = workspace.SetRoot(m.ProjectDir(meta.Slug))
+	return meta, n, nil
 }

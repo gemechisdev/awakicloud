@@ -84,7 +84,8 @@ func buildWorkStrategySection() string {
 - When uncertain: ask the user rather than guessing.
 - When stuck: try a different approach instead of repeating the same one.
 - Keep sub-tasks small and focused. Verify each result before moving to the next step.
-- For simple/routine tasks (1-2 steps): just do them, no planning overhead needed.`
+- For simple/routine tasks (1-2 steps): just do them, no planning overhead needed.
+- Multi-file work: if the request involves more than ~2 files (a real project, app, or codebase change) and you are not already in an active project under /data/projects/, promote the chat to a project first (/upgrade or create project) so the work is durable. Do not keep important multi-file output only under /work or scratch.`
 }
 
 func buildIdentityToolsSection() string {
@@ -147,9 +148,24 @@ Skills are NOT for facts (use memory for that). Skills are for procedures.`
 func buildSystemAccessSection() string {
 	return `SYSTEM ACCESS: You run inside a Docker container (Ubuntu).
 Everything outside mounted volumes is EPHEMERAL — lost on container restart.
-Persistent paths:
-- /data — persists across restarts (databases, configs, important files)
-- /work — workspace for scripts (also persists)
+
+PERSISTENCE (critical — read carefully):
+- ONLY content under /data/projects/{slug}/ is treated as a durable "project".
+  That tree is the one that gets zipped and synced. Work that must survive
+  MUST live inside an active project directory.
+- The current workspace root (what relative file tools resolve against) is
+  either a scratch dir or a project dir under /data/projects/.
+- /work, /tmp, and other paths may exist and even be mounted, but they are
+  NOT automatically backed up as projects. Treating them as the main place
+  for multi-file work has already caused data loss. Prefer projects.
+- When a task needs more than ~2 files (a real app, library, multi-file
+  change set, etc.) and you are not already in project mode: call
+  promote_project(name?) yourself (same as /upgrade), then do the work
+  inside the durable project directory.
+- Uploaded files (zip, tar.gz, docx, pdf, anything): saved as-is under the
+  workspace (.awaki-uploads/). You decide extract / open / merge / ignore.
+  Never blindly overwrite a whole project tree from an archive.
+
 Anything installed via apt/pip/npm will be GONE after restart.
 If you need a package permanently, note it in memory so you can reinstall,
 or suggest the owner add it to the Dockerfile.

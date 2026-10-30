@@ -22,26 +22,21 @@ func (c *Channel) downloadMedia(ctx context.Context, fileID string, fileSize, ma
 func (c *Channel) processDocument(ctx context.Context, doc *models.Document) ([]transport.Attachment, error) {
 	mime := doc.MimeType
 
+	// Archives are kept intact like any other document. The agent decides
+	// whether to extract, merge, or leave them. Never auto-flatten into
+	// individual text/image attachments.
 	if isArchiveZip(mime, doc.FileName) {
 		if doc.FileSize > maxGenericFileSize {
 			return nil, fmt.Errorf("zip file too large (%d bytes)", doc.FileSize)
 		}
-		data, err := c.client.DownloadFile(ctx, doc.FileID)
-		if err != nil {
-			return nil, err
-		}
-		return extractZipFiles(data)
+		return c.downloadMedia(ctx, doc.FileID, doc.FileSize, maxGenericFileSize, doc.FileName, "application/zip")
 	}
 
 	if isArchiveTarGz(mime, doc.FileName) {
 		if doc.FileSize > maxGenericFileSize {
 			return nil, fmt.Errorf("tar.gz file too large (%d bytes)", doc.FileSize)
 		}
-		data, err := c.client.DownloadFile(ctx, doc.FileID)
-		if err != nil {
-			return nil, err
-		}
-		return extractTarGzFiles(data)
+		return c.downloadMedia(ctx, doc.FileID, doc.FileSize, maxGenericFileSize, doc.FileName, "application/gzip")
 	}
 
 	if isImageMIME(mime) {
@@ -100,20 +95,17 @@ func (c *Channel) processVideoNote(ctx context.Context, vn *models.VideoNote) ([
 }
 
 func (c *Channel) processAnimation(ctx context.Context, anim *models.Animation) ([]transport.Attachment, error) {
-	mime := anim.MimeType
-	if mime == "" {
-		mime = "video/mp4"
-	}
 	filename := anim.FileName
 	if filename == "" {
 		filename = "animation.mp4"
+	}
+	mime := anim.MimeType
+	if mime == "" {
+		mime = "video/mp4"
 	}
 	return c.downloadMedia(ctx, anim.FileID, anim.FileSize, maxGenericFileSize, filename, mime)
 }
 
 func (c *Channel) processSticker(ctx context.Context, sticker *models.Sticker) ([]transport.Attachment, error) {
-	if sticker.IsAnimated {
-		return nil, nil
-	}
 	return c.downloadMedia(ctx, sticker.FileID, int64(sticker.FileSize), maxImageFileSize, "sticker.webp", "image/webp")
 }

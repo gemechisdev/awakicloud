@@ -3,9 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -13,25 +13,25 @@ import (
 	"github.com/gemechischala/awaki/internal/channel/telegram"
 	"github.com/gemechischala/awaki/internal/config"
 	"github.com/gemechischala/awaki/internal/core"
-	"github.com/gemechischala/awaki/internal/health"
 	"github.com/gemechischala/awaki/internal/core/agent"
 	"github.com/gemechischala/awaki/internal/core/agent/hook"
 	"github.com/gemechischala/awaki/internal/core/chat"
 	"github.com/gemechischala/awaki/internal/core/prompt"
+	"github.com/gemechischala/awaki/internal/health"
 	"github.com/gemechischala/awaki/internal/llm"
-	"github.com/gemechischala/awaki/internal/providers"
-	"github.com/gemechischala/awaki/internal/project"
-tgstore "github.com/gemechischala/awaki/internal/store/telegram"
 	"github.com/gemechischala/awaki/internal/logger"
+	"github.com/gemechischala/awaki/internal/project"
+	"github.com/gemechischala/awaki/internal/providers"
 	"github.com/gemechischala/awaki/internal/scheduler"
 	"github.com/gemechischala/awaki/internal/store"
 	"github.com/gemechischala/awaki/internal/store/local"
 	sqlstore "github.com/gemechischala/awaki/internal/store/sqlite"
+	tgstore "github.com/gemechischala/awaki/internal/store/telegram"
+	"github.com/gemechischala/awaki/internal/tasks"
 	"github.com/gemechischala/awaki/internal/tools"
 	"github.com/gemechischala/awaki/internal/tools/comm"
 	"github.com/gemechischala/awaki/internal/tools/identity"
 	"github.com/gemechischala/awaki/internal/tools/system"
-	"github.com/gemechischala/awaki/internal/tasks"
 
 	"github.com/rs/zerolog/log"
 )
@@ -217,7 +217,6 @@ func buildEngine(ctx context.Context, cfg *config.Config, ch channel.Channel) (*
 		return nil
 	}
 
-	
 	// Project workspaces: zip binaries on Telegram, pointers in SQLite.
 	var blobs project.BlobStore = project.NewLocalBlobStore(filepath.Join(cfg.DataDir, "project-archives"))
 	if ss, ok := st.(*sqlstore.Store); ok && cfg.Telegram.StorageID != 0 && cfg.Telegram.Token != "" {
@@ -239,7 +238,15 @@ func buildEngine(ctx context.Context, cfg *config.Config, ch channel.Channel) (*
 	}
 	projMgr := project.NewManager(cfg.DataDir, blobs)
 
-return core.New(core.Params{
+	// Agent can promote the current chat → durable project (same as /upgrade).
+	for _, t := range system.ProjectTools(projMgr, chatMgr.Resolve) {
+		reg.Register(t)
+	}
+	if c, ok := client.(*llm.Client); ok {
+		c.SetTools(reg.Definitions())
+	}
+
+	return core.New(core.Params{
 		Channel:      ch,
 		Store:        st,
 		Agent:        ag,
