@@ -69,9 +69,14 @@ func (e *Engine) cmdMCPDetail(ctx context.Context, msg channel.Message, name str
 		{{Text: "🔗 Connect", CallbackData: "ui:mcpconn:" + srv.Name},
 			{Text: "⏸ Disconnect", CallbackData: "ui:mcpdisc:" + srv.Name}},
 	}
-	if srv.Transport() != mcp.TransportStdio {
+	if srv.Transport() == mcp.TransportStdio {
+		rows = append(rows, []channel.Button{
+			{Text: "🔑 Update env / key", CallbackData: "ui:mcpkey:" + srv.Name},
+		})
+	} else {
 		rows = append(rows, []channel.Button{
 			{Text: "🔐 Authorize (OAuth)", CallbackData: "ui:mcpauth:" + srv.Name},
+			{Text: "🔑 Update API key", CallbackData: "ui:mcpkey:" + srv.Name},
 		})
 	}
 	rows = append(rows,
@@ -137,8 +142,9 @@ func (e *Engine) wizardAddMCP(ctx context.Context, msg channel.Message, w *uiWiz
 		e.ui.setDraft("url", text)
 		e.ui.setStep("auth")
 		e.deliverKeyboard(ctx, msg, channel.KeyboardMessage{
-			Text: "Step 4/4 — Auth (optional)\n\nSend a Bearer token / API key, or header lines like:\nAuthorization: Bearer sk-…\n\nOr /skip if the server needs no key.",
+			Text: "Step 4/4 — Auth (optional)\n\n• Send a Bearer token / API key, or header lines like:\n  Authorization: Bearer sk-…\n• Or tap 🔐 Authorize to use OAuth (browser login)\n• Or /skip / ⏭ if no auth is needed",
 			Rows: [][]channel.Button{
+				{{Text: "🔐 Authorize (OAuth)", CallbackData: "ui:mcpaddoauth"}},
 				{{Text: "⏭ Skip", CallbackData: "ui:mcpauthskip"}},
 				{{Text: "❌ Cancel", CallbackData: "ui:mcp"}},
 			},
@@ -244,10 +250,10 @@ func (e *Engine) startMCPOAuth(ctx context.Context, msg channel.Message, name st
 		_ = msg.Reply.SendText(ctx, "Authorize failed: "+err.Error())
 		return
 	}
-	e.ui.set(&uiWizard{Kind: "mcp_oauth", Step: "code", Draft: map[string]string{"name": name}})
+		e.ui.set(&uiWizard{Kind: "mcp_oauth", Step: "code", Draft: map[string]string{"name": name}})
 	e.deliverKeyboard(ctx, msg, channel.KeyboardMessage{
 		Text: "🔐 Authorize «" + name + "»\n\n" +
-			"1. Tap the button below to open the login page in your browser.\n" +
+			"1. Open this link (or tap the button):\n" + authURL + "\n\n" +
 			"2. Sign in and approve access.\n" +
 			"3. Copy the full redirect URL (or just the code) and paste it here.\n\n" +
 			"Waiting for callback…",
@@ -272,6 +278,102 @@ func (e *Engine) wizardMCPOAuth(ctx context.Context, msg channel.Message, w *uiW
 		return true
 	}
 	_ = msg.Reply.SendText(ctx, "✅ Authorized and connected «"+name+"». Tools hot-reloaded.")
+	e.cmdMCPDetail(ctx, msg, name)
+	return true
+}
+
+
+// finishMCPAddThenOAuth saves the server from the add wizard without a key,
+// then immediately starts the OAuth browser flow.
+func (e *Engine) finishMCPAddThenOAuth(ctx context.Context, msg channel.Message) {
+	w := e.ui.get()
+	if w == nil || w.Kind != "mcp_add" {
+		_ = msg.Reply.SendText(ctx, "No active add wizard.")
+		return
+	}
+	name := w.Draft["name"]
+	typ := w.Draft["type"]
+	if typ == "" {
+		typ = mcp.TransportStdio
+	}
+	if typ == mcp.TransportStdio {
+		_ = msg.Reply.SendText(ctx, "OAuth is only for http/sse MCP servers.")
+		return
+	}
+	srv := mcp.Server{Name: name, Type: typ, URL: w.Draft["url"]}
+	e.ui.clear()
+	if e.mcp == nil {
+		_ = msg.Reply.SendText(ctx, "MCP not available.")
+		return
+	}
+	if err := e.mcp.Add(srv); err != nil {
+		_ = msg.Reply.SendText(ctx, "Save failed: "+err.Error())
+		return
+	}
+	_ = msg.Reply.SendText(ctx, fmt.Sprintf("✅ MCP «%s» saved. Starting OAuth…", name))
+	e.startMCPOAuth(ctx, msg, name)
+}
+
+func (e *Engine) startMCPUpdateKey(ctx context.Context, msg channel.Message, name string) {
+	if e.mcp == nil {
+		_ = msg.Reply.SendText(ctx, "MCP not available.")
+		return
+	}
+	srv, ok, err := e.mcp.Store().Get(name)
+	if err != nil || !ok {
+		_ = msg.Reply.SendText(ctx, "Server not found: "+name)
+		return
+	}
+	e.ui.set(&uiWizard{Kind: "mcp_key", Step: "value", Draft: map[string]string{"name": name, "type": srv.Transport()}})
+	hint := "Send a Bearer token / API key, or header lines (Authorization: Bearer …).\n\nSend /clear to remove stored keys/headers."
+	if srv.Transport() == mcp.TransportStdio {
+		hint = "Send env KEY=VALUE pairs, one per line.\n\nSend /clear to remove stored env vars."
+	}
+	e.deliverKeyboard(ctx, msg, channel.KeyboardMessage{
+		Text: "🔑 Update auth for «" + name + "»\n\n" + hint,
+		Rows: [][]channel.Button{
+			{{Text: "❌ Cancel", CallbackData: "ui:mcp:" + name}},
+		},
+	})
+}
+
+func (e *Engine) wizardMCPUpdateKey(ctx context.Context, msg channel.Message, w *uiWizard, text string) bool {
+	name := w.Draft["name"]
+	text = strings.TrimSpace(text)
+	if text == "" {
+		_ = msg.Reply.SendText(ctx, "Send a key, headers, env lines, or /clear.")
+		return true
+	}
+	if e.mcp == nil {
+		e.ui.clear()
+		_ = msg.Reply.SendText(ctx, "MCP not available.")
+		return true
+	}
+	srv, ok, err := e.mcp.Store().Get(name)
+	if err != nil || !ok {
+		e.ui.clear()
+		_ = msg.Reply.SendText(ctx, "Server not found: "+name)
+		return true
+	}
+	if text == "/clear" {
+		srv.Headers = nil
+		srv.Env = nil
+	} else if srv.Transport() == mcp.TransportStdio {
+		srv.Env = parseEnvLines(text)
+	} else {
+		srv.Headers = parseHeaderOrToken(text)
+	}
+	e.ui.clear()
+	if err := e.mcp.Add(srv); err != nil {
+		_ = msg.Reply.SendText(ctx, "Update failed: "+err.Error())
+		return true
+	}
+	e.mcp.Disconnect(name)
+	if cerr := e.mcp.Connect(ctx, name); cerr != nil {
+		_ = msg.Reply.SendText(ctx, "✅ Key updated. Connect deferred: "+cerr.Error())
+	} else {
+		_ = msg.Reply.SendText(ctx, "✅ Key updated and reconnected.")
+	}
 	e.cmdMCPDetail(ctx, msg, name)
 	return true
 }

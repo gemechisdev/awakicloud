@@ -173,6 +173,21 @@ func (e *Engine) routeUI(ctx context.Context, msg channel.Message, data string) 
 		}
 	case "mcpauthskip":
 		e.finishMCPAdd(ctx, msg, "/skip")
+	case "mcpauth":
+		// ui:mcpauth:<server-name>
+		if len(parts) >= 3 {
+			name := strings.Join(parts[2:], ":")
+			e.startMCPOAuth(ctx, msg, name)
+		}
+	case "mcpaddoauth":
+		// During add wizard: save without key, then start OAuth
+		e.finishMCPAddThenOAuth(ctx, msg)
+	case "mcpkey":
+		// ui:mcpkey:<server-name> — update API key / headers
+		if len(parts) >= 3 {
+			name := strings.Join(parts[2:], ":")
+			e.startMCPUpdateKey(ctx, msg, name)
+		}
 	case "models":
 		page := 0
 		if len(parts) >= 3 {
@@ -365,6 +380,8 @@ func (e *Engine) handleWizardInput(ctx context.Context, msg channel.Message, w *
 		return e.wizardAddMCP(ctx, msg, w, text)
 	case "mcp_oauth":
 		return e.wizardMCPOAuth(ctx, msg, w, text)
+	case "mcp_key":
+		return e.wizardMCPUpdateKey(ctx, msg, w, text)
 	}
 	e.ui.clear()
 	return false
