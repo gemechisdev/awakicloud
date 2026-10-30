@@ -139,11 +139,18 @@ Never read more than one skill upfront; only read after selecting.
 	}
 
 	return skillsIntro + "\n\n" +
-		`SELF-LEARNING: When you solve a non-trivial problem (multi-step workflow,
+		`SKILL LEVELS:
+- L1: SKILL.md instructions only — follow the procedure with existing tools.
+- L2: + references/ and assets/ — use skill_files / skill_read_file for docs and templates.
+- L3: + scripts/ — prefer skill_run(name, script, args) for packaged automation.
+Skills teach HOW; tools (bash, files, web, MCP) provide the means. A skill without tools cannot act alone.
+
+SELF-LEARNING: When you solve a non-trivial problem (multi-step workflow,
 tricky API integration, debugging session, deployment procedure), consider
 creating a skill with skill_create. A skill captures HOW to do something —
 commands, API calls, gotchas — so you do it better and faster next time.
-Skills are NOT for facts (use memory for that). Skills are for procedures.`
+Skills are NOT for facts (use memory for that). Skills are for procedures.
+Owners can also install full packages (zip with SKILL.md + references/scripts) via /skills.`
 }
 
 func buildSystemAccessSection() string {

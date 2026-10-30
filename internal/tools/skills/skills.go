@@ -3,29 +3,37 @@ package skills
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
+
+	skillpkg "github.com/gemechischala/awaki/internal/skills"
 	"github.com/gemechischala/awaki/internal/store"
 	"github.com/gemechischala/awaki/internal/tools/types"
-	"strings"
 )
 
 func SkillTools(st store.Store) []types.Tool {
+	mgr := skillpkg.NewManager(st)
 	return []types.Tool{
 		{
 			Name:  "skill_list",
 			Label: "Listing skills",
-			Description: "List all available skills with their name and description. Skills are reusable procedural knowledge — workflows, integrations, how-to guides — that you created from past experience.",
-			Parameters:  map[string]any{},
+			Description: "List installed Agent Skills (L1 instructions, L2 +references/assets, L3 +scripts). " +
+				"Skills teach workflows; they do not replace tools. Read a matching skill with skill_read before following it.",
+			Parameters: map[string]any{},
 			Handler: func(_ context.Context, _ map[string]any) types.Result {
 				loaded, err := st.LoadSkills()
 				if err != nil {
 					return types.Result{Output: "error listing skills: " + err.Error(), IsErr: true}
 				}
 				if len(loaded) == 0 {
-					return types.Result{Output: "(no skills yet — use skill_create to save procedural knowledge for reuse)"}
+					return types.Result{Output: "(no skills yet — owner can /skills → Add, or use skill_create)"}
 				}
 				var b strings.Builder
 				for _, sk := range loaded {
-					fmt.Fprintf(&b, "- %s: %s\n  path: %s\n", sk.Name, sk.Description, sk.FilePath)
+					fmt.Fprintf(&b, "- %s [%s]: %s\n  path: %s\n", sk.Name, sk.LevelLabel(), sk.Description, sk.FilePath)
 				}
 				return types.Result{Output: b.String()}
 			},
@@ -33,13 +41,10 @@ func SkillTools(st store.Store) []types.Tool {
 		{
 			Name:  "skill_read",
 			Label: "Reading skill",
-			Description: "Read the full content of a skill's SKILL.md. Use this when a skill matches the current task — " +
-				"read it first, then follow the instructions inside.",
+			Description: "Read SKILL.md for a skill. After reading, follow its instructions. " +
+				"For L2/L3 packages, use skill_files / skill_read_file for references/scripts, and skill_run for scripts/.",
 			Parameters: map[string]any{
-				"name": map[string]any{
-					"type":        "string",
-					"description": "Skill name (lowercase, hyphen-separated)",
-				},
+				"name": map[string]any{"type": "string", "description": "Skill name"},
 			},
 			Required: []string{"name"},
 			Handler: func(_ context.Context, input map[string]any) types.Result {
@@ -55,24 +60,121 @@ func SkillTools(st store.Store) []types.Tool {
 			},
 		},
 		{
+			Name:        "skill_files",
+			Label:       "Listing skill files",
+			Description: "List files inside a skill package (SKILL.md, references/, scripts/, assets/).",
+			Parameters: map[string]any{
+				"name": map[string]any{"type": "string", "description": "Skill name"},
+			},
+			Required: []string{"name"},
+			Handler: func(_ context.Context, input map[string]any) types.Result {
+				name, err := types.GetString(input, "name")
+				if err != nil {
+					return types.ErrResult(err)
+				}
+				tree, err := mgr.Tree(name)
+				if err != nil {
+					return types.Result{Output: err.Error(), IsErr: true}
+				}
+				if strings.TrimSpace(tree) == "" {
+					return types.Result{Output: "(skill has only SKILL.md)"}
+				}
+				return types.Result{Output: tree}
+			},
+		},
+		{
+			Name:        "skill_read_file",
+			Label:       "Reading skill file",
+			Description: "Read a file relative to a skill root, e.g. references/guide.md or scripts/extract.py.",
+			Parameters: map[string]any{
+				"name": map[string]any{"type": "string", "description": "Skill name"},
+				"path": map[string]any{"type": "string", "description": "Relative path inside the skill"},
+			},
+			Required: []string{"name", "path"},
+			Handler: func(_ context.Context, input map[string]any) types.Result {
+				name, err := types.GetString(input, "name")
+				if err != nil {
+					return types.ErrResult(err)
+				}
+				rel, err := types.GetString(input, "path")
+				if err != nil {
+					return types.ErrResult(err)
+				}
+				content, err := mgr.ReadFile(name, rel)
+				if err != nil {
+					return types.Result{Output: err.Error(), IsErr: true}
+				}
+				return types.Result{Output: content}
+			},
+		},
+		{
+			Name:  "skill_run",
+			Label: "Running skill script",
+			Description: "Execute a script from a skill's scripts/ directory (Level 3). " +
+				"Working directory is the skill root. Prefer this over inventing one-off scripts when the skill ships one.",
+			Parameters: map[string]any{
+				"name":   map[string]any{"type": "string", "description": "Skill name"},
+				"script": map[string]any{"type": "string", "description": "Script filename under scripts/ (e.g. extract.py)"},
+				"args":   map[string]any{"type": "string", "description": "Optional arguments string"},
+			},
+			Required: []string{"name", "script"},
+			Handler: func(ctx context.Context, input map[string]any) types.Result {
+				name, err := types.GetString(input, "name")
+				if err != nil {
+					return types.ErrResult(err)
+				}
+				script, err := types.GetString(input, "script")
+				if err != nil {
+					return types.ErrResult(err)
+				}
+				args, _ := types.GetString(input, "args")
+				path, err := mgr.ScriptPath(name, script)
+				if err != nil {
+					return types.Result{Output: err.Error(), IsErr: true}
+				}
+				sk, ok, _ := mgr.Get(name)
+				if !ok {
+					return types.Result{Output: "skill not found", IsErr: true}
+				}
+				ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+				defer cancel()
+				var cmd *exec.Cmd
+				switch strings.ToLower(filepath.Ext(path)) {
+				case ".py":
+					cmd = exec.CommandContext(ctx, "python3", append([]string{path}, splitArgs(args)...)...)
+				case ".js", ".mjs":
+					cmd = exec.CommandContext(ctx, "node", append([]string{path}, splitArgs(args)...)...)
+				case ".sh":
+					cmd = exec.CommandContext(ctx, "bash", append([]string{path}, splitArgs(args)...)...)
+				default:
+					// try direct execution
+					cmd = exec.CommandContext(ctx, path, splitArgs(args)...)
+				}
+				cmd.Dir = sk.Dir
+				cmd.Env = append(os.Environ(), "SKILL_DIR="+sk.Dir)
+				out, err := cmd.CombinedOutput()
+				text := string(out)
+				if len(text) > 50_000 {
+					text = text[:50_000] + "\n…(truncated)"
+				}
+				if err != nil {
+					return types.Result{Output: text + "\n[exit: " + err.Error() + "]", IsErr: true}
+				}
+				if text == "" {
+					text = "(script completed with no output)"
+				}
+				return types.Result{Output: text}
+			},
+		},
+		{
 			Name:  "skill_create",
 			Label: "Creating skill",
-			Description: "Create a new skill to capture procedural knowledge for future reuse. " +
-				"Use after solving a non-trivial problem — save the workflow so you can do it better next time. " +
-				"The skill will appear in your available_skills on future conversations.",
+			Description: "Create a Level-1 skill (SKILL.md) for a reusable procedure you want to remember. " +
+				"For full packages (references/scripts), the owner should install a skill zip via /skills.",
 			Parameters: map[string]any{
-				"name": map[string]any{
-					"type":        "string",
-					"description": "Short lowercase name with hyphens, e.g. deploy-docker, morning-digest",
-				},
-				"description": map[string]any{
-					"type":        "string",
-					"description": "When to use this skill — include triggers and context so you can match it later",
-				},
-				"body": map[string]any{
-					"type":        "string",
-					"description": "Markdown instructions: commands, steps, examples, gotchas",
-				},
+				"name":        map[string]any{"type": "string", "description": "lowercase-hyphen name"},
+				"description": map[string]any{"type": "string", "description": "One-line when to use this skill"},
+				"body":        map[string]any{"type": "string", "description": "Markdown instructions (procedure, commands, gotchas)"},
 			},
 			Required: []string{"name", "description", "body"},
 			Handler: func(_ context.Context, input map[string]any) types.Result {
@@ -88,28 +190,20 @@ func SkillTools(st store.Store) []types.Tool {
 				if err != nil {
 					return types.ErrResult(err)
 				}
-
 				path, err := st.CreateSkill(name, desc, body)
 				if err != nil {
-					return types.Result{Output: "error creating skill: " + err.Error(), IsErr: true}
+					return types.Result{Output: err.Error(), IsErr: true}
 				}
-				return types.Result{Output: fmt.Sprintf("skill %q created at %s — it will appear in your available_skills on future conversations", name, path)}
+				return types.Result{Output: "skill created: " + path}
 			},
 		},
 		{
-			Name:  "skill_update",
-			Label: "Updating skill",
-			Description: "Update an existing skill's SKILL.md with new content. " +
-				"Read the skill first with skill_read, then write the improved version.",
+			Name:        "skill_update",
+			Label:       "Updating skill",
+			Description: "Replace the full SKILL.md content of an existing skill.",
 			Parameters: map[string]any{
-				"name": map[string]any{
-					"type":        "string",
-					"description": "Skill name to update",
-				},
-				"content": map[string]any{
-					"type":        "string",
-					"description": "Full new content for SKILL.md (including frontmatter)",
-				},
+				"name":    map[string]any{"type": "string"},
+				"content": map[string]any{"type": "string", "description": "Full SKILL.md including optional frontmatter"},
 			},
 			Required: []string{"name", "content"},
 			Handler: func(_ context.Context, input map[string]any) types.Result {
@@ -121,22 +215,18 @@ func SkillTools(st store.Store) []types.Tool {
 				if err != nil {
 					return types.ErrResult(err)
 				}
-
 				if err := st.UpdateSkill(name, content); err != nil {
-					return types.Result{Output: "error updating skill: " + err.Error(), IsErr: true}
+					return types.Result{Output: err.Error(), IsErr: true}
 				}
-				return types.Result{Output: fmt.Sprintf("skill %q updated", name)}
+				return types.Result{Output: "skill updated: " + name}
 			},
 		},
 		{
-			Name:  "skill_delete",
-			Label: "Deleting skill",
-			Description: "Delete a skill and its entire directory. Use when a skill is obsolete or incorrect.",
+			Name:        "skill_delete",
+			Label:       "Deleting skill",
+			Description: "Delete a skill package (SKILL.md and any references/scripts/assets).",
 			Parameters: map[string]any{
-				"name": map[string]any{
-					"type":        "string",
-					"description": "Skill name to delete",
-				},
+				"name": map[string]any{"type": "string"},
 			},
 			Required: []string{"name"},
 			Handler: func(_ context.Context, input map[string]any) types.Result {
@@ -145,10 +235,18 @@ func SkillTools(st store.Store) []types.Tool {
 					return types.ErrResult(err)
 				}
 				if err := st.DeleteSkill(name); err != nil {
-					return types.Result{Output: "error deleting skill: " + err.Error(), IsErr: true}
+					return types.Result{Output: err.Error(), IsErr: true}
 				}
-				return types.Result{Output: fmt.Sprintf("skill %q deleted", name)}
+				return types.Result{Output: "skill deleted: " + name}
 			},
 		},
 	}
+}
+
+func splitArgs(s string) []string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	return strings.Fields(s)
 }

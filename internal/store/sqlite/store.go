@@ -227,7 +227,17 @@ func (s *Store) LoadSkills() ([]store.Skill, error) {
 		if desc == "" {
 			desc = name
 		}
-		out = append(out, store.Skill{Name: name, Description: desc, FilePath: filepath.Join(dir, "SKILL.md"), Dir: dir})
+		sk := store.Skill{Name: name, Description: desc, FilePath: filepath.Join(dir, "SKILL.md"), Dir: dir}
+		if st, err := os.Stat(filepath.Join(dir, "references")); err == nil && st.IsDir() {
+			sk.HasReferences = true
+		}
+		if st, err := os.Stat(filepath.Join(dir, "scripts")); err == nil && st.IsDir() {
+			sk.HasScripts = true
+		}
+		if st, err := os.Stat(filepath.Join(dir, "assets")); err == nil && st.IsDir() {
+			sk.HasAssets = true
+		}
+		out = append(out, sk)
 	}
 	return out, rows.Err()
 }
@@ -509,7 +519,7 @@ func (s *Store) HasMessages(ch *store.Chat) bool {
 // ---------------------------------------------------------------------------
 
 func (s *Store) GetConfigJSON(name string) ([]byte, error) {
-	v, ok := s.getKV("config:"+name)
+	v, ok := s.getKV("config:" + name)
 	if !ok {
 		return nil, fmt.Errorf("config %q not found", name)
 	}

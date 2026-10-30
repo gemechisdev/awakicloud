@@ -137,6 +137,11 @@ func (e *Engine) handleMessage(ctx context.Context, msg channel.Message) {
 		return
 	}
 
+	// Agent Skill package upload (zip with SKILL.md)
+	if e.trySkillZipMessage(ctx, msg) {
+		return
+	}
+
 	log.Info().
 		Int("text_len", len(msg.Text)).
 		Int("attachments", len(msg.Attachments)).
@@ -196,6 +201,10 @@ func (e *Engine) handleCommand(ctx context.Context, msg channel.Message) {
 		e.cmdMCPList(ctx, msg)
 	case channel.CmdMCPAdd:
 		e.uiStartAddMCP(ctx, msg)
+	case channel.CmdSkills:
+		e.cmdSkillsList(ctx, msg)
+	case channel.CmdSkillAdd:
+		e.uiStartAddSkill(ctx, msg)
 	case channel.CmdHelp:
 		cmd.Result.Data = map[string]string{"text": helpCommandText()}
 	case channel.CmdTasks:

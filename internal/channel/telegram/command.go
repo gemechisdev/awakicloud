@@ -35,6 +35,8 @@ var commandMap = map[string]string{
 	"/sync":         channel.CmdProjectSync,
 	"/mcp":          channel.CmdMCP,
 	"/mcp_add":      channel.CmdMCPAdd,
+	"/skills":       channel.CmdSkills,
+	"/skill_add":    channel.CmdSkillAdd,
 }
 
 var commandSuccess = map[string]string{
@@ -77,6 +79,8 @@ Commands:
 
 /mcp — list MCP servers
 /mcp_add — add MCP server (wizard)
+/skills — list Agent Skills
+/skill_add — add a skill
 `)
 }
 

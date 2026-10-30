@@ -54,6 +54,7 @@ func settingsKeyboard() channel.KeyboardMessage {
 			{{Text: "📁 Projects", CallbackData: "ui:projects"}},
 			{{Text: "🔌 Manage AI Providers", CallbackData: "ui:providers:0"}},
 			{{Text: "🧩 MCP Servers", CallbackData: "ui:mcp"}},
+			{{Text: "📚 Agent Skills", CallbackData: "ui:skills"}},
 			{{Text: "🧠 Models (all)", CallbackData: "ui:models:0"}},
 			{{Text: "🧬 Soul", CallbackData: "ui:soul"}, {Text: "🧠 Memory", CallbackData: "ui:memory"}},
 			{{Text: "⬅ Home", CallbackData: "ui:home"}},

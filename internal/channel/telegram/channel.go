@@ -76,6 +76,8 @@ func (c *Channel) Run(ctx context.Context, handler channel.Handler) error {
 		{Command: "sync", Description: "Sync project to Telegram"},
 		{Command: "mcp", Description: "List MCP servers"},
 		{Command: "mcp_add", Description: "Add MCP server"},
+		{Command: "skills", Description: "List Agent Skills"},
+		{Command: "skill_add", Description: "Add a skill"},
 	})
 
 	// Grace period after process/health is up so the previous instance can

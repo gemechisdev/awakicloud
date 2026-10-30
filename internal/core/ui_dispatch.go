@@ -131,6 +131,25 @@ func (e *Engine) routeUI(ctx context.Context, msg channel.Message, data string) 
 		}
 	case "mcpadd":
 		e.uiStartAddMCP(ctx, msg)
+	case "skills":
+		e.cmdSkillsList(ctx, msg)
+	case "skilladd":
+		e.uiStartAddSkill(ctx, msg)
+	case "skill":
+		if len(parts) >= 3 {
+			e.cmdSkillDetail(ctx, msg, strings.Join(parts[2:], ":"))
+		}
+	case "skillview":
+		if len(parts) >= 3 {
+			e.cmdSkillView(ctx, msg, strings.Join(parts[2:], ":"))
+		}
+	case "skillrem":
+		if len(parts) >= 3 && e.store != nil {
+			name := strings.Join(parts[2:], ":")
+			_ = e.store.DeleteSkill(name)
+			_ = msg.Reply.SendText(ctx, "Removed skill: "+name)
+			e.cmdSkillsList(ctx, msg)
+		}
 	case "mcpconn":
 		if len(parts) >= 3 && e.mcp != nil {
 			name := parts[2]
@@ -380,6 +399,8 @@ func (e *Engine) handleWizardInput(ctx context.Context, msg channel.Message, w *
 		return e.wizardAddMCP(ctx, msg, w, text)
 	case "mcp_oauth":
 		return e.wizardMCPOAuth(ctx, msg, w, text)
+	case "skill_add":
+		return e.wizardAddSkill(ctx, msg, w, text)
 	case "mcp_key":
 		return e.wizardMCPUpdateKey(ctx, msg, w, text)
 	}

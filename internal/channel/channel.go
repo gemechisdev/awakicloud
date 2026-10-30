@@ -27,6 +27,8 @@ const (
 	CmdTaskAdd         = "task"
 	CmdMCP             = "mcp"
 	CmdMCPAdd          = "mcp_add"
+	CmdSkills          = "skills"
+	CmdSkillAdd        = "skill_add"
 )
 
 type Command struct {

@@ -87,12 +87,26 @@ func loadSkillsFromDir(rootDir string) ([]store.Skill, error) {
 		if name == "" {
 			name = e.Name()
 		}
-		out = append(out, store.Skill{
+		dir := filepath.Join(rootDir, e.Name())
+		sk := store.Skill{
 			Name:        name,
 			Description: desc,
 			FilePath:    skillMd,
-			Dir:         filepath.Join(rootDir, e.Name()),
-		})
+			Dir:         dir,
+		}
+		if st, err := os.Stat(filepath.Join(dir, "references")); err == nil && st.IsDir() {
+			sk.HasReferences = true
+		}
+		if st, err := os.Stat(filepath.Join(dir, "scripts")); err == nil && st.IsDir() {
+			sk.HasScripts = true
+		}
+		if st, err := os.Stat(filepath.Join(dir, "assets")); err == nil && st.IsDir() {
+			sk.HasAssets = true
+		}
+		if _, err := os.Stat(filepath.Join(dir, ".disabled")); err == nil {
+			sk.Disabled = true
+		}
+		out = append(out, sk)
 	}
 	return out, nil
 }
