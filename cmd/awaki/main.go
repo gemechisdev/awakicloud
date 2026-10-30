@@ -86,7 +86,10 @@ func main() {
 	if err := hs.Start(ctx); err != nil {
 		log.Error().Err(err).Msg("health server failed to bind — platform may kill the instance")
 	} else {
+		// Mark ready so the platform can pass health checks while we still
+		// wait the Telegram polling grace period inside eng.Run / channel.Run.
 		hs.SetReady(true)
+		log.Info().Msg("health ready; telegram polling will start after grace period")
 	}
 
 	fmt.Printf("Awaki is running [%s]. Health on %s. Configure LLM with /providers if needed. Press Ctrl+C to stop.\n", ch.Name(), health.AddrFromEnv())

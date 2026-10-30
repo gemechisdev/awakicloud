@@ -30,6 +30,15 @@ func (c *Client) Start(ctx context.Context) {
 	c.b.Start(ctx)
 }
 
+// DeleteWebhook removes a webhook if set and optionally drops pending updates
+// so long-polling getUpdates can take over after a deploy.
+func (c *Client) DeleteWebhook(ctx context.Context, dropPending bool) error {
+	_, err := c.b.DeleteWebhook(ctx, &bot.DeleteWebhookParams{
+		DropPendingUpdates: dropPending,
+	})
+	return err
+}
+
 func (c *Client) SetMyCommands(ctx context.Context, commands []models.BotCommand) {
 	c.b.SetMyCommands(ctx, &bot.SetMyCommandsParams{Commands: commands})
 }
