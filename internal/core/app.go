@@ -205,6 +205,8 @@ func (e *Engine) handleCommand(ctx context.Context, msg channel.Message) {
 		e.cmdSkillsList(ctx, msg)
 	case channel.CmdSkillAdd:
 		e.uiStartAddSkill(ctx, msg)
+	case channel.CmdPlugin:
+		e.cmdPlugin(ctx, msg)
 	case channel.CmdHelp:
 		cmd.Result.Data = map[string]string{"text": helpCommandText()}
 	case channel.CmdTasks:

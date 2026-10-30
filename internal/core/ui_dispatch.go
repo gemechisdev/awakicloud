@@ -135,6 +135,17 @@ func (e *Engine) routeUI(ctx context.Context, msg channel.Message, data string) 
 		e.cmdSkillsList(ctx, msg)
 	case "skilladd":
 		e.uiStartAddSkill(ctx, msg)
+	case "skillmarket":
+		e.cmdSkillMarket(ctx, msg)
+	case "marketadd":
+		if len(parts) >= 3 {
+			src := strings.Join(parts[2:], "/")
+			// ui:marketadd:anthropics/skills → parts anthropics, skills
+			if len(parts) >= 4 {
+				src = parts[2] + "/" + parts[3]
+			}
+			e.handlePluginArgs(ctx, msg, "marketplace add "+src)
+		}
 	case "skill":
 		if len(parts) >= 3 {
 			e.cmdSkillDetail(ctx, msg, strings.Join(parts[2:], ":"))

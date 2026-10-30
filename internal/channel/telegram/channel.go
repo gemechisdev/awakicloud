@@ -78,6 +78,7 @@ func (c *Channel) Run(ctx context.Context, handler channel.Handler) error {
 		{Command: "mcp_add", Description: "Add MCP server"},
 		{Command: "skills", Description: "List Agent Skills"},
 		{Command: "skill_add", Description: "Add a skill"},
+		{Command: "plugin", Description: "Skills marketplace (Claude-style)"},
 	})
 
 	// Grace period after process/health is up so the previous instance can

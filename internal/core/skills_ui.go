@@ -43,6 +43,7 @@ func (e *Engine) cmdSkillsList(ctx context.Context, msg channel.Message) {
 	}
 	rows := [][]channel.Button{
 		{{Text: "➕ Add skill", CallbackData: "ui:skilladd"}},
+		{{Text: "🏪 Marketplace", CallbackData: "ui:skillmarket"}},
 		{{Text: "⬅ Settings", CallbackData: "ui:settings"}},
 	}
 	for _, s := range list {
@@ -255,4 +256,124 @@ func (e *Engine) trySkillPackageMessage(ctx context.Context, msg channel.Message
 		return true
 	}
 	return false
+}
+
+func (e *Engine) cmdPlugin(ctx context.Context, msg channel.Message) {
+	args := ""
+	if msg.Command != nil && msg.Command.Args != nil {
+		args = strings.TrimSpace(msg.Command.Args["raw"])
+	}
+	if args == "" {
+		// fallback: strip /plugin[@bot]
+		text := strings.TrimSpace(msg.Text)
+		fields := strings.Fields(text)
+		if len(fields) > 1 {
+			args = strings.TrimSpace(strings.TrimPrefix(text, fields[0]))
+		}
+	}
+	e.handlePluginArgs(ctx, msg, args)
+}
+
+func (e *Engine) handlePluginArgs(ctx context.Context, msg channel.Message, args string) {
+	args = strings.TrimSpace(args)
+	fields := strings.Fields(args)
+	if len(fields) == 0 {
+		e.cmdSkillMarket(ctx, msg)
+		return
+	}
+	mgr := e.skillMgr()
+	if mgr == nil {
+		_ = msg.Reply.SendText(ctx, "Skills not available.")
+		return
+	}
+
+	// /plugin marketplace add|list|remove ...
+	if fields[0] == "marketplace" || fields[0] == "market" {
+		if len(fields) == 1 || fields[1] == "list" {
+			e.cmdSkillMarket(ctx, msg)
+			return
+		}
+		if fields[1] == "add" && len(fields) >= 3 {
+			src := fields[2]
+			_ = msg.Reply.SendText(ctx, "Downloading marketplace "+src+"…")
+			mk, err := mgr.AddMarketplace(ctx, src)
+			if err != nil {
+				_ = msg.Reply.SendText(ctx, "Marketplace add failed: "+err.Error())
+				return
+			}
+			var b strings.Builder
+			fmt.Fprintf(&b, "✅ Marketplace registered\n\nID: %s\nSource: %s\n%s\n\nPlugins:\n", mk.ID, mk.Source, mk.Description)
+			for _, p := range mk.Plugins {
+				fmt.Fprintf(&b, "• %s — %s\n  install: /plugin install %s@%s\n", p.Name, p.Description, p.Name, mk.ID)
+			}
+			b.WriteString("\nInstall all: /plugin install all@" + mk.ID)
+			_ = msg.Reply.SendText(ctx, b.String())
+			return
+		}
+		if fields[1] == "remove" && len(fields) >= 3 {
+			if err := mgr.RemoveMarketplace(fields[2]); err != nil {
+				_ = msg.Reply.SendText(ctx, err.Error())
+				return
+			}
+			_ = msg.Reply.SendText(ctx, "Removed marketplace: "+fields[2])
+			return
+		}
+		_ = msg.Reply.SendText(ctx, "Usage:\n/plugin marketplace add owner/repo\n/plugin marketplace list\n/plugin marketplace remove <id>")
+		return
+	}
+
+	// /plugin install document-skills@anthropic-agent-skills
+	if fields[0] == "install" {
+		if len(fields) < 2 {
+			_ = msg.Reply.SendText(ctx, "Usage: /plugin install document-skills@anthropic-agent-skills\nOr: /plugin install all@anthropic-agent-skills\nOr: /plugin install anthropics/skills")
+			return
+		}
+		spec := fields[1]
+		_ = msg.Reply.SendText(ctx, "Installing "+spec+"…")
+		list, err := mgr.InstallPlugin(ctx, spec)
+		if err != nil {
+			_ = msg.Reply.SendText(ctx, "Install failed: "+err.Error())
+			return
+		}
+		var b strings.Builder
+		fmt.Fprintf(&b, "✅ Installed %d skill(s) from %s:\n", len(list), spec)
+		for _, sk := range list {
+			fmt.Fprintf(&b, "• %s (%s)\n", sk.Name, sk.LevelLabel())
+		}
+		_ = msg.Reply.SendText(ctx, b.String())
+		e.cmdSkillsList(ctx, msg)
+		return
+	}
+
+	_ = msg.Reply.SendText(ctx, "Usage:\n/plugin marketplace add anthropics/skills\n/plugin install document-skills@anthropic-agent-skills\n/plugin install all@anthropic-agent-skills")
+}
+
+func (e *Engine) cmdSkillMarket(ctx context.Context, msg channel.Message) {
+	mgr := e.skillMgr()
+	if mgr == nil {
+		_ = msg.Reply.SendText(ctx, "Skills not available.")
+		return
+	}
+	markets := mgr.ListMarketplaces()
+	var b strings.Builder
+	b.WriteString("🏪 Skill marketplaces (Claude-compatible)\n\n")
+	b.WriteString("Add: /plugin marketplace add anthropics/skills\n")
+	b.WriteString("Install: /plugin install document-skills@anthropic-agent-skills\n")
+	b.WriteString("Install all: /plugin install all@anthropic-agent-skills\n\n")
+	if len(markets) == 0 {
+		b.WriteString("No marketplaces registered yet.")
+	} else {
+		for _, mk := range markets {
+			fmt.Fprintf(&b, "• %s (%s)\n  %s\n", mk.ID, mk.Source, mk.Description)
+			for _, p := range mk.Plugins {
+				fmt.Fprintf(&b, "  – %s (%d skills)\n", p.Name, len(p.Skills))
+			}
+		}
+	}
+	rows := [][]channel.Button{
+		{{Text: "➕ anthropics/skills", CallbackData: "ui:marketadd:anthropics/skills"}},
+		{{Text: "📚 Skills list", CallbackData: "ui:skills"}},
+		{{Text: "⬅ Settings", CallbackData: "ui:settings"}},
+	}
+	e.deliverKeyboard(ctx, msg, channel.KeyboardMessage{Text: b.String(), Rows: rows})
 }

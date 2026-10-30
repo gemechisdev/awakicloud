@@ -37,6 +37,7 @@ var commandMap = map[string]string{
 	"/mcp_add":      channel.CmdMCPAdd,
 	"/skills":       channel.CmdSkills,
 	"/skill_add":    channel.CmdSkillAdd,
+	"/plugin":       channel.CmdPlugin,
 }
 
 var commandSuccess = map[string]string{
@@ -81,6 +82,8 @@ Commands:
 /mcp_add — add MCP server (wizard)
 /skills — list Agent Skills
 /skill_add — add a skill
+/plugin marketplace add owner/repo — register skills marketplace
+/plugin install name@market — install plugin skills
 `)
 }
 
