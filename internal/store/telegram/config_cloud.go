@@ -15,6 +15,7 @@ import (
 const (
 	ConfigProviders = "providers"
 	ConfigSchedules = "schedules"
+	ConfigMCP       = "mcp"
 	ConfigIndex     = "index"
 )
 
@@ -172,4 +173,17 @@ func (s *Store) EnsureIdentityCloud() {
 			_ = s.local.WriteUser(body)
 		}
 	}
+}
+
+// MCPCloud adapts Store into mcp.Cloud.
+type MCPCloud struct {
+	S *Store
+}
+
+func (p MCPCloud) LoadMCPJSON() ([]byte, error) {
+	return p.S.LoadConfigJSON(ConfigMCP)
+}
+
+func (p MCPCloud) SaveMCPJSON(data []byte) error {
+	return p.S.SaveConfigJSON(ConfigMCP, data)
 }

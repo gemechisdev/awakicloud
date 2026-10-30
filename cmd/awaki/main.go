@@ -252,6 +252,13 @@ func buildEngine(ctx context.Context, cfg *config.Config, ch channel.Channel) (*
 	projMgr := project.NewManager(cfg.DataDir, blobs)
 
 	mcpMgr := mcp.NewManager(cfg.DataDir)
+	if ss, ok := st.(*sqlstore.Store); ok {
+		mcpMgr.Store().SetCloud(sqlstore.MCPCloud{S: ss})
+		log.Info().Msg("mcp backed by sqlite cloud")
+	} else if ts, ok := st.(*tgstore.Store); ok {
+		mcpMgr.Store().SetCloud(tgstore.MCPCloud{S: ts})
+		log.Info().Msg("mcp cloud sync enabled (telegram storage)")
+	}
 	reloadMCPTools := func() {
 		reg.UnregisterPrefix("mcp__")
 		for _, t := range mcp.BridgeTools(mcpMgr) {

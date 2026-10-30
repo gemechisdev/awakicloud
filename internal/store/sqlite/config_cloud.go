@@ -20,3 +20,16 @@ func (c ConfigCloud) LoadSchedulesJSON() ([]byte, error) {
 func (c ConfigCloud) SaveSchedulesJSON(data []byte) error {
 	return c.S.SetConfigJSON("schedules", data)
 }
+
+// MCPCloud implements mcp.Cloud over SQLite kv.
+type MCPCloud struct {
+	S *Store
+}
+
+func (c MCPCloud) LoadMCPJSON() ([]byte, error) {
+	return c.S.GetConfigJSON("mcp")
+}
+
+func (c MCPCloud) SaveMCPJSON(data []byte) error {
+	return c.S.SetConfigJSON("mcp", data)
+}

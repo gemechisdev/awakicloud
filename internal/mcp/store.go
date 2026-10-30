@@ -8,16 +8,73 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/rs/zerolog/log"
 )
+
+// Cloud is optional durable storage (e.g. Telegram storage chat or SQLite kv).
+type Cloud interface {
+	LoadMCPJSON() ([]byte, error)
+	SaveMCPJSON(data []byte) error
+}
 
 // Store persists MCP server configs as JSON under dataDir/mcp-servers.json.
 type Store struct {
 	mu   sync.Mutex
 	path string
+	cloud Cloud
 }
 
 func NewStore(dataDir string) *Store {
 	return &Store{path: filepath.Join(dataDir, "mcp-servers.json")}
+}
+
+func NewStoreWithCloud(dataDir string, cloud Cloud) *Store {
+	return &Store{path: filepath.Join(dataDir, "mcp-servers.json"), cloud: cloud}
+}
+
+func (s *Store) SetCloud(cloud Cloud) {
+	s.mu.Lock()
+	s.cloud = cloud
+	s.mu.Unlock()
+	// hydrate if still empty
+	s.mu.Lock()
+	_ = s.hydrateLocked(cloud)
+	s.mu.Unlock()
+}
+
+func (s *Store) hydrateLocked(cloud Cloud) error {
+	if cloud == nil {
+		return nil
+	}
+	data, err := cloud.LoadMCPJSON()
+	if err != nil || len(data) == 0 {
+		return err
+	}
+	var cfg ConfigFile
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return err
+	}
+	if len(cfg.Servers) == 0 {
+		return nil
+	}
+	// Merge cloud servers into local, preferring cloud on conflict by name.
+	local, err := s.load()
+	if err != nil {
+		return err
+	}
+	byName := map[string]Server{}
+	for _, srv := range local.Servers {
+		byName[srv.Name] = srv
+	}
+	merged := append([]Server(nil), local.Servers...)
+	for _, srv := range cfg.Servers {
+		if _, exists := byName[srv.Name]; !exists {
+			merged = append(merged, srv)
+		}
+	}
+	local.Servers = merged
+	return s.save(local)
 }
 
 func (s *Store) load() (ConfigFile, error) {
@@ -43,7 +100,16 @@ func (s *Store) save(cfg ConfigFile) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.path, data, 0o600)
+	if err := os.WriteFile(s.path, data, 0o600); err != nil {
+		return err
+	}
+	if s.cloud != nil {
+		// local is source of truth for this process; cloud is best-effort durable
+		if err := s.cloud.SaveMCPJSON(data); err != nil {
+			log.Warn().Err(err).Msg("mcp: cloud save failed")
+		}
+	}
+	return nil
 }
 
 func (s *Store) List() ([]Server, error) {
