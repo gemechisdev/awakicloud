@@ -70,6 +70,8 @@ func (c *Channel) Run(ctx context.Context, handler channel.Handler) error {
 		{Command: "project", Description: "Create a project"},
 		{Command: "upgrade", Description: "Upgrade chat to project"},
 		{Command: "sync", Description: "Sync project to Telegram"},
+		{Command: "mcp", Description: "List MCP servers"},
+		{Command: "mcp_add", Description: "Add MCP server"},
 	})
 
 	log.Info().Int64("owner_id", c.ownerID).Msg("telegram bot polling started")

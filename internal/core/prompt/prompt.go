@@ -33,6 +33,7 @@ func SystemPrompt(ctx PromptContext) string {
 		buildSystemAccessSection(),
 		buildSchedulingSection(),
 		buildDockerSection(),
+		buildMCPSection(),
 		buildRuntimeSection(ctx),
 		buildAutonomySection(),
 	}
@@ -245,6 +246,16 @@ func buildInteractionSection() string {
   ask_user(question="Which source?", kind="choice", options=[{value:"habr", label:"Habr"}, {value:"vc", label:"VC.ru"}])
 WHEN TO ASK: Always ask before destructive actions (deleting files, overwriting configs). Ask when you are genuinely uncertain — do not guess. For routine work, just do it.
 WHEN TO REPORT: For any multi-step task, use task_plan FIRST — it is the primary progress indicator the user sees. Use report_status for ad-hoc updates within a single step. Use send_message sparingly — only for genuinely important findings.`
+}
+
+func buildMCPSection() string {
+	return `MCP SERVERS: External tools via Model Context Protocol (stdio, Streamable HTTP, SSE).
+- mcp_list — configured/connected servers and tools
+- call_mcp_tool — invoke mcp__server__tool (or server+tool + arguments)
+Owner manages servers with /mcp and /mcp_add. Remote servers may need OAuth:
+Settings → MCP → server → Authorize opens a browser link; owner pastes the callback URL/code back.
+Tools hot-reload when servers connect or disconnect — no restart required.
+API key / Bearer header remains an optional alternative to OAuth.`
 }
 
 func buildAutonomySection() string {

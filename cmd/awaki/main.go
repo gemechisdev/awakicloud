@@ -20,6 +20,7 @@ import (
 	"github.com/gemechischala/awaki/internal/health"
 	"github.com/gemechischala/awaki/internal/llm"
 	"github.com/gemechischala/awaki/internal/logger"
+	"github.com/gemechischala/awaki/internal/mcp"
 	"github.com/gemechischala/awaki/internal/project"
 	"github.com/gemechischala/awaki/internal/providers"
 	"github.com/gemechischala/awaki/internal/scheduler"
@@ -238,6 +239,27 @@ func buildEngine(ctx context.Context, cfg *config.Config, ch channel.Channel) (*
 	}
 	projMgr := project.NewManager(cfg.DataDir, blobs)
 
+	mcpMgr := mcp.NewManager(cfg.DataDir)
+	reloadMCPTools := func() {
+		reg.UnregisterPrefix("mcp__")
+		for _, t := range mcp.BridgeTools(mcpMgr) {
+			reg.Register(t)
+		}
+		// Keep management tools registered
+		for _, t := range mcp.AgentTools(mcpMgr) {
+			reg.Register(t)
+		}
+		if c, ok := client.(*llm.Client); ok {
+			c.SetTools(reg.Definitions())
+		}
+		log.Info().Int("tools", len(reg.Names())).Msg("mcp: tools hot-reloaded")
+	}
+	mcpMgr.SetOnToolsChanged(reloadMCPTools)
+	for _, t := range mcp.AgentTools(mcpMgr) {
+		reg.Register(t)
+	}
+	mcpMgr.ConnectAll(ctx) // triggers first hot-reload via callback
+
 	// Agent can promote the current chat → durable project (same as /upgrade).
 	for _, t := range system.ProjectTools(projMgr, chatMgr.Resolve) {
 		reg.Register(t)
@@ -255,6 +277,7 @@ func buildEngine(ctx context.Context, cfg *config.Config, ch channel.Channel) (*
 		Registry:     reg,
 		Providers:    provStore,
 		Projects:     projMgr,
+		MCP:          mcpMgr,
 		Tasks:        taskMgr,
 		RebuildAgent: rebuild,
 	}), nil

@@ -123,6 +123,56 @@ func (e *Engine) routeUI(ctx context.Context, msg channel.Message, data string) 
 			page = parsePage(parts[2])
 		}
 		e.uiProvidersList(ctx, msg, page)
+	case "mcp":
+		if len(parts) >= 3 {
+			e.cmdMCPDetail(ctx, msg, parts[2])
+		} else {
+			e.cmdMCPList(ctx, msg)
+		}
+	case "mcpadd":
+		e.uiStartAddMCP(ctx, msg)
+	case "mcpconn":
+		if len(parts) >= 3 && e.mcp != nil {
+			name := parts[2]
+			if err := e.mcp.Connect(ctx, name); err != nil {
+				_ = msg.Reply.SendText(ctx, "Connect failed: "+err.Error())
+			} else {
+				_ = msg.Reply.SendText(ctx, "Connected: "+name)
+			}
+			e.cmdMCPDetail(ctx, msg, name)
+		}
+	case "mcpdisc":
+		if len(parts) >= 3 && e.mcp != nil {
+			e.mcp.Disconnect(parts[2])
+			_ = msg.Reply.SendText(ctx, "Disconnected: "+parts[2])
+			e.cmdMCPDetail(ctx, msg, parts[2])
+		}
+	case "mcprem":
+		if len(parts) >= 3 && e.mcp != nil {
+			_ = e.mcp.Remove(parts[2])
+			_ = msg.Reply.SendText(ctx, "Removed: "+parts[2])
+			e.cmdMCPList(ctx, msg)
+		}
+	case "mcptrans":
+		if len(parts) >= 3 {
+			typ := parts[2]
+			e.ui.setDraft("type", typ)
+			if typ == "stdio" {
+				e.ui.setStep("command")
+				e.deliverKeyboard(ctx, msg, channel.KeyboardMessage{
+					Text: "Step 3/4 — Command\n\nSend the executable and args, e.g.\nnpx -y @modelcontextprotocol/server-filesystem /data",
+					Rows: [][]channel.Button{{{Text: "❌ Cancel", CallbackData: "ui:mcp"}}},
+				})
+			} else {
+				e.ui.setStep("url")
+				e.deliverKeyboard(ctx, msg, channel.KeyboardMessage{
+					Text: "Step 3/4 — URL\n\nSend the MCP endpoint URL, e.g.\nhttps://mcp.linear.app/mcp",
+					Rows: [][]channel.Button{{{Text: "❌ Cancel", CallbackData: "ui:mcp"}}},
+				})
+			}
+		}
+	case "mcpauthskip":
+		e.finishMCPAdd(ctx, msg, "/skip")
 	case "models":
 		page := 0
 		if len(parts) >= 3 {
@@ -311,6 +361,10 @@ func (e *Engine) handleWizardInput(ctx context.Context, msg channel.Message, w *
 		e.ui.clear()
 		e.cmdUpgradeProject(ctx, msg, text)
 		return true
+	case "mcp_add":
+		return e.wizardAddMCP(ctx, msg, w, text)
+	case "mcp_oauth":
+		return e.wizardMCPOAuth(ctx, msg, w, text)
 	}
 	e.ui.clear()
 	return false

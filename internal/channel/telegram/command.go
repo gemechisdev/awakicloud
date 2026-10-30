@@ -32,7 +32,11 @@ var commandMap = map[string]string{
 	"/projects":     channel.CmdProjects,
 	"/project":      channel.CmdProject,
 	"/upgrade":      channel.CmdProjectUpgrade,
-	"/sync":         channel.CmdProjectSync,
+	"/mcp — list MCP servers
+/mcp_add — add MCP server (wizard)
+/sync":         channel.CmdProjectSync,
+	"/mcp":          channel.CmdMCP,
+	"/mcp_add":      channel.CmdMCPAdd,
 }
 
 var commandSuccess = map[string]string{

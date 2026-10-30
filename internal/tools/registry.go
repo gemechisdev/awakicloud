@@ -115,3 +115,31 @@ func (r *Registry) Has(name string) bool {
 	_, ok := r.tt[name]
 	return ok
 }
+
+
+// Unregister removes a single tool by name.
+func (r *Registry) Unregister(name string) {
+	delete(r.tt, name)
+}
+
+// UnregisterPrefix removes all tools whose name has the given prefix
+// (e.g. "mcp__" for hot-reload of MCP bridge tools).
+func (r *Registry) UnregisterPrefix(prefix string) int {
+	n := 0
+	for name := range r.tt {
+		if len(prefix) > 0 && len(name) >= len(prefix) && name[:len(prefix)] == prefix {
+			delete(r.tt, name)
+			n++
+		}
+	}
+	return n
+}
+
+// Names returns all registered tool names.
+func (r *Registry) Names() []string {
+	out := make([]string, 0, len(r.tt))
+	for name := range r.tt {
+		out = append(out, name)
+	}
+	return out
+}

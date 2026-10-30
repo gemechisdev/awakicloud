@@ -15,6 +15,7 @@ import (
 	"github.com/gemechischala/awaki/internal/tools"
 	"github.com/gemechischala/awaki/internal/store"
 	"github.com/gemechischala/awaki/internal/providers"
+	"github.com/gemechischala/awaki/internal/mcp"
 	"github.com/gemechischala/awaki/internal/project"
 	"sync"
 
@@ -35,6 +36,7 @@ type Engine struct {
 	registry  *tools.Registry
 	providers *providers.Store
 	projects  *project.Manager
+	mcp       *mcp.Manager
 	tasksMgr  *tasks.Manager
 	ui        uiState
 	steer     steerState
@@ -54,6 +56,7 @@ type Params struct {
 	Registry     *tools.Registry
 	Providers    *providers.Store
 	Projects     *project.Manager
+	MCP          *mcp.Manager
 	Tasks        *tasks.Manager
 	RebuildAgent func() error
 }
@@ -68,6 +71,7 @@ func New(p Params) *Engine {
 		registry:     p.Registry,
 		providers:    p.Providers,
 		projects:     p.Projects,
+		mcp:          p.MCP,
 		tasksMgr:     p.Tasks,
 		rebuildAgent: p.RebuildAgent,
 	}
@@ -186,6 +190,10 @@ func (e *Engine) handleCommand(ctx context.Context, msg channel.Message) {
 		e.cmdUpgradeProject(ctx, msg, name)
 	case channel.CmdProjectSync:
 		e.cmdSyncProject(ctx, msg)
+	case channel.CmdMCP:
+		e.cmdMCPList(ctx, msg)
+	case channel.CmdMCPAdd:
+		e.uiStartAddMCP(ctx, msg)
 	case channel.CmdHelp:
 		cmd.Result.Data = map[string]string{"text": helpCommandText()}
 	case channel.CmdTasks:

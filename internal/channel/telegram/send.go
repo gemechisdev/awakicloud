@@ -59,7 +59,13 @@ func (c *Channel) sendOrEditKeyboard(ctx context.Context, chatID int64, editMsgI
 	for _, row := range km.Rows {
 		var r []models.InlineKeyboardButton
 		for _, b := range row {
-			r = append(r, models.InlineKeyboardButton{Text: b.Text, CallbackData: b.CallbackData})
+			btn := models.InlineKeyboardButton{Text: b.Text}
+			if b.URL != "" {
+				btn.URL = b.URL
+			} else {
+				btn.CallbackData = b.CallbackData
+			}
+			r = append(r, btn)
 		}
 		rows = append(rows, r)
 	}
