@@ -1,9 +1,14 @@
 package sqlite
 
 import (
+	"archive/zip"
+	"bytes"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,6 +48,9 @@ func Open(dataDir string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite schema: %w", err)
 	}
+	// Best-effort column upgrades for existing DBs (CREATE TABLE IF NOT EXISTS won't alter).
+	_, _ = db.Exec(`ALTER TABLE skills ADD COLUMN package_zip BLOB`)
+	_, _ = db.Exec(`ALTER TABLE skills ADD COLUMN package_hash TEXT NOT NULL DEFAULT ''`)
 	s := &Store{
 		db:     db,
 		path:   path,
@@ -209,37 +217,74 @@ func (s *Store) DeleteMemory(filename string) error {
 func (s *Store) SkillsDir() string { return s.skills }
 
 func (s *Store) LoadSkills() ([]store.Skill, error) {
-	rows, err := s.db.Query(`SELECT name, description, body FROM skills ORDER BY name`)
+	rows, err := s.db.Query(`SELECT name, description, body, package_zip, IFNULL(package_hash, '') FROM skills ORDER BY name`)
 	if err != nil {
-		return nil, err
+		// Older schema without package columns
+		rows, err = s.db.Query(`SELECT name, description, body FROM skills ORDER BY name`)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var out []store.Skill
+		for rows.Next() {
+			var name, desc, body string
+			if err := rows.Scan(&name, &desc, &body); err != nil {
+				return nil, err
+			}
+			out = append(out, s.exportSkillRow(name, desc, body, nil, ""))
+		}
+		return out, rows.Err()
 	}
 	defer rows.Close()
 	var out []store.Skill
 	for rows.Next() {
-		var name, desc, body string
-		if err := rows.Scan(&name, &desc, &body); err != nil {
+		var name, desc, body, hash string
+		var pkg []byte
+		if err := rows.Scan(&name, &desc, &body, &pkg, &hash); err != nil {
 			return nil, err
 		}
-		// Export to disk so tools that open SkillsDir work.
-		dir := filepath.Join(s.skills, name)
-		_ = os.MkdirAll(dir, 0o755)
-		_ = os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0o644)
-		if desc == "" {
-			desc = name
-		}
-		sk := store.Skill{Name: name, Description: desc, FilePath: filepath.Join(dir, "SKILL.md"), Dir: dir}
-		if st, err := os.Stat(filepath.Join(dir, "references")); err == nil && st.IsDir() {
-			sk.HasReferences = true
-		}
-		if st, err := os.Stat(filepath.Join(dir, "scripts")); err == nil && st.IsDir() {
-			sk.HasScripts = true
-		}
-		if st, err := os.Stat(filepath.Join(dir, "assets")); err == nil && st.IsDir() {
-			sk.HasAssets = true
-		}
-		out = append(out, sk)
+		out = append(out, s.exportSkillRow(name, desc, body, pkg, hash))
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) exportSkillRow(name, desc, body string, pkg []byte, hash string) store.Skill {
+	dir := filepath.Join(s.skills, name)
+	_ = os.MkdirAll(dir, 0o755)
+	mdPath := filepath.Join(dir, "SKILL.md")
+	// Restore full package from DB zip when present (L2/L3 survive ephemeral disk).
+	if len(pkg) > 0 {
+		need := true
+		if st, err := os.Stat(mdPath); err == nil && st.Size() > 0 {
+			// Re-extract if hash file missing or mismatch
+			hf := filepath.Join(dir, ".package_hash")
+			if prev, err := os.ReadFile(hf); err == nil && string(prev) == hash && hash != "" {
+				need = false
+			}
+		}
+		if need {
+			_ = extractSkillZip(pkg, dir)
+			if hash != "" {
+				_ = os.WriteFile(filepath.Join(dir, ".package_hash"), []byte(hash), 0o644)
+			}
+		}
+	} else {
+		_ = os.WriteFile(mdPath, []byte(body), 0o644)
+	}
+	if desc == "" {
+		desc = name
+	}
+	sk := store.Skill{Name: name, Description: desc, FilePath: mdPath, Dir: dir}
+	if st, err := os.Stat(filepath.Join(dir, "references")); err == nil && st.IsDir() {
+		sk.HasReferences = true
+	}
+	if st, err := os.Stat(filepath.Join(dir, "scripts")); err == nil && st.IsDir() {
+		sk.HasScripts = true
+	}
+	if st, err := os.Stat(filepath.Join(dir, "assets")); err == nil && st.IsDir() {
+		sk.HasAssets = true
+	}
+	return sk
 }
 
 func (s *Store) CreateSkill(name, description, body string) (string, error) {
@@ -248,19 +293,28 @@ func (s *Store) CreateSkill(name, description, body string) (string, error) {
 	name = safeName(name)
 	content := body
 	if description != "" && !strings.Contains(body, "---") {
-		content = fmt.Sprintf("---\nname: %s\ndescription: %s\n---\n\n%s", name, description, body)
-	}
-	_, err := s.db.Exec(
-		`INSERT INTO skills(name,description,body,updated_at) VALUES(?,?,?,?)`,
-		name, description, content, now(),
-	)
-	if err != nil {
-		return "", err
+		content = fmt.Sprintf("---\nname: %s\ndescription: %q\n---\n\n%s", name, description, body)
 	}
 	dir := filepath.Join(s.skills, name)
 	_ = os.MkdirAll(dir, 0o755)
 	path := filepath.Join(dir, "SKILL.md")
-	_ = os.WriteFile(path, []byte(content), 0o644)
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		return "", err
+	}
+	pkg, hash, err := zipSkillDir(dir)
+	if err != nil {
+		return "", err
+	}
+	_, err = s.db.Exec(
+		`INSERT INTO skills(name,description,body,package_zip,package_hash,updated_at) VALUES(?,?,?,?,?,?)
+		 ON CONFLICT(name) DO UPDATE SET description=excluded.description, body=excluded.body,
+		 package_zip=excluded.package_zip, package_hash=excluded.package_hash, updated_at=excluded.updated_at`,
+		name, description, content, pkg, hash, now(),
+	)
+	if err != nil {
+		return "", err
+	}
+	_ = os.WriteFile(filepath.Join(dir, ".package_hash"), []byte(hash), 0o644)
 	s.touch()
 	return path, nil
 }
@@ -269,9 +323,18 @@ func (s *Store) UpdateSkill(name, content string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	name = safeName(name)
+	dir := filepath.Join(s.skills, name)
+	_ = os.MkdirAll(dir, 0o755)
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(content), 0o644); err != nil {
+		return err
+	}
+	pkg, hash, err := zipSkillDir(dir)
+	if err != nil {
+		return err
+	}
 	res, err := s.db.Exec(
-		`UPDATE skills SET body=?, updated_at=? WHERE name=?`,
-		content, now(), name,
+		`UPDATE skills SET body=?, package_zip=?, package_hash=?, updated_at=? WHERE name=?`,
+		content, pkg, hash, now(), name,
 	)
 	if err != nil {
 		return err
@@ -280,11 +343,37 @@ func (s *Store) UpdateSkill(name, content string) error {
 	if n == 0 {
 		return fmt.Errorf("skill %q not found", name)
 	}
-	dir := filepath.Join(s.skills, name)
-	_ = os.MkdirAll(dir, 0o755)
-	_ = os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(content), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, ".package_hash"), []byte(hash), 0o644)
 	s.touch()
 	return nil
+}
+
+// SyncSkillPackage zips the on-disk skill tree and stores it in SQLite if the hash changed.
+func (s *Store) SyncSkillPackage(name string) (hash string, changed bool, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	name = safeName(name)
+	dir := filepath.Join(s.skills, name)
+	pkg, hash, err := zipSkillDir(dir)
+	if err != nil {
+		return "", false, err
+	}
+	var prev string
+	_ = s.db.QueryRow(`SELECT IFNULL(package_hash,'') FROM skills WHERE name=?`, name).Scan(&prev)
+	if prev == hash {
+		return hash, false, nil
+	}
+	body, _ := os.ReadFile(filepath.Join(dir, "SKILL.md"))
+	_, err = s.db.Exec(
+		`UPDATE skills SET body=?, package_zip=?, package_hash=?, updated_at=? WHERE name=?`,
+		string(body), pkg, hash, now(), name,
+	)
+	if err != nil {
+		return hash, false, err
+	}
+	_ = os.WriteFile(filepath.Join(dir, ".package_hash"), []byte(hash), 0o644)
+	s.touch()
+	return hash, true, nil
 }
 
 func (s *Store) DeleteSkill(name string) error {
@@ -308,6 +397,81 @@ func (s *Store) ReadSkill(name string) (string, error) {
 		return "", fmt.Errorf("skill %q not found", name)
 	}
 	return body, err
+}
+
+func zipSkillDir(dir string) ([]byte, string, error) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info == nil {
+			return err
+		}
+		rel, _ := filepath.Rel(dir, path)
+		if rel == "." || rel == ".package_hash" {
+			return nil
+		}
+		if info.IsDir() {
+			return nil
+		}
+		// Store paths as skill-relative (no top-level skill name folder in zip payload)
+		w, err := zw.Create(filepath.ToSlash(rel))
+		if err != nil {
+			return err
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		_, err = io.Copy(w, f)
+		f.Close()
+		return err
+	})
+	if err != nil {
+		_ = zw.Close()
+		return nil, "", err
+	}
+	if err := zw.Close(); err != nil {
+		return nil, "", err
+	}
+	data := buf.Bytes()
+	sum := sha256.Sum256(data)
+	return data, "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+func extractSkillZip(data []byte, dest string) error {
+	r, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return err
+	}
+	_ = os.MkdirAll(dest, 0o755)
+	for _, f := range r.File {
+		name := filepath.Clean(f.Name)
+		if name == "." || strings.HasPrefix(name, "..") {
+			continue
+		}
+		target := filepath.Join(dest, name)
+		if f.FileInfo().IsDir() {
+			_ = os.MkdirAll(target, 0o755)
+			continue
+		}
+		_ = os.MkdirAll(filepath.Dir(target), 0o755)
+		rc, err := f.Open()
+		if err != nil {
+			return err
+		}
+		out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+		if err != nil {
+			rc.Close()
+			return err
+		}
+		_, err = io.Copy(out, rc)
+		out.Close()
+		rc.Close()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------

@@ -20,6 +20,8 @@ CREATE TABLE IF NOT EXISTS skills (
   name TEXT PRIMARY KEY,
   description TEXT NOT NULL DEFAULT '',
   body TEXT NOT NULL,
+  package_zip BLOB,
+  package_hash TEXT NOT NULL DEFAULT '',
   updated_at TEXT NOT NULL
 );
 

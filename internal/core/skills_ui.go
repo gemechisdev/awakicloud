@@ -32,8 +32,11 @@ func (e *Engine) cmdSkillsList(ctx context.Context, msg channel.Message) {
 	}
 	var b strings.Builder
 	b.WriteString("🧩 Agent Skills\n\n")
+	b.WriteString("On disk: /data/skills/{name}/SKILL.md\n")
+	b.WriteString("(+ optional references/, scripts/, assets/ per skill)\n")
+	b.WriteString("Durable: each package is zipped into SQLite (hash-checked) and follows cloud DB sync.\n\n")
 	if len(list) == 0 {
-		b.WriteString("No skills installed yet.\nSend a skill .zip, or create L1 via the agent / wizard.")
+		b.WriteString("None installed. Tap Add or upload a skill .zip / .md.")
 	} else {
 		for _, s := range list {
 			fmt.Fprintf(&b, "• %s — %s\n  %s\n", s.Name, s.LevelLabel(), s.Description)
@@ -97,7 +100,15 @@ func (e *Engine) cmdSkillView(ctx context.Context, msg channel.Message, name str
 func (e *Engine) uiStartAddSkill(ctx context.Context, msg channel.Message) {
 	e.ui.set(&uiWizard{Kind: "skill_add", Step: "name", Draft: map[string]string{}})
 	e.deliverKeyboard(ctx, msg, channel.KeyboardMessage{
-		Text: "➕ Add skill\n\nStep 1/3 — Name\n\nSend a short name (e.g. pdf-processing), or send a .zip skill package as a document and skip the wizard.",
+		Text: "➕ Add skill\n\n" +
+			"Upload now (document) or continue the wizard:\n\n" +
+			"• Single SKILL.md or {name}.md (L1)\n" +
+			"• Zip with SKILL.md at root (one skill)\n" +
+			"• Zip with my-skill/SKILL.md + refs/scripts/assets\n" +
+			"• Zip with multiple */SKILL.md folders (multi-install)\n" +
+			"• Zip with skills/foo and skills/bar\n\n" +
+			"Format: Agent Skills style — one folder per skill, SKILL.md required.\n\n" +
+			"Wizard Step 1/3 — Name (e.g. pdf-processing):",
 		Rows: [][]channel.Button{{{Text: "❌ Cancel", CallbackData: "ui:skills"}}},
 	})
 }
@@ -121,7 +132,7 @@ func (e *Engine) wizardAddSkill(ctx context.Context, msg channel.Message, w *uiW
 		e.ui.setDraft("description", text)
 		e.ui.setStep("body")
 		e.deliverKeyboard(ctx, msg, channel.KeyboardMessage{
-			Text: "Step 3/3 — Instructions\n\nSend the SKILL.md body (markdown procedure). For full L2/L3 packages, cancel and upload a .zip instead.",
+			Text: "Step 3/3 — Instructions\n\nSend the SKILL.md body (markdown). For L2/L3 packages, cancel and upload a .zip instead.",
 			Rows: [][]channel.Button{{{Text: "❌ Cancel", CallbackData: "ui:skills"}}},
 		})
 		return true
@@ -139,32 +150,36 @@ func (e *Engine) wizardAddSkill(ctx context.Context, msg channel.Message, w *uiW
 			_ = msg.Reply.SendText(ctx, "Create failed: "+err.Error())
 			return true
 		}
-		_ = msg.Reply.SendText(ctx, fmt.Sprintf("✅ Skill «%s» created (L1).", sk.Name))
+		_ = msg.Reply.SendText(ctx, fmt.Sprintf("✅ Skill «%s» created (L1). Package synced to DB.", sk.Name))
 		e.cmdSkillDetail(ctx, msg, sk.Name)
 		return true
 	}
 	return false
 }
 
-// TryInstallSkillZip installs an uploaded zip if it looks like an Agent Skill package.
-// Returns true if handled.
-func (e *Engine) TryInstallSkillZip(ctx context.Context, msg channel.Message, zipPath string) bool {
+func (e *Engine) installSkillPackageForced(ctx context.Context, msg channel.Message, path, name string) {
 	mgr := e.skillMgr()
 	if mgr == nil {
-		return false
+		_ = msg.Reply.SendText(ctx, "Skills not available.")
+		return
 	}
-	// Peek for SKILL.md without full install failure noise for random zips
-	if !zipLooksLikeSkill(zipPath) {
-		return false
-	}
-	sk, err := mgr.InstallZip(zipPath, "")
+	list, err := mgr.InstallPath(path, name)
 	if err != nil {
-		_ = msg.Reply.SendText(ctx, "Skill zip install failed: "+err.Error())
-		return true
+		_ = msg.Reply.SendText(ctx, "Install failed: "+err.Error())
+		return
 	}
-	_ = msg.Reply.SendText(ctx, fmt.Sprintf("✅ Installed skill «%s» (%s).", sk.Name, sk.LevelLabel()))
-	e.cmdSkillDetail(ctx, msg, sk.Name)
-	return true
+	if len(list) == 1 {
+		_ = msg.Reply.SendText(ctx, fmt.Sprintf("✅ Installed «%s» (%s). Package synced to DB.", list[0].Name, list[0].LevelLabel()))
+		e.cmdSkillDetail(ctx, msg, list[0].Name)
+		return
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "✅ Installed %d skills (packages synced to DB):\n", len(list))
+	for _, sk := range list {
+		fmt.Fprintf(&b, "• %s (%s)\n", sk.Name, sk.LevelLabel())
+	}
+	_ = msg.Reply.SendText(ctx, b.String())
+	e.cmdSkillsList(ctx, msg)
 }
 
 func zipLooksLikeSkill(path string) bool {
@@ -186,30 +201,8 @@ func zipLooksLikeSkill(path string) bool {
 	return false
 }
 
-func (e *Engine) installSkillZipForced(ctx context.Context, msg channel.Message, zipPath, name string) {
-	mgr := e.skillMgr()
-	if mgr == nil {
-		_ = msg.Reply.SendText(ctx, "Skills not available.")
-		return
-	}
-	sk, err := mgr.InstallZip(zipPath, name)
-	if err != nil {
-		_ = msg.Reply.SendText(ctx, "Install failed: "+err.Error())
-		return
-	}
-	_ = msg.Reply.SendText(ctx, fmt.Sprintf("✅ Installed skill «%s» (%s).", sk.Name, sk.LevelLabel()))
-	e.cmdSkillDetail(ctx, msg, sk.Name)
-}
-
-// ensure skill path exists for empty installs
-func ensureSkillsDir(dir string) {
-	_ = os.MkdirAll(dir, 0o755)
-}
-
-// trySkillZipMessage installs an uploaded Agent Skill zip when the user is in
-// the skill_add wizard, or the caption/text is /skill_install, or the zip
-// clearly contains SKILL.md and text mentions install skill.
-func (e *Engine) trySkillZipMessage(ctx context.Context, msg channel.Message) bool {
+// trySkillPackageMessage installs an uploaded skill .zip/.md when appropriate.
+func (e *Engine) trySkillPackageMessage(ctx context.Context, msg channel.Message) bool {
 	if len(msg.Attachments) == 0 {
 		return false
 	}
@@ -225,11 +218,15 @@ func (e *Engine) trySkillZipMessage(ctx context.Context, msg channel.Message) bo
 	}
 
 	for _, att := range msg.Attachments {
-		name := strings.ToLower(att.Filename)
-		if !strings.HasSuffix(name, ".zip") {
+		fname := strings.ToLower(att.Filename)
+		if !strings.HasSuffix(fname, ".zip") && !strings.HasSuffix(fname, ".md") {
 			continue
 		}
-		tmp, err := os.CreateTemp("", "awaki-skill-upload-*.zip")
+		pattern := "awaki-skill-upload-*.zip"
+		if strings.HasSuffix(fname, ".md") {
+			pattern = "awaki-skill-upload-*.md"
+		}
+		tmp, err := os.CreateTemp("", pattern)
 		if err != nil {
 			continue
 		}
@@ -237,18 +234,24 @@ func (e *Engine) trySkillZipMessage(ctx context.Context, msg channel.Message) bo
 		_, _ = tmp.Write(att.Data)
 		_ = tmp.Close()
 
-		looks := zipLooksLikeSkill(path)
-		if !force && !looks {
+		if strings.HasSuffix(fname, ".zip") {
+			looks := zipLooksLikeSkill(path)
+			if !force && !looks {
+				_ = os.Remove(path)
+				continue
+			}
+			if !looks {
+				_ = os.Remove(path)
+				_ = msg.Reply.SendText(ctx, "Zip has no SKILL.md — not an Agent Skill package.")
+				return true
+			}
+		} else if !force && !strings.Contains(fname, "skill") {
 			_ = os.Remove(path)
 			continue
 		}
-		if !looks {
-			_ = os.Remove(path)
-			_ = msg.Reply.SendText(ctx, "Zip does not contain SKILL.md — not an Agent Skill package.")
-			return true
-		}
+
 		e.ui.clear()
-		e.installSkillZipForced(ctx, msg, path, preferred)
+		e.installSkillPackageForced(ctx, msg, path, preferred)
 		_ = os.Remove(path)
 		return true
 	}

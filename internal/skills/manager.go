@@ -12,7 +12,27 @@ import (
 	"github.com/gemechischala/awaki/internal/store"
 )
 
-// Manager installs and inspects Agent Skill packages on disk under Store.SkillsDir().
+// SkillPackager is implemented by sqlite store to persist full packages in DB.
+type SkillPackager interface {
+	SyncSkillPackage(name string) (hash string, changed bool, err error)
+}
+
+// Manager installs and inspects Agent Skill packages under Store.SkillsDir().
+//
+// On-disk layout (one skill = one directory):
+//
+//	{SkillsDir}/
+//	  pdf-processing/          ← one skill package
+//	    SKILL.md               ← required (Agent Skills / open standard style)
+//	    references/            ← optional
+//	    scripts/               ← optional
+//	    assets/                ← optional
+//	  github-workflow/         ← another skill
+//	    SKILL.md
+//
+// This matches the common Agent Skills layout used by Anthropic/OpenAI-style
+// skill packages: each skill is its own folder with SKILL.md at the root of
+// that folder — not a single shared folder of mixed files.
 type Manager struct {
 	st store.Store
 }
@@ -45,27 +65,37 @@ func (m *Manager) Remove(name string) error {
 	return m.st.DeleteSkill(name)
 }
 
-// InstallZip extracts an Agent Skill zip into SkillsDir.
-// Accepts either:
-//   - zip root = skill contents (must contain SKILL.md), name from arg or frontmatter
-//   - zip root = single top-level folder containing SKILL.md
-func (m *Manager) InstallZip(zipPath, preferredName string) (domain.Skill, error) {
-	tmp, err := os.MkdirTemp("", "awaki-skill-*")
-	if err != nil {
-		return domain.Skill{}, err
+func (m *Manager) syncPackage(name string) {
+	if p, ok := m.st.(SkillPackager); ok {
+		if _, _, err := p.SyncSkillPackage(name); err != nil {
+			// non-fatal; disk still has the files
+			_ = err
+		}
 	}
-	defer os.RemoveAll(tmp)
+}
 
-	if err := unzipTo(zipPath, tmp); err != nil {
-		return domain.Skill{}, err
+// InstallPath installs from a file path: .zip package(s) or a single .md skill file.
+// Returns all skills installed (zip may contain multiple).
+func (m *Manager) InstallPath(path, preferredName string) ([]domain.Skill, error) {
+	ext := strings.ToLower(filepath.Ext(path))
+	switch ext {
+	case ".zip":
+		return m.InstallZip(path, preferredName)
+	case ".md":
+		sk, err := m.InstallMarkdownFile(path, preferredName)
+		if err != nil {
+			return nil, err
+		}
+		return []domain.Skill{sk}, nil
+	default:
+		return nil, fmt.Errorf("unsupported skill file type %q (use .zip or .md)", ext)
 	}
+}
 
-	root, err := findSkillRoot(tmp)
-	if err != nil {
-		return domain.Skill{}, err
-	}
-
-	body, err := os.ReadFile(filepath.Join(root, "SKILL.md"))
+// InstallMarkdownFile installs a Level-1 skill from a single markdown file.
+// Accepts SKILL.md or {name}.md (name taken from filename if needed).
+func (m *Manager) InstallMarkdownFile(mdPath, preferredName string) (domain.Skill, error) {
+	body, err := os.ReadFile(mdPath)
 	if err != nil {
 		return domain.Skill{}, err
 	}
@@ -75,56 +105,105 @@ func (m *Manager) InstallZip(zipPath, preferredName string) (domain.Skill, error
 		name = fmName
 	}
 	if name == "" {
-		name = filepath.Base(root)
+		base := strings.TrimSuffix(filepath.Base(mdPath), filepath.Ext(mdPath))
+		if strings.EqualFold(base, "skill") {
+			return domain.Skill{}, fmt.Errorf("name required when file is SKILL.md without frontmatter name")
+		}
+		name = base
 	}
 	name = sanitize(name)
-	if name == "" {
-		return domain.Skill{}, fmt.Errorf("could not determine skill name")
-	}
-
-	dest := filepath.Join(m.Dir(), name)
-	_ = os.RemoveAll(dest)
-	if err := copyTree(root, dest); err != nil {
-		return domain.Skill{}, err
-	}
-
-	// Sync SKILL.md into store backends that track body in DB.
 	content := string(body)
-	if _, err := m.st.CreateSkill(name, fmDesc, stripFrontmatterBody(content)); err != nil {
-		// already exists or sqlite unique — update instead
-		_ = m.st.UpdateSkill(name, content)
-		// Ensure full tree still on disk after UpdateSkill (sqlite only writes md)
-		if err2 := copyTree(root, dest); err2 != nil {
-			return domain.Skill{}, err2
-		}
-		_ = os.WriteFile(filepath.Join(dest, "SKILL.md"), body, 0o644)
-	}
-
-	sk, ok, err := m.Get(name)
+	// CreateSkill formats frontmatter if missing description
+	path, err := m.st.CreateSkill(name, fmDesc, stripFrontmatterBody(content))
 	if err != nil {
-		return domain.Skill{}, err
+		_ = m.st.UpdateSkill(name, content)
+		path = filepath.Join(m.Dir(), name, "SKILL.md")
+		_ = os.WriteFile(path, body, 0o644)
 	}
-	if !ok {
-		return domain.Skill{Name: name, Description: fmDesc, Dir: dest, FilePath: filepath.Join(dest, "SKILL.md")}, nil
-	}
-	return sk, nil
+	m.syncPackage(name)
+	return domain.Skill{Name: name, Description: fmDesc, FilePath: path, Dir: filepath.Dir(path)}, nil
 }
 
-// InstallMarkdown creates a Level-1 skill from name/description/body.
+// InstallZip extracts skill package(s). Accepted layouts:
+//
+//  1. Single skill at zip root: SKILL.md + optional references/scripts/assets
+//  2. Single skill in one folder: my-skill/SKILL.md + …
+//  3. Multiple skills: skills/foo/SKILL.md, skills/bar/SKILL.md
+//     or foo/SKILL.md and bar/SKILL.md as sibling folders
+//
+// preferredName applies only when exactly one skill is found.
+func (m *Manager) InstallZip(zipPath, preferredName string) ([]domain.Skill, error) {
+	tmp, err := os.MkdirTemp("", "awaki-skill-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(tmp)
+
+	if err := unzipTo(zipPath, tmp); err != nil {
+		return nil, err
+	}
+
+	roots := findAllSkillRoots(tmp)
+	if len(roots) == 0 {
+		return nil, fmt.Errorf("no SKILL.md found in zip — see /skills format help")
+	}
+
+	var out []domain.Skill
+	for _, root := range roots {
+		body, err := os.ReadFile(filepath.Join(root, "SKILL.md"))
+		if err != nil {
+			return out, err
+		}
+		fmName, fmDesc := parseFrontmatter(string(body))
+		name := fmName
+		if name == "" {
+			name = filepath.Base(root)
+		}
+		if len(roots) == 1 && preferredName != "" {
+			name = preferredName
+		}
+		name = sanitize(name)
+		if name == "" || name == "skills" || name == "tmp" {
+			return out, fmt.Errorf("could not determine skill name for %s", root)
+		}
+
+		dest := filepath.Join(m.Dir(), name)
+		_ = os.RemoveAll(dest)
+		if err := copyTree(root, dest); err != nil {
+			return out, err
+		}
+		content := string(body)
+		if _, err := m.st.CreateSkill(name, fmDesc, stripFrontmatterBody(content)); err != nil {
+			_ = m.st.UpdateSkill(name, content)
+			_ = copyTree(root, dest)
+			_ = os.WriteFile(filepath.Join(dest, "SKILL.md"), body, 0o644)
+		}
+		m.syncPackage(name)
+		sk, ok, _ := m.Get(name)
+		if !ok {
+			sk = domain.Skill{Name: name, Description: fmDesc, Dir: dest, FilePath: filepath.Join(dest, "SKILL.md")}
+		}
+		out = append(out, sk)
+	}
+	return out, nil
+}
+
+// InstallMarkdown creates a Level-1 skill from fields.
 func (m *Manager) InstallMarkdown(name, description, body string) (domain.Skill, error) {
 	path, err := m.st.CreateSkill(name, description, body)
 	if err != nil {
 		return domain.Skill{}, err
 	}
+	name = sanitize(name)
+	m.syncPackage(name)
 	return domain.Skill{
-		Name:        sanitize(name),
+		Name:        name,
 		Description: description,
 		FilePath:    path,
 		Dir:         filepath.Dir(path),
 	}, nil
 }
 
-// Tree returns a short listing of files under the skill (max 80 entries).
 func (m *Manager) Tree(name string) (string, error) {
 	sk, ok, err := m.Get(name)
 	if err != nil {
@@ -140,7 +219,7 @@ func (m *Manager) Tree(name string) (string, error) {
 			return nil
 		}
 		rel, _ := filepath.Rel(sk.Dir, path)
-		if rel == "." {
+		if rel == "." || rel == ".package_hash" {
 			return nil
 		}
 		if info.IsDir() {
@@ -158,7 +237,6 @@ func (m *Manager) Tree(name string) (string, error) {
 	return b.String(), nil
 }
 
-// ReadFile reads a path relative to the skill root (no .. escape).
 func (m *Manager) ReadFile(name, rel string) (string, error) {
 	sk, ok, err := m.Get(name)
 	if err != nil {
@@ -182,7 +260,6 @@ func (m *Manager) ReadFile(name, rel string) (string, error) {
 	return string(data), nil
 }
 
-// ScriptPath resolves scripts/<name> under the skill if it exists.
 func (m *Manager) ScriptPath(skillName, script string) (string, error) {
 	sk, ok, err := m.Get(skillName)
 	if err != nil {
@@ -195,7 +272,6 @@ func (m *Manager) ScriptPath(skillName, script string) (string, error) {
 	if strings.Contains(script, "..") {
 		return "", fmt.Errorf("invalid script path")
 	}
-	// Allow "extract.py" or "scripts/extract.py"
 	candidates := []string{
 		filepath.Join(sk.Dir, "scripts", script),
 		filepath.Join(sk.Dir, script),
@@ -230,31 +306,37 @@ func enrich(s domain.Skill) domain.Skill {
 	return s
 }
 
-func findSkillRoot(dir string) (string, error) {
+// findAllSkillRoots returns directories that contain SKILL.md.
+func findAllSkillRoots(dir string) []string {
+	var roots []string
+	// Direct SKILL.md at dir
 	if _, err := os.Stat(filepath.Join(dir, "SKILL.md")); err == nil {
-		return dir, nil
+		return []string{dir}
 	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return "", err
-	}
-	var dirs []string
-	for _, e := range entries {
-		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
-			dirs = append(dirs, filepath.Join(dir, e.Name()))
+	_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info == nil || info.IsDir() {
+			return nil
+		}
+		if strings.EqualFold(info.Name(), "SKILL.md") {
+			roots = append(roots, filepath.Dir(path))
+		}
+		return nil
+	})
+	// De-dupe and drop nested roots inside another skill root
+	var filtered []string
+	for _, r := range roots {
+		nested := false
+		for _, o := range roots {
+			if r != o && strings.HasPrefix(r, o+string(os.PathSeparator)) {
+				nested = true
+				break
+			}
+		}
+		if !nested {
+			filtered = append(filtered, r)
 		}
 	}
-	if len(dirs) == 1 {
-		if _, err := os.Stat(filepath.Join(dirs[0], "SKILL.md")); err == nil {
-			return dirs[0], nil
-		}
-	}
-	for _, d := range dirs {
-		if _, err := os.Stat(filepath.Join(d, "SKILL.md")); err == nil {
-			return d, nil
-		}
-	}
-	return "", fmt.Errorf("zip does not contain SKILL.md (expected Agent Skill package)")
+	return filtered
 }
 
 func unzipTo(zipPath, dest string) error {

@@ -138,7 +138,7 @@ func (e *Engine) handleMessage(ctx context.Context, msg channel.Message) {
 	}
 
 	// Agent Skill package upload (zip with SKILL.md)
-	if e.trySkillZipMessage(ctx, msg) {
+	if e.trySkillPackageMessage(ctx, msg) {
 		return
 	}
 
