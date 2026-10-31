@@ -202,7 +202,7 @@ func (e *Engine) handleCommand(ctx context.Context, msg channel.Message) {
 	case channel.CmdMCPAdd:
 		e.uiStartAddMCP(ctx, msg)
 	case channel.CmdSkills:
-		e.cmdSkillsList(ctx, msg)
+		e.cmdSkills(ctx, msg)
 	case channel.CmdSkillAdd:
 		e.uiStartAddSkill(ctx, msg)
 	case channel.CmdPlugin:

@@ -18,6 +18,113 @@ func (e *Engine) skillMgr() *skillpkg.Manager {
 	return skillpkg.NewManager(e.store)
 }
 
+// skillsRawArgs returns the argument string of the current slash command.
+func skillsRawArgs(msg channel.Message) string {
+	if msg.Command != nil && msg.Command.Args != nil {
+		if raw := strings.TrimSpace(msg.Command.Args["raw"]); raw != "" {
+			return raw
+		}
+	}
+	fields := strings.Fields(strings.TrimSpace(msg.Text))
+	if len(fields) > 1 {
+		return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(msg.Text), fields[0]))
+	}
+	return ""
+}
+
+const skillsUsage = "Usage:\n" +
+	"/skills — list installed skills\n" +
+	"/skills add <url-or-repo> [--skill name] — install from a URL\n" +
+	"/skills remove <name>\n\n" +
+	"Sources:\n" +
+	"• owner/repo, owner/repo@skill\n" +
+	"• https://github.com/owner/repo/tree/main/skills/foo\n" +
+	"• https://skills.sh/owner/repo/skill\n" +
+	"• https://smithery.ai/skills/owner/skill\n" +
+	"• https://example.com (/.well-known/skills)\n" +
+	"• direct .zip / SKILL.md URL\n\n" +
+	"A pasted `npx skills add <url>` command also works."
+
+// cmdSkills handles /skills [list|add|remove|market] ...
+func (e *Engine) cmdSkills(ctx context.Context, msg channel.Message) {
+	args := skillsRawArgs(msg)
+	fields := strings.Fields(args)
+	if len(fields) == 0 {
+		e.cmdSkillsList(ctx, msg)
+		return
+	}
+	switch strings.ToLower(fields[0]) {
+	case "list", "ls":
+		e.cmdSkillsList(ctx, msg)
+	case "add", "install", "i":
+		e.cmdSkillsAdd(ctx, msg, fields[1:])
+	case "remove", "rm", "delete", "uninstall":
+		if len(fields) < 2 {
+			_ = msg.Reply.SendText(ctx, "Usage: /skills remove <name>")
+			return
+		}
+		mgr := e.skillMgr()
+		if mgr == nil {
+			_ = msg.Reply.SendText(ctx, "Skills not available.")
+			return
+		}
+		if err := mgr.Remove(fields[1]); err != nil {
+			_ = msg.Reply.SendText(ctx, "Remove failed: "+err.Error())
+			return
+		}
+		_ = msg.Reply.SendText(ctx, "Removed skill: "+fields[1])
+		e.cmdSkillsList(ctx, msg)
+	case "market", "marketplace":
+		e.cmdSkillMarket(ctx, msg)
+	case "help", "?":
+		_ = msg.Reply.SendText(ctx, skillsUsage)
+	default:
+		// `/skills https://…` or `/skills npx skills add …` without "add".
+		if skillpkg.LooksLikeSource(fields[0]) || strings.EqualFold(fields[0], "npx") {
+			e.cmdSkillsAdd(ctx, msg, fields)
+			return
+		}
+		_ = msg.Reply.SendText(ctx, skillsUsage)
+	}
+}
+
+// cmdSkillsAdd implements `/skills add <url-to-skill> [--skill name] [--all]`.
+func (e *Engine) cmdSkillsAdd(ctx context.Context, msg channel.Message, fields []string) {
+	src, opts, err := skillpkg.ParseAddArgs(fields)
+	if err != nil {
+		_ = msg.Reply.SendText(ctx, err.Error()+"\n\n"+skillsUsage)
+		return
+	}
+	e.installSkillsFromSource(ctx, msg, src, opts)
+}
+
+func (e *Engine) installSkillsFromSource(ctx context.Context, msg channel.Message, src string, opts skillpkg.InstallOptions) {
+	mgr := e.skillMgr()
+	if mgr == nil {
+		_ = msg.Reply.SendText(ctx, "Skills not available.")
+		return
+	}
+	_ = msg.Reply.SendText(ctx, "Installing from "+src+"…")
+	list, err := mgr.InstallFromSource(ctx, src, opts)
+	if err != nil {
+		_ = msg.Reply.SendText(ctx, "Install failed: "+err.Error())
+		return
+	}
+	e.ui.clear()
+	if len(list) == 1 {
+		_ = msg.Reply.SendText(ctx, fmt.Sprintf("✅ Installed «%s» (%s) from %s. Package synced to DB.", list[0].Name, list[0].LevelLabel(), src))
+		e.cmdSkillDetail(ctx, msg, list[0].Name)
+		return
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "✅ Installed %d skills from %s:\n", len(list), src)
+	for _, sk := range list {
+		fmt.Fprintf(&b, "• %s (%s)\n", sk.Name, sk.LevelLabel())
+	}
+	_ = msg.Reply.SendText(ctx, b.String())
+	e.cmdSkillsList(ctx, msg)
+}
+
 func (e *Engine) cmdSkillsList(ctx context.Context, msg channel.Message) {
 	mgr := e.skillMgr()
 	if mgr == nil {
@@ -35,7 +142,7 @@ func (e *Engine) cmdSkillsList(ctx context.Context, msg channel.Message) {
 	b.WriteString("(+ optional references/, scripts/, assets/ per skill)\n")
 	b.WriteString("Durable: each package is zipped into SQLite (hash-checked) and follows cloud DB sync.\n\n")
 	if len(list) == 0 {
-		b.WriteString("None installed. Tap Add or upload a skill .zip / .md.")
+		b.WriteString("None installed. Tap Add, upload a skill .zip / .md, or run /skills add <url>.")
 	} else {
 		for _, s := range list {
 			fmt.Fprintf(&b, "• %s — %s\n  %s\n", s.Name, s.LevelLabel(), s.Description)
@@ -101,7 +208,7 @@ func (e *Engine) uiStartAddSkill(ctx context.Context, msg channel.Message) {
 	e.ui.set(&uiWizard{Kind: "skill_add", Step: "name", Draft: map[string]string{}})
 	e.deliverKeyboard(ctx, msg, channel.KeyboardMessage{
 		Text: "➕ Add skill\n\n" +
-			"Upload now (document) or continue the wizard:\n\n" +
+			"Paste a skill URL (GitHub, skills.sh, smithery.ai, …) to install it directly,\nor upload now (document) / continue the wizard:\n\n" +
 			"• Single SKILL.md or {name}.md (L1)\n" +
 			"• Zip with SKILL.md at root (one skill)\n" +
 			"• Zip with my-skill/SKILL.md + refs/scripts/assets\n" +
@@ -119,6 +226,17 @@ func (e *Engine) wizardAddSkill(ctx context.Context, msg channel.Message, w *uiW
 	case "name":
 		if text == "" {
 			_ = msg.Reply.SendText(ctx, "Send a skill name.")
+			return true
+		}
+		// Pasted URL / `npx skills add <url>` → install from the source instead.
+		if strings.Contains(text, "://") {
+			src, opts, err := skillpkg.ParseAddArgs(strings.Fields(text))
+			if err != nil {
+				_ = msg.Reply.SendText(ctx, err.Error())
+				return true
+			}
+			e.ui.clear()
+			e.installSkillsFromSource(ctx, msg, src, opts)
 			return true
 		}
 		e.ui.setDraft("name", text)
@@ -359,7 +477,8 @@ func (e *Engine) cmdSkillMarket(ctx context.Context, msg channel.Message) {
 	b.WriteString("🏪 Skill marketplaces (Claude-compatible)\n\n")
 	b.WriteString("Add: /plugin marketplace add anthropics/skills\n")
 	b.WriteString("Install: /plugin install document-skills@anthropic-agent-skills\n")
-	b.WriteString("Install all: /plugin install all@anthropic-agent-skills\n\n")
+	b.WriteString("Install all: /plugin install all@anthropic-agent-skills\n")
+	b.WriteString("Single skill from any URL: /skills add <url> (GitHub, skills.sh, smithery.ai, …)\n\n")
 	if len(markets) == 0 {
 		b.WriteString("No marketplaces registered yet.")
 	} else {

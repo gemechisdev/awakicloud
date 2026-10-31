@@ -32,6 +32,9 @@ In Telegram:
 | `/model_add provider\|model_id\|name` | Add & activate model |
 | `/mcp` | List configured MCP servers |
 | `/mcp_add` | Add a new MCP server |
+| `/skills` | List installed Agent Skills |
+| `/skills add <url> [--skill name]` | Install a skill from GitHub, skills.sh, smithery.ai, a `/.well-known/skills` site, or a `.zip`/`SKILL.md` URL |
+| `/plugin marketplace add owner/repo` | Register a Claude-style plugin marketplace |
 | `/projects` | List projects |
 | `/project <name>` | Create a project |
 | `/upgrade [name]` | Upgrade chat → durable project |
@@ -54,6 +57,21 @@ Protocols: `openai_chat_completions`, `openai_responses`, `anthropic_messages`, 
 | `AWAKI_TG_*` | Optional user-account storage (MTProto) |
 
 `.env` is loaded automatically from the current working directory.
+
+## Skills
+
+Install Agent Skills (a folder with `SKILL.md`) the same way as `npx skills add`:
+
+```text
+/skills add anthropics/skills --skill frontend-design
+/skills add https://github.com/anthropics/skills/tree/main/skills/frontend-design
+/skills add https://skills.sh/anthropics/skills/frontend-design
+/skills add https://smithery.ai/skills/anthropics/frontend-design
+/skills add https://example.com            # reads /.well-known/skills/index.json
+/skills add https://example.com/my-skill.zip
+```
+
+Pasting the full `npx -y skills add <url>` command also works. A source that holds several skills installs all of them (up to 25; use `--skill <name>` to pick one or `--all` to lift the cap). Set `GITHUB_TOKEN` to avoid GitHub API rate limits. Skills can include scripts the agent may run, so only install sources you trust.
 
 ## MCP Servers
 

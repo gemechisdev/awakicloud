@@ -81,6 +81,7 @@ Commands:
 /mcp — list MCP servers
 /mcp_add — add MCP server (wizard)
 /skills — list Agent Skills
+/skills add <url> [--skill name] — install a skill from GitHub / skills.sh / smithery.ai / any URL
 /skill_add — add a skill
 /plugin marketplace add owner/repo — register skills marketplace
 /plugin install name@market — install plugin skills

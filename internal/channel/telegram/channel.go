@@ -76,7 +76,7 @@ func (c *Channel) Run(ctx context.Context, handler channel.Handler) error {
 		{Command: "sync", Description: "Sync project to Telegram"},
 		{Command: "mcp", Description: "List MCP servers"},
 		{Command: "mcp_add", Description: "Add MCP server"},
-		{Command: "skills", Description: "List Agent Skills"},
+		{Command: "skills", Description: "List / add Agent Skills (/skills add <url>)"},
 		{Command: "skill_add", Description: "Add a skill"},
 		{Command: "plugin", Description: "Skills marketplace (Claude-style)"},
 	})
