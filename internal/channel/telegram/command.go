@@ -11,35 +11,8 @@ import (
 	"github.com/gemechischala/awaki/internal/transport"
 )
 
-// commandMap maps Telegram slash commands to engine command names.
-// Keep in sync with SetMyCommands in channel.go and /help text.
-var commandMap = map[string]string{
-	"/start":        channel.CmdStart,
-	"/new":          channel.CmdNewChat,
-	"/stop":         channel.CmdStop,
-	"/help":         channel.CmdHelp,
-	"/plan":         channel.CmdPlan,
-	"/mode":         channel.CmdMode,
-	"/tasks":        channel.CmdTasks,
-	"/task":         channel.CmdTaskAdd,
-	"/history":      channel.CmdHistory,
-	"/memory":       channel.CmdMemory,
-	"/soul":         channel.CmdSoul,
-	"/user":         channel.CmdUser,
-	"/providers":    channel.CmdProviders,
-	"/models":       channel.CmdModels,
-	"/provider_add": channel.CmdProviderAdd,
-	"/model_add":    channel.CmdModelAdd,
-	"/projects":     channel.CmdProjects,
-	"/project":      channel.CmdProject,
-	"/upgrade":      channel.CmdProjectUpgrade,
-	"/sync":         channel.CmdProjectSync,
-	"/mcp":          channel.CmdMCP,
-	"/mcp_add":      channel.CmdMCPAdd,
-	"/skills":       channel.CmdSkills,
-	"/skill_add":    channel.CmdSkillAdd,
-	"/plugin":       channel.CmdPlugin,
-}
+// commandMap is derived from channel.Commands (single source of truth).
+var commandMap = channel.CommandMap()
 
 var commandSuccess = map[string]string{
 	channel.CmdNewChat: "✨ New conversation started.",
@@ -53,40 +26,7 @@ var commandEmpty = map[string]string{
 }
 
 func helpText() string {
-	return strings.TrimSpace(`
-Commands:
-
-/start — main menu
-/new — new conversation
-/stop — cancel current agent run
-/help — this list
-/plan <task> — read-only plan mode for one turn
-/tasks — background task board
-/task <work> — queue background task manually
-
-/history — past conversations
-/memory — list memory files
-/soul — agent identity (soul.md)
-/user — user profile (user.md)
-
-/providers — manage LLM providers
-/models — list / select models
-/provider_add name|protocol|base_url|api_key
-/model_add provider|model_id|Display Name
-
-/projects — list projects
-/project <name> — create project
-/upgrade [name] — upgrade chat → project
-/sync — sync active project to Telegram storage
-
-/mcp — list MCP servers
-/mcp_add — add MCP server (wizard)
-/skills — list Agent Skills
-/skills add <url> [--skill name] — install a skill from GitHub / skills.sh / smithery.ai / any URL
-/skill_add — add a skill
-/plugin marketplace add owner/repo — register skills marketplace
-/plugin install name@market — install plugin skills
-`)
+	return channel.HelpText()
 }
 
 func (c *Channel) handleCommand(ctx context.Context, chatID int64, reply transport.Replier, cmdText string) {

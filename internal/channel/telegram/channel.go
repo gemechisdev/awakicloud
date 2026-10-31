@@ -60,33 +60,11 @@ func (c *Channel) newReplier(chatID int64) *replier {
 func (c *Channel) Run(ctx context.Context, handler channel.Handler) error {
 	c.handler = handler
 
-	c.client.SetMyCommands(ctx, []models.BotCommand{
-		{Command: "start", Description: "Main menu"},
-		{Command: "new", Description: "New conversation"},
-		{Command: "stop", Description: "Cancel current task"},
-		{Command: "help", Description: "List all commands"},
-		{Command: "plan", Description: "Read-only plan mode for one turn"},
-		{Command: "mode", Description: "Permission mode: auto / ask / plan"},
-		{Command: "tasks", Description: "Background task board"},
-		{Command: "task", Description: "Queue a background task"},
-		{Command: "history", Description: "Past conversations"},
-		{Command: "memory", Description: "List memory files"},
-		{Command: "soul", Description: "Show agent identity"},
-		{Command: "user", Description: "Show user profile"},
-		{Command: "providers", Description: "Manage AI providers"},
-		{Command: "models", Description: "List and select models"},
-		{Command: "provider_add", Description: "Quick-add provider"},
-		{Command: "model_add", Description: "Quick-add model"},
-		{Command: "projects", Description: "List projects"},
-		{Command: "project", Description: "Create a project"},
-		{Command: "upgrade", Description: "Upgrade chat to project"},
-		{Command: "sync", Description: "Sync project to Telegram"},
-		{Command: "mcp", Description: "List MCP servers"},
-		{Command: "mcp_add", Description: "Add MCP server"},
-		{Command: "skills", Description: "List Agent Skills"},
-		{Command: "skill_add", Description: "Add a skill"},
-		{Command: "plugin", Description: "Skills marketplace (Claude-style)"},
-	})
+	cmds := make([]models.BotCommand, 0, len(channel.MenuCommands()))
+	for _, pair := range channel.MenuCommands() {
+		cmds = append(cmds, models.BotCommand{Command: pair[0], Description: pair[1]})
+	}
+	c.client.SetMyCommands(ctx, cmds)
 
 	// Grace period so the previous instance can finish its last getUpdates
 	// long-poll and exit after SIGTERM. Poll timeout is ~10s; default grace

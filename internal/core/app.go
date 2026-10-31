@@ -470,28 +470,5 @@ func (e *Engine) RunScheduledTask(ctx context.Context, reply transport.Replier, 
 }
 
 func helpCommandText() string {
-	return `Commands:
-
-/start — main menu
-/new — new conversation
-/stop — cancel current agent run
-/help — this list
-/plan <task> — read-only plan mode for one turn
-/tasks — background task board (todo-style)
-/task <work> — queue a background task manually
-
-/history — past conversations
-/memory — list memory files
-/soul — agent identity
-/user — user profile
-
-/providers — manage LLM providers
-/models — list / select models
-/provider_add name|protocol|base_url|api_key
-/model_add provider|model_id|Display Name
-
-/projects — list projects
-/project <name> — create project
-/upgrade [name] — upgrade chat → project
-/sync — sync active project to Telegram storage`
+	return channel.HelpText()
 }

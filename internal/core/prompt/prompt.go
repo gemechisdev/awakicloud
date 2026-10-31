@@ -31,6 +31,7 @@ func SystemPrompt(ctx PromptContext) string {
 		buildRecallSection(),
 		buildSkillsSection(ctx.SkillsBlock),
 		buildSystemAccessSection(),
+		buildHostLimitsSection(),
 		buildSchedulingSection(),
 		buildDockerSection(),
 		buildMCPSection(),
@@ -217,6 +218,28 @@ RULES:
 - You ARE the executor — use your own tools when the task fires.
 - Each task has a 5-minute timeout. Failed tasks back off exponentially.
 - Use schedule_list to check state. Save notes in memory (scheduled-tasks.md).`
+}
+
+
+func buildHostLimitsSection() string {
+	return `HOST LIMITS (free-tier / small VPS — mandatory):
+You run on a constrained host (often free PaaS or a small VPS). Protect RAM and CPU.
+
+DO NOT by default:
+- Full production builds (go build of large modules, npm run build, cargo build --release, gradle, etc.)
+- Full test suites (go test ./..., npm test, pytest whole tree)
+- Heavy package installs, docker builds, large downloads, or long compile loops
+- Spawning many parallel agents, MCP stdio servers, or background tasks at once
+
+DO instead (unless the owner explicitly asks for a full build/test):
+- Static checks: read files, grep, lint, gofmt/formatter dry-runs, TypeScript/IDE-style diagnosis
+- Targeted compile of a single small package if truly needed and cheap
+- Describe exact commands the owner should run on their machine or CI for full build/test
+- Prefer one background task at a time; do not stack heavy work
+
+ONLY run full builds, full test suites, or other heavy jobs when the owner clearly requests it
+(e.g. "build it", "run the tests", "go build the whole project"). If unsure, ask first.
+When you skip a heavy step, say so briefly and give the owner the command to run.`
 }
 
 func buildDockerSection() string {
