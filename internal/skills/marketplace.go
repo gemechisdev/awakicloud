@@ -29,6 +29,9 @@ type Plugin struct {
 	Name        string   `json:"name"`
 	Description string   `json:"description"`
 	Skills      []string `json:"skills"` // relative paths like ./skills/pdf
+	// Source is the plugin root inside the marketplace repo, e.g. "./",
+	// "./plugins/frontend-design", or a git-subdir path. Empty means repo root.
+	Source string `json:"source,omitempty"`
 }
 
 type marketplaceFile struct {
@@ -38,9 +41,10 @@ type marketplaceFile struct {
 		Version     string `json:"version"`
 	} `json:"metadata"`
 	Plugins []struct {
-		Name        string   `json:"name"`
-		Description string   `json:"description"`
-		Skills      []string `json:"skills"`
+		Name        string          `json:"name"`
+		Description string          `json:"description"`
+		Skills      []string        `json:"skills"`
+		Source      json.RawMessage `json:"source"` // string "./" or {source,url,path,ref}
 	} `json:"plugins"`
 }
 
@@ -223,47 +227,47 @@ func (m *Manager) installMarketPlugins(ctx context.Context, mk Marketplace, plug
 		return nil, err
 	}
 
+	// Prefer a fresh parse of marketplace.json from the zip so fields like
+	// source:"./" are always available (older registry entries may lack them).
+	plugins := mk.Plugins
+	if _, fresh, err := readMarketplaceJSON(root); err == nil && len(fresh) > 0 {
+		plugins = fresh
+	}
+
 	var targets []string
 	installAll := pluginName == "*" || pluginName == "all" || pluginName == ""
 	matchedPlugin := false
-	for _, p := range mk.Plugins {
-		if installAll || strings.EqualFold(p.Name, pluginName) {
-			matchedPlugin = true
-			for _, rel := range p.Skills {
-				rel = strings.TrimPrefix(rel, "./")
-				targets = append(targets, filepath.Join(root, filepath.FromSlash(rel)))
-			}
-			// Marketplace entries that only declare a name (Claude Code style
-			// git-subdir sources) still map to a folder named after the plugin.
-			if len(p.Skills) == 0 && p.Name != "" {
-				for _, cand := range []string{
-					filepath.Join(root, "plugins", p.Name),
-					filepath.Join(root, "skills", p.Name),
-					filepath.Join(root, p.Name),
-				} {
-					targets = append(targets, cand)
-					// nested skills/<name> under the plugin folder
-					targets = append(targets, filepath.Join(cand, "skills", p.Name))
-				}
-			}
+	for _, p := range plugins {
+		if !installAll && !strings.EqualFold(p.Name, pluginName) {
+			continue
 		}
+		matchedPlugin = true
+		targets = append(targets, resolvePluginSkillDirs(root, p)...)
 	}
 	if !installAll && !matchedPlugin {
 		return nil, fmt.Errorf("plugin %q not found in marketplace %s", pluginName, mk.ID)
 	}
 	if len(targets) == 0 {
-		// fallback: every SKILL.md in repo
-		for _, r := range findAllSkillRoots(root) {
-			targets = append(targets, r)
+		// Whole-repo fallback (marketplace with no usable plugin paths).
+		targets = findAllSkillRoots(root)
+	}
+
+	// Deduplicate while preserving order.
+	seen := map[string]bool{}
+	var uniq []string
+	for _, d := range targets {
+		if d == "" || seen[d] {
+			continue
 		}
+		seen[d] = true
+		uniq = append(uniq, d)
 	}
 
 	var installed []domain.Skill
-	for _, dir := range targets {
+	for _, dir := range uniq {
 		if _, err := os.Stat(filepath.Join(dir, "SKILL.md")); err != nil {
 			continue
 		}
-		// Install this skill directory as a zip-equivalent tree
 		sk, err := m.installSkillDir(dir, "")
 		if err != nil {
 			log.Warn().Err(err).Str("dir", dir).Msg("skills: plugin skill install skipped")
@@ -272,9 +276,62 @@ func (m *Manager) installMarketPlugins(ctx context.Context, mk Marketplace, plug
 		installed = append(installed, sk)
 	}
 	if len(installed) == 0 {
-		return nil, fmt.Errorf("no skills installed from %s", mk.ID)
+		return nil, fmt.Errorf("no skills installed from %s (plugin %q) — marketplace listed the plugin but no SKILL.md was found under its source path", mk.ID, pluginName)
 	}
 	return installed, nil
+}
+
+// resolvePluginSkillDirs finds skill package directories for one marketplace
+// plugin entry. Handles:
+//   - explicit skills[] paths
+//   - source: "./" or "./plugins/foo" (scan that tree for SKILL.md)
+//   - Claude-style name-only plugins (plugins/<name>, skills/<name>, …)
+func resolvePluginSkillDirs(root string, p Plugin) []string {
+	var out []string
+	for _, rel := range p.Skills {
+		rel = strings.TrimPrefix(strings.TrimSpace(rel), "./")
+		if rel == "" {
+			continue
+		}
+		out = append(out, filepath.Join(root, filepath.FromSlash(rel)))
+	}
+	if len(out) > 0 {
+		return out
+	}
+
+	// Resolve plugin root from source ("./" → repo root).
+	src := strings.TrimSpace(p.Source)
+	src = strings.TrimPrefix(src, "./")
+	src = strings.Trim(src, "/")
+	pluginRoot := root
+	if src != "" && src != "." {
+		pluginRoot = filepath.Join(root, filepath.FromSlash(src))
+	}
+
+	// Prefer every SKILL.md under the plugin root (jakubkrehel/skills style:
+	// source "./" + skills/*/SKILL.md with no skills[] array).
+	if found := findAllSkillRoots(pluginRoot); len(found) > 0 {
+		return found
+	}
+
+	// Name-based guesses when source is empty/missing.
+	if p.Name != "" {
+		for _, cand := range []string{
+			filepath.Join(root, "plugins", p.Name),
+			filepath.Join(root, "skills", p.Name),
+			filepath.Join(root, p.Name),
+			filepath.Join(root, "plugins", p.Name, "skills", p.Name),
+			filepath.Join(root, "skills", p.Name, "skills", p.Name),
+		} {
+			if _, err := os.Stat(filepath.Join(cand, "SKILL.md")); err == nil {
+				out = append(out, cand)
+				continue
+			}
+			// Plugin folder that itself contains nested skill packages.
+			out = append(out, findAllSkillRoots(cand)...)
+		}
+	}
+	return out
 }
 
 func (m *Manager) installSkillDir(root, preferredName string) (domain.Skill, error) {
@@ -359,9 +416,34 @@ func readMarketplaceJSON(root string) (marketplaceFile, []Plugin, error) {
 			Name:        p.Name,
 			Description: p.Description,
 			Skills:      p.Skills,
+			Source:      parsePluginSource(p.Source),
 		})
 	}
 	return mf, plugins, nil
+}
+
+// parsePluginSource accepts either a string ("./plugins/foo") or Claude's
+// object form {"source":"git-subdir","path":"plugins/foo",...}.
+func parsePluginSource(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return strings.TrimSpace(s)
+	}
+	var obj struct {
+		Source string `json:"source"`
+		Path   string `json:"path"`
+		URL    string `json:"url"`
+	}
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return ""
+	}
+	if obj.Path != "" {
+		return obj.Path
+	}
+	return strings.TrimSpace(obj.Source)
 }
 
 func downloadGitHubRepo(ctx context.Context, owner, repo, dest string) (root string, err error) {
