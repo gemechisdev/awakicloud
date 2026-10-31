@@ -1,105 +1,317 @@
 # Awaki
 
-Self-hosted Telegram AI agent (Go). Multi-provider LLM config at runtime, Parallel/DuckDuckGo search, MCP server support, optional Telegram user-account storage, and durable project workspaces.
+**Self-hosted Telegram AI agent** written in Go.
+
+Runtime multi-provider LLMs, durable projects, Telegram cloud storage, MCP tools, background tasks, scheduling, permission modes, and HTTP hooks — designed to stay **lightweight** enough for free-tier PaaS (Koyeb, Render, Railway) or a small VPS.
+
+---
+
+## Features
+
+| Area | What you get |
+|------|----------------|
+| **Chat agent** | Tool-use loop over Telegram (files, shell, git, web, memory, skills) |
+| **Multi-provider LLM** | OpenAI Chat Completions, OpenAI Responses, Anthropic Messages, Google Gemini — add/select via Telegram (no hardcoded keys) |
+| **Permission modes** | Sticky per-chat **auto / ask / plan** (`/mode`); one-shot `/plan <task>` |
+| **Projects** | Durable workspaces under `/data/projects/{slug}/`, ZIP-synced to Telegram |
+| **Storage** | SQLite + optional Telegrive-style user session / storage channel; DB snapshots to TG |
+| **Background tasks** | In-process board with live progress pushes to the owner |
+| **Scheduler** | One-shot (`in 5m`), interval, cron; reminder-formatted delivery |
+| **MCP** | stdio / HTTP / SSE servers; tools hot-loaded into the agent |
+| **Skills** | Agent Skills (`SKILL.md` packages), install from GitHub / URL / zip |
+| **Web** | Search (Parallel → DuckDuckGo), fetch (Parallel → Jina → direct) + SSRF guard |
+| **Grep** | Flexible, token-efficient `grep` (ripgrep preferred) |
+| **HTTP ops** | Health probes + optional authenticated remote hooks |
+| **Steer** | While busy: stop-now / queue / dismiss mid-run messages |
+
+---
 
 ## Quick start
 
 ```bash
 cp .env.example .env
-# set TELEGRAM_BOT_TOKEN and TELEGRAM_OWNER_ID
+# Set TELEGRAM_BOT_TOKEN and TELEGRAM_OWNER_ID
 
 go build -o awaki ./cmd/awaki
 ./awaki
 ```
 
-In Telegram:
+`.env` is loaded automatically from the working directory (shell-exported vars win).
+
+### First-time LLM setup (in Telegram)
 
 ```text
 /provider_add OpenRouter|openai_chat_completions|https://openrouter.ai/api/v1|sk-or-v1-...
 /model_add OpenRouter|anthropic/claude-sonnet-4.6|Claude
+/models
 ```
+
+Protocols: `openai_chat_completions`, `openai_responses`, `anthropic_messages`, `google_gemini`.
+
+Providers and models persist in SQLite and survive redeploys when storage is configured.
+
+---
 
 ## Commands
 
+Commands are defined in **one catalog** (`internal/channel/commands.go`) that feeds the Telegram menu, routing, and `/help`.
+
 | Command | Description |
 |---------|-------------|
+| `/start` | Main menu |
 | `/new` | New conversation |
-| `/plan <task>` | Read-only plan mode |
 | `/stop` | Cancel current agent run |
-| `/providers` | List / manage LLM providers |
-| `/models` | List / select models |
-| `/provider_add name\|protocol\|base_url\|api_key` | Add provider |
-| `/model_add provider\|model_id\|name` | Add & activate model |
-| `/mcp` | List configured MCP servers |
-| `/mcp_add` | Add a new MCP server |
-| `/skills` | List installed Agent Skills |
-| `/skills add <url> [--skill name]` | Install a skill from GitHub, skills.sh, smithery.ai, a `/.well-known/skills` site, or a `.zip`/`SKILL.md` URL |
-| `/plugin marketplace add owner/repo` | Register a Claude-style plugin marketplace |
-| `/projects` | List projects |
-| `/project <name>` | Create a project |
-| `/upgrade [name]` | Upgrade chat → durable project |
-| `/sync` | Sync active project to Telegram storage |
-| `/history` `/memory` `/soul` `/user` `/help` | Utility |
+| `/help` | Full command list |
+| `/mode [auto\|ask\|plan]` | Sticky permission mode (inline buttons if bare `/mode`) |
+| `/plan <task>` | One-shot read-only plan turn |
 | `/tasks` | Background task board |
 | `/task <work>` | Queue a background task |
+| `/history` | Past conversations |
+| `/memory` | List memory files |
+| `/soul` | Agent identity (`soul.md`) |
+| `/user` | User profile (`user.md`) |
+| `/providers` | Manage LLM providers |
+| `/models` | List / select models |
+| `/provider_add name\|protocol\|base_url\|api_key` | Quick-add provider |
+| `/model_add provider\|model_id\|Display Name` | Quick-add model |
+| `/projects` | List projects |
+| `/project <name>` | Create project |
+| `/upgrade [name]` | Upgrade chat → project |
+| `/sync` | Sync active project to Telegram |
+| `/mcp` | List MCP servers |
+| `/mcp_add` | Add MCP server (wizard) |
+| `/skills` | List agent skills |
+| `/skill_add` | Add a skill |
+| `/plugin` | Skills marketplace helpers |
 
-Protocols: `openai_chat_completions`, `openai_responses`, `anthropic_messages`, `google_gemini`
+Inline menus cover the same flows (Settings → providers, MCP, skills, permission mode, tasks, projects).
+
+---
+
+## Permission modes
+
+| Mode | Behavior |
+|------|----------|
+| **auto** (default) | Full tool use |
+| **ask** | Mutating tools pause for **Approve / Deny** |
+| **plan** | Read-only tool set; explore and plan only |
+
+- Sticky **per chat** (`permission_modes.json` under data dir)
+- `/plan <task>` forces plan **for that turn only**
+- Default for new chats: `AWAKI_PERMISSION_MODE` (optional)
+
+---
+
+## Background tasks
+
+```text
+/task Research payment APIs and summarize
+/tasks
+```
+
+- In-process worker pool (default max concurrent **1** on free tier)
+- Owner gets **start**, **live progress** (via `report_status` / `send_message`), and **done/fail** Telegram pushes
+- Tools: `bg_task_add`, `bg_task_list`, `bg_task_get`, `bg_task_start`, `bg_task_stop`
+
+---
+
+## Scheduler & reminders
+
+Natural schedules:
+
+- `in 5m` / `once:10m` — one-shot (auto-remove after fire)
+- `every 10m` / `@every 5m` — interval
+- Standard cron expressions
+
+Reminder-style tasks deliver content-first:
+
+```text
+📆 Reminder:
+Time to call your team.
+```
+
+(Not meta text like “I sent the reminder.”)
+
+---
+
+## Projects & workspace
+
+- Normal chats use scratch workspace
+- **Projects** live under `{data}/projects/{slug}/` and sync as ZIP archives to Telegram storage
+- `/project`, `/upgrade`, `/sync`, or agent `promote_project`
+- Auto-sync aligns with DB snapshot cadence (~30s)
+
+---
+
+## Storage
+
+| Layer | Role |
+|-------|------|
+| **SQLite** (`awaki.db`) | Chats, memory, skills, providers, schedules, tasks, MCP config |
+| **Telegram channel** | Optional durable cloud: versioned DB snapshots + project ZIPs |
+| **MTProto user session** | Optional Telegrive-style storage (`AWAKI_TG_*`) |
+
+On cold start, configuration rehydrates from SQLite (and TG snapshots when configured).
+
+---
+
+## MCP
+
+```text
+/mcp
+/mcp_add
+```
+
+Supports **stdio**, **Streamable HTTP**, and **SSE**. Connected server tools are registered for the agent. Remote servers may use OAuth (authorize flow in UI, paste callback).
+
+---
+
+## Skills
+
+Install Agent Skills (folder with `SKILL.md`):
+
+```text
+/skills
+/skill_add
+/plugin
+```
+
+Supports GitHub trees, skills.sh, smithery-style URLs, zip / `SKILL.md` URLs, and Claude-style marketplace helpers where configured.
+
+---
+
+## Tools (high level)
+
+**Files & shell:** `read_file`, `write_file`, `edit_file`, `list_files`, `glob_files`, `directory_tree`, `file_info`, `bash`, `grep` / `file_search`  
+
+**Git:** `git_status`, `git_diff`, `git_log`, `git_show`, `git_stage`, `git_commit`  
+
+**Web:** `web_search`, `web_fetch`, `web_request`, `web_download` (SSRF guard on agent-side fetches)  
+
+**Memory / identity:** `memory_*`, `soul_*`, `user_*`  
+
+**Skills:** `skill_list`, `skill_read`, `skill_run`, …  
+
+**Ops:** `schedule_*`, `bg_task_*`, `task_plan`, `report_status`, `send_message`, `ask_user`, `delegate` (sub-agents)
+
+**Host limits (prompt):** on free-tier hosts the agent prefers static checks over full builds/tests unless you explicitly ask.
+
+---
+
+## HTTP: health & remote hooks
+
+Same listen port (`PORT` or `AWAKI_HTTP_PORT`, default `8000`):
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /` | Status JSON (`busy`, `hooks_enabled`, …) |
+| `GET /health`, `/healthz`, `/ping` | Liveness |
+| `GET /ready` | Ready after Telegram polling starts |
+
+### Remote triggers
+
+Set `AWAKI_HOOK_SECRET`, then:
+
+```bash
+# Run agent turn as owner
+curl -X POST "https://your-host/hooks/agent" \
+  -H "X-Awaki-Secret: $AWAKI_HOOK_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"Summarize deploy status","mode":"auto"}'
+
+# Queue background task
+curl -X POST "https://your-host/hooks/task" \
+  -H "Authorization: Bearer $AWAKI_HOOK_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"title":"Research X","prompt":"...","auto_start":true}'
+
+# Schedule
+curl -X POST "https://your-host/hooks/schedule" \
+  -H "X-Awaki-Secret: $AWAKI_HOOK_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"schedule":"in 10m","command":"Time to review PRs"}'
+```
+
+Auth: `X-Awaki-Secret` or `Authorization: Bearer`.  
+Agent `mode`: `auto` | `queue` | `interrupt`.
+
+---
 
 ## Environment
 
 | Variable | Purpose |
 |----------|---------|
-| `TELEGRAM_BOT_TOKEN` | Bot token (required) |
-| `TELEGRAM_OWNER_ID` | Your user id (required) |
+| `TELEGRAM_BOT_TOKEN` | Bot token (**required**) |
+| `TELEGRAM_OWNER_ID` | Your Telegram user id (**required**) |
+| `PORT` / `AWAKI_HTTP_PORT` | HTTP listen port (default `8000`) |
 | `AWAKI_DATA_DIR` | Data directory (default `~/.awaki`) |
 | `AWAKI_WORK_DIR` | Workspace root |
-| `AWAKI_BASE_URL` / `AWAKI_API_KEY` / `AWAKI_MODEL` / `AWAKI_PROVIDER` | Optional LLM bootstrap |
-| `AWAKI_TG_*` | Optional user-account storage (MTProto) |
+| `AWAKI_HOOK_SECRET` | Enable `/hooks/*` |
+| `AWAKI_PERMISSION_MODE` | Default mode: `auto` \| `ask` \| `plan` |
+| `AWAKI_PROVIDER` / `AWAKI_MODEL` / `AWAKI_BASE_URL` / `AWAKI_API_KEY` | Optional LLM bootstrap (prefer Telegram CRUD) |
+| `AWAKI_STORAGE_CHAT_ID` | Bot-mode storage channel id |
+| `AWAKI_TG_API_ID` / `AWAKI_TG_API_HASH` / `AWAKI_TG_PHONE` / … | Optional MTProto user storage |
+| `AWAKI_TG_CHANNEL` | Storage channel title (default `Awaki`) |
+| `AWAKI_SCHEDULER_TASK_TIMEOUT` | Per scheduled run timeout |
+| `AWAKI_SCHEDULER_MAX_CONCURRENT` | Scheduler concurrency |
+| `AWAKI_CONTINUATION` | Server-side continuation where supported (default true) |
+| `LOG_LEVEL` | e.g. `info`, `debug` |
 
-`.env` is loaded automatically from the current working directory.
+See `.env.example` for the full annotated list.
 
-## Skills
+---
 
-Install Agent Skills (a folder with `SKILL.md`) the same way as `npx skills add`:
+## Deploy
 
-```text
-/skills add anthropics/skills --skill frontend-design
-/skills add https://github.com/anthropics/skills/tree/main/skills/frontend-design
-/skills add https://skills.sh/anthropics/skills/frontend-design
-/skills add https://smithery.ai/skills/anthropics/frontend-design
-/skills add https://example.com            # reads /.well-known/skills/index.json
-/skills add https://example.com/my-skill.zip
+### Docker
+
+```bash
+make docker-build
+# or
+docker build -f deploy/Dockerfile -t awaki .
 ```
 
-Pasting the full `npx -y skills add <url>` command also works. A source that holds several skills installs all of them (up to 25; use `--skill <name>` to pick one or `--all` to lift the cap). Set `GITHUB_TOKEN` to avoid GitHub API rate limits. Skills can include scripts the agent may run, so only install sources you trust.
+`deploy/docker-compose.yml` is included for local/VPS use.
 
-## MCP Servers
+### Free PaaS (Koyeb / Render / Railway)
 
-Awaki supports external tools via Model Context Protocol (stdio, Streamable HTTP, SSE). Add a server in Telegram:
+1. Build the binary or container from this repo  
+2. Set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_OWNER_ID`, and a persistent volume for `AWAKI_DATA_DIR` if the platform offers one  
+3. Expose `PORT` (health checks use `/health` or `/`)  
+4. Optionally set `AWAKI_HOOK_SECRET`, storage channel, and MTProto vars  
 
-```text
-/mcp_add
+Rolling deploys wait a short poll grace so the previous instance can release `getUpdates`.
+
+### Makefile
+
+```bash
+make build    # → ./awaki
+make run
+make docker-build
 ```
 
-Then follow the prompts to name it and provide its transport details. MCP tools become available to the agent after connection. Remote servers may require OAuth — use Settings → MCP → Authorize in the client, then paste the callback back.
+---
 
-## Projects
+## Architecture (short)
 
-Durable workspaces under `/data/projects/{slug}/`. Files here survive container restarts and are synced as ZIP archives to Telegram storage.
+```text
+Telegram ──► channel ──► core.Engine ──► agent loop + tools
+                              │
+              ┌───────────────┼───────────────┐
+              ▼               ▼               ▼
+         SQLite store    scheduler      tasks.Manager
+              │               │               │
+              └────────── optional TG cloud ──┘
+                              │
+                         HTTP health + hooks
+```
 
-- `/project <name>` — create a new project and bind the chat
-- `/upgrade [name]` — promote current chat to a project
-- `/sync` — manually sync the active project ZIP to Telegram
-- Auto-sync: project ZIP is synced every 30s (matching the DB snapshot cadence) and after every successful DB upload to Telegram
+- **Single binary**, Go 1.25+  
+- Tool registry + optional MCP bridge  
+- Permission and plan policies applied at the agent tool loop  
 
-## Storage
+---
 
-- Default: local disk under `AWAKI_DATA_DIR`
-- Optional: Telegrive-style user session + private "Awaki" channel (`AWAKI_TG_API_ID`, `AWAKI_TG_API_HASH`, `AWAKI_TG_PHONE`)
-- SQLite DB (`awaki.db`) holds chats, memory, skills, providers, schedules, and project metadata
-- Versioned DB snapshots are uploaded to Telegram storage every 30s (debounced)
+## License
 
-## Web tools
-
-- **Search:** Parallel MCP → DuckDuckGo (no API key)
-- **Fetch:** Parallel MCP → Jina.ai → direct HTTP
+See [LICENSE](LICENSE).
