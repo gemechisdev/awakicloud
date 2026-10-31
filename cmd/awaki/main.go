@@ -86,16 +86,26 @@ func main() {
 	if err := hs.Start(ctx); err != nil {
 		log.Error().Err(err).Msg("health server failed to bind — platform may kill the instance")
 	} else {
-		// Mark ready so the platform can pass health checks while we still
-		// wait the Telegram polling grace period inside eng.Run / channel.Run.
-		hs.SetReady(true)
-		log.Info().Msg("health ready; telegram polling will start after grace period")
+		// /health stays 200 for TCP/liveness probes. /ready stays false until
+		// Telegram polling is about to start so rolling deploys keep the old
+		// instance until this one can take exclusive getUpdates ownership.
+		if tg, ok := ch.(interface{ SetOnReady(func()) }); ok {
+			tg.SetOnReady(func() {
+				hs.SetReady(true)
+				log.Info().Msg("health ready; telegram polling starting")
+			})
+		} else {
+			hs.SetReady(true)
+		}
+		log.Info().Msg("health server up; /ready will flip after telegram poll grace")
 	}
 
 	fmt.Printf("Awaki is running [%s]. Health on %s. Configure LLM with /providers if needed. Press Ctrl+C to stop.\n", ch.Name(), health.AddrFromEnv())
 	if err := eng.Run(ctx); err != nil && ctx.Err() == nil {
 		log.Error().Err(err).Msg("engine run error")
 	}
+	// Flip ready off first so the platform can start routing to a replacement.
+	hs.SetReady(false)
 	if dbSyncer != nil {
 		dbSyncer.Stop()
 	}

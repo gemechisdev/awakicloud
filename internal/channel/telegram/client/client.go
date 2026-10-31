@@ -3,11 +3,18 @@ package client
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"time"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 	"github.com/rs/zerolog/log"
 )
+
+// pollTimeout is the long-poll window for getUpdates. Keep this short so a
+// terminating instance releases exclusive getUpdates access within a few
+// seconds of SIGTERM (the library default is 60s, which causes deploy races).
+const pollTimeout = 10 * time.Second
 
 type UpdateHandler func(ctx context.Context, update *models.Update)
 
@@ -16,13 +23,17 @@ type Client struct {
 }
 
 func New(token string, handler UpdateHandler) (*Client, error) {
-	b, err := bot.New(token, bot.WithDefaultHandler(func(ctx context.Context, _ *bot.Bot, update *models.Update) {
-		handler(ctx, update)
-	}))
+	httpClient := &http.Client{Timeout: pollTimeout}
+	b, err := bot.New(token,
+		bot.WithHTTPClient(pollTimeout, httpClient),
+		bot.WithDefaultHandler(func(ctx context.Context, _ *bot.Bot, update *models.Update) {
+			handler(ctx, update)
+		}),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("telegram bot init: %w", err)
 	}
-	log.Info().Msg("telegram bot authorized")
+	log.Info().Dur("poll_timeout", pollTimeout).Msg("telegram bot authorized")
 	return &Client{b: b}, nil
 }
 
