@@ -120,7 +120,7 @@ var PlanDenylist = []string{
 // readOnlyAllow is tools that never require approval in ask mode.
 var readOnlyAllow = map[string]struct{}{
 	"read_file": {}, "read_files": {}, "list_files": {}, "glob_files": {},
-	"directory_tree": {}, "file_search": {}, "file_info": {}, "system_info": {},
+	"directory_tree": {}, "file_info": {}, "system_info": {},
 	"web_search": {}, "web_fetch": {},
 	"grep": {}, "file_search": {},
 	"memory_list": {}, "memory_read": {},

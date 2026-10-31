@@ -224,7 +224,7 @@ type grepOpts struct {
 
 func runGrep(ctx context.Context, o grepOpts) (output, bin string, err error) {
 	if path, e := exec.LookPath("rg"); e == nil {
-		args := buildRgArgs(o)
+		args := buildGrepRgArgs(o)
 		cmd := exec.CommandContext(ctx, path, args...)
 		var buf bytes.Buffer
 		cmd.Stdout = &buf
@@ -257,7 +257,7 @@ func runGrep(ctx context.Context, o grepOpts) (output, bin string, err error) {
 	return out, "grep", nil
 }
 
-func buildRgArgs(o grepOpts) []string {
+func buildGrepRgArgs(o grepOpts) []string {
 	args := []string{
 		"--line-number",
 		"--color", "never",
