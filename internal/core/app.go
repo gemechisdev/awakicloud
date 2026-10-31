@@ -420,16 +420,12 @@ func (e *Engine) RunScheduledTask(ctx context.Context, reply transport.Replier, 
 	if e.permStore != nil {
 		permMode = e.permStore.Get(ch.ID)
 	}
-	// One-shot /plan still wins for this turn.
-	effective := permMode
-	if planMode {
-		effective = permission.ModePlan
-	}
 
 	input := agent.RunInput{
-		Messages:    ch.Messages(),
-		UserBlocks:  blocks,
-		ExtraSystem: prompt.ScheduledTaskSystem(),
+		Messages:       ch.Messages(),
+		UserBlocks:     blocks,
+		PermissionMode: permMode.String(),
+		ExtraSystem:    prompt.ScheduledTaskSystem(),
 	}
 	sink := newAgentSink(agentCtx, ch, bus)
 
