@@ -58,8 +58,8 @@ func webFetch(ctx context.Context, input map[string]any) types.Result {
 	if err != nil {
 		return types.ErrResult(err)
 	}
-	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
-		return types.Errf("not a fetchable URL: %q", truncate(rawURL, 120))
+	if err := ValidatePublicURL(rawURL); err != nil {
+		return types.Errf("url blocked: %v", err)
 	}
 	selector := types.GetStringOpt(input, "selector")
 	maxChars := 50_000
@@ -131,7 +131,7 @@ func directFetch(ctx context.Context, rawURL, selector string) (string, error) {
 	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; AwakiCloudBot/1.0)")
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,text/plain")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := safeHTTPClient(30*time.Second).Do(req)
 	if err != nil {
 		return "", fmt.Errorf("http error: %v", err)
 	}

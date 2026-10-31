@@ -48,6 +48,9 @@ func webRequest(ctx context.Context, input map[string]any) types.Result {
 	if err != nil {
 		return types.ErrResult(err)
 	}
+	if err := ValidatePublicURL(rawURL); err != nil {
+		return types.Errf("url blocked: %v", err)
+	}
 
 	method := types.GetStringOpt(input, "method")
 	if method == "" {
@@ -82,7 +85,7 @@ func webRequest(ctx context.Context, input map[string]any) types.Result {
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := safeHTTPClient(30*time.Second).Do(req)
 	if err != nil {
 		return types.Errf("http error: %v", err)
 	}
