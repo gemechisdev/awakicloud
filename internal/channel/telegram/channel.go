@@ -66,6 +66,7 @@ func (c *Channel) Run(ctx context.Context, handler channel.Handler) error {
 		{Command: "stop", Description: "Cancel current task"},
 		{Command: "help", Description: "List all commands"},
 		{Command: "plan", Description: "Read-only plan mode for one turn"},
+		{Command: "mode", Description: "Permission mode: auto / ask / plan"},
 		{Command: "tasks", Description: "Background task board"},
 		{Command: "task", Description: "Queue a background task"},
 		{Command: "history", Description: "Past conversations"},

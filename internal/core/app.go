@@ -10,6 +10,7 @@ import (
 	types "github.com/gemechischala/awaki/internal/domain"
 	"github.com/gemechischala/awaki/internal/mcp"
 	"github.com/gemechischala/awaki/internal/project"
+	"github.com/gemechischala/awaki/internal/permission"
 	"github.com/gemechischala/awaki/internal/providers"
 	"github.com/gemechischala/awaki/internal/scheduler"
 	"github.com/gemechischala/awaki/internal/store"
@@ -38,6 +39,7 @@ type Engine struct {
 	projects  *project.Manager
 	mcp       *mcp.Manager
 	tasksMgr  *tasks.Manager
+	permStore *permission.Store
 	ui        uiState
 	steer     steerState
 	// rebuildAgent recreates the LLM client from the active provider/model pair.
@@ -58,6 +60,7 @@ type Params struct {
 	Projects     *project.Manager
 	MCP          *mcp.Manager
 	Tasks        *tasks.Manager
+	PermStore    *permission.Store
 	RebuildAgent func() error
 }
 
@@ -219,6 +222,17 @@ func (e *Engine) handleCommand(ctx context.Context, msg channel.Message) {
 		}
 		e.cmdAddBackgroundTask(ctx, msg, raw)
 		return
+	case channel.CmdMode:
+		raw := ""
+		if cmd.Args != nil {
+			raw = strings.TrimSpace(cmd.Args["raw"])
+		}
+		if raw == "" {
+			e.uiModeMenu(ctx, msg)
+			return
+		}
+		e.setPermissionMode(ctx, msg, raw)
+		return
 	case channel.CmdPlan:
 		raw := ""
 		if cmd.Args != nil {
@@ -324,10 +338,21 @@ func (e *Engine) runAgent(ctx context.Context, msg channel.Message) {
 		}
 	}
 
+	permMode := permission.ModeAuto
+	if e.permStore != nil {
+		permMode = e.permStore.Get(ch.ID)
+	}
+	// One-shot /plan still wins for this turn.
+	effective := permMode
+	if planMode {
+		effective = permission.ModePlan
+	}
+
 	input := agent.RunInput{
 		Messages:   ch.Messages(),
 		UserBlocks: blocks,
-		PlanMode:   planMode,
+		PlanMode:       planMode,
+		PermissionMode: effective.String(),
 	}
 	sink := newAgentSink(agentCtx, ch, bus)
 
@@ -390,6 +415,16 @@ func (e *Engine) RunScheduledTask(ctx context.Context, reply transport.Replier, 
 
 	promptText := prompt.ScheduledTaskPrompt(taskID, command, skill)
 	blocks := []types.ContentBlock{types.TextBlock(promptText)}
+
+	permMode := permission.ModeAuto
+	if e.permStore != nil {
+		permMode = e.permStore.Get(ch.ID)
+	}
+	// One-shot /plan still wins for this turn.
+	effective := permMode
+	if planMode {
+		effective = permission.ModePlan
+	}
 
 	input := agent.RunInput{
 		Messages:    ch.Messages(),

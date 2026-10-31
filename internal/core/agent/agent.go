@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 	"github.com/gemechischala/awaki/internal/core/agent/hook"
+	"github.com/gemechischala/awaki/internal/permission"
 	"github.com/gemechischala/awaki/internal/transport"
 	"github.com/gemechischala/awaki/internal/llm"
 	llmTypes "github.com/gemechischala/awaki/internal/domain"
@@ -23,6 +24,7 @@ type Agent struct {
 	afterHooks   []hook.AfterIterationFunc
 	sink         transport.Sink
 	subMu        sync.Mutex // serializes sub-agent client tool swaps
+	runPermMode  permission.Mode // set for the duration of Run
 }
 
 func New(client llm.LLM, instructions func() string, registry *tools.Registry) *Agent {

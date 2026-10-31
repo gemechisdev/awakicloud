@@ -20,6 +20,9 @@ func (e *Engine) handleUICallback(ctx context.Context, msg channel.Message) bool
 	if strings.HasPrefix(text, "steer:") {
 		return e.handleSteerCallback(ctx, msg, text)
 	}
+	if strings.HasPrefix(text, "mode:") {
+		return e.handleModeCallback(ctx, msg, text)
+	}
 
 	// Persistent reply-keyboard labels
 	switch text {
@@ -91,6 +94,8 @@ func (e *Engine) routeUI(ctx context.Context, msg channel.Message, data string) 
 		}
 	case "settings":
 		e.uiSettings(ctx, msg)
+	case "mode":
+		e.uiModeMenu(ctx, msg)
 	case "tasks":
 		e.uiTasksBoard(ctx, msg)
 	case "taskstop":

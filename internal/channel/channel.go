@@ -30,6 +30,7 @@ const (
 	CmdSkills         = "skills"
 	CmdSkillAdd       = "skill_add"
 	CmdPlugin         = "plugin"
+	CmdMode           = "mode"
 )
 
 type Command struct {

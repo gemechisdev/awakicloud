@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"github.com/gemechischala/awaki/internal/core/agent/hook"
+	"github.com/gemechischala/awaki/internal/permission"
 	types "github.com/gemechischala/awaki/internal/domain"
 	"github.com/gemechischala/awaki/internal/llm"
 	tooltypes "github.com/gemechischala/awaki/internal/tools/types"
@@ -23,7 +25,11 @@ type RunInput struct {
 	UserBlocks []types.ContentBlock
 	// PlanMode forces a read-only tool set and a plan-oriented system prompt
 	// (Awaki Android parity). No file writes, bash mutations, or git writes.
+	// Deprecated in favor of PermissionMode=plan; still honored as one-shot override.
 	PlanMode bool
+	// PermissionMode is the sticky session posture: auto | ask | plan.
+	// Empty defaults to auto. PlanMode=true forces plan for this run.
+	PermissionMode string
 	// ExtraSystem is appended to the system prompt for this run only (e.g. scheduled tasks).
 	ExtraSystem string
 }
@@ -38,36 +44,49 @@ func (a *Agent) Run(ctx context.Context, input RunInput, sink transport.Sink) er
 	a.sink = sink
 
 	runStart := time.Now()
-	log.Info().Int("history", len(input.Messages)).Bool("plan_mode", input.PlanMode).Msg("agent.Run start")
+	effectiveMode, _ := permission.Parse(input.PermissionMode)
+	if input.PlanMode {
+		effectiveMode = permission.ModePlan
+	}
+	a.runPermMode = effectiveMode
+	defer func() { a.runPermMode = permission.ModeAuto }()
+
+	log.Info().
+		Int("history", len(input.Messages)).
+		Str("permission_mode", effectiveMode.String()).
+		Bool("plan_mode_flag", input.PlanMode).
+		Msg("agent.Run start")
 
 	prevRegistry := a.registry
 	prevInstructions := a.instructions
 	var prevTools []llm.ToolDef
-	if input.PlanMode {
-		a.registry = a.registry.Without(
-			"bash", "write_file", "edit_file", "create_file", "delete_file", "copy_file",
-			"git_stage", "git_commit",
-			"memory_write", "memory_delete",
-			"skill_create", "skill_update", "skill_delete",
-			"soul_write", "user_write",
-		)
-		a.instructions = func() string {
-			return prevInstructions() + "\n\nPLAN MODE (read-only): Do not modify files, run mutating shell commands, or change git state. Explore and produce a concrete implementation plan only. Write tools are unavailable."
+	if effectiveMode == permission.ModePlan {
+		a.registry = a.registry.Without(permission.PlanDenylist...)
+		// Also strip local mutating tools from definitions path via lookup still works for deny at exec
+	}
+	modeSection := effectiveMode.SystemPromptSection()
+	a.instructions = func() string {
+		base := prevInstructions()
+		if modeSection != "" {
+			return base + "\n\n" + modeSection
 		}
+		return base
+	}
+	if effectiveMode == permission.ModePlan {
 		if c, ok := a.client.(*llm.Client); ok {
 			prevTools = append([]llm.ToolDef(nil), c.Tools()...)
 			defs := a.registry.Definitions()
 			defs = append(defs, a.localToolDefs()...)
 			c.SetTools(defs)
 		}
-		defer func() {
-			a.registry = prevRegistry
-			a.instructions = prevInstructions
-			if c, ok := a.client.(*llm.Client); ok && prevTools != nil {
-				c.SetTools(prevTools)
-			}
-		}()
 	}
+	defer func() {
+		a.registry = prevRegistry
+		a.instructions = prevInstructions
+		if c, ok := a.client.(*llm.Client); ok && prevTools != nil {
+			c.SetTools(prevTools)
+		}
+	}()
 
 	// The new user message is persisted like any other turn — the orchestrator
 	// writes it when it sees this event.
@@ -255,6 +274,19 @@ func (a *Agent) executeToolCallLoop(ctx context.Context, toolCalls []types.Conte
 		})
 		*counter++
 
+		// Hard-deny denylisted tools even if still reachable via local map / stale defs.
+		if a.runPermMode == permission.ModePlan {
+			for _, d := range permission.PlanDenylist {
+				if d == tc.ToolName {
+					msg := "tool unavailable in plan mode: " + tc.ToolName
+					a.emit(transport.ToolEndEvent{Name: tc.ToolName, Result: msg})
+					results = append(results, types.ToolResultBlock(tc.ToolUseID, msg, true))
+					summaries = append(summaries, hook.ToolCallSummary{Name: tc.ToolName, IsErr: true})
+					continue
+				}
+			}
+		}
+
 		if err := a.loopDetector.Check(tc.ToolName, tc.ToolInput); err != nil {
 			a.emit(transport.LoopWarningEvent{
 				Name: tc.ToolName, Reason: err.Error(),
@@ -262,6 +294,28 @@ func (a *Agent) executeToolCallLoop(ctx context.Context, toolCalls []types.Conte
 			results = append(results, types.ToolResultBlock(tc.ToolUseID, err.Error(), true))
 			summaries = append(summaries, hook.ToolCallSummary{Name: tc.ToolName, IsErr: true})
 			continue
+		}
+
+		// Ask mode: pause mutating tools for owner approval (enterprise gate).
+		if a.runPermMode == permission.ModeAsk && permission.RequiresApproval(tc.ToolName) && !tool.Interactive {
+			approved, reason, err := a.requestToolApproval(ctx, tc.ToolName, input, detail)
+			if err != nil {
+				out := err.Error()
+				a.emit(transport.ToolEndEvent{Name: tc.ToolName, Result: out})
+				results = append(results, types.ToolResultBlock(tc.ToolUseID, out, true))
+				summaries = append(summaries, hook.ToolCallSummary{Name: tc.ToolName, IsErr: true})
+				continue
+			}
+			if !approved {
+				out := "Permission denied by owner"
+				if reason != "" {
+					out += ": " + reason
+				}
+				a.emit(transport.ToolEndEvent{Name: tc.ToolName, Result: out})
+				results = append(results, types.ToolResultBlock(tc.ToolUseID, out, true))
+				summaries = append(summaries, hook.ToolCallSummary{Name: tc.ToolName, IsErr: true})
+				continue
+			}
 		}
 
 		if tool.Interactive {
@@ -328,5 +382,59 @@ func (a *Agent) handleAskUser(ctx context.Context, input map[string]any) (string
 		return resp, nil
 	case <-ctx.Done():
 		return "", ctx.Err()
+	}
+}
+
+
+// requestToolApproval blocks until the owner Approves or Denies a mutating tool.
+func (a *Agent) requestToolApproval(ctx context.Context, name string, input map[string]any, detail string) (approved bool, reason string, err error) {
+	prompt := "Allow tool `" + name + "`?"
+	if detail != "" {
+		prompt += "\n" + detail
+	}
+	// Compact input preview for the owner.
+	if len(input) > 0 {
+		keys := make([]string, 0, len(input))
+		for k := range input {
+			keys = append(keys, k)
+		}
+		if len(keys) > 6 {
+			keys = keys[:6]
+		}
+		var parts []string
+		for _, k := range keys {
+			v := fmt.Sprint(input[k])
+			if len(v) > 80 {
+				v = v[:80] + "…"
+			}
+			parts = append(parts, k+"="+v)
+		}
+		if len(parts) > 0 {
+			prompt += "\n" + strings.Join(parts, " · ")
+		}
+	}
+
+	replyCh := make(chan string, 1)
+	a.emit(transport.AskEvent{
+		Prompt: prompt,
+		Kind:   transport.AskChoice,
+		Options: []transport.AskOption{
+			{Value: "approve", Label: "✅ Approve"},
+			{Value: "deny", Label: "❌ Deny"},
+		},
+		ReplyCh: replyCh,
+	})
+
+	select {
+	case resp := <-replyCh:
+		resp = strings.TrimSpace(strings.ToLower(resp))
+		switch resp {
+		case "approve", "yes", "y", "allow", "ok":
+			return true, "", nil
+		default:
+			return false, resp, nil
+		}
+	case <-ctx.Done():
+		return false, "", ctx.Err()
 	}
 }

@@ -19,6 +19,7 @@ var commandMap = map[string]string{
 	"/stop":         channel.CmdStop,
 	"/help":         channel.CmdHelp,
 	"/plan":         channel.CmdPlan,
+	"/mode":         channel.CmdMode,
 	"/tasks":        channel.CmdTasks,
 	"/task":         channel.CmdTaskAdd,
 	"/history":      channel.CmdHistory,

@@ -22,6 +22,7 @@ import (
 	"github.com/gemechischala/awaki/internal/logger"
 	"github.com/gemechischala/awaki/internal/mcp"
 	"github.com/gemechischala/awaki/internal/project"
+	"github.com/gemechischala/awaki/internal/permission"
 	"github.com/gemechischala/awaki/internal/providers"
 	"github.com/gemechischala/awaki/internal/scheduler"
 	"github.com/gemechischala/awaki/internal/store"
@@ -314,6 +315,8 @@ func buildEngine(ctx context.Context, cfg *config.Config, ch channel.Channel) (*
 		c.SetTools(reg.Definitions())
 	}
 
+	permStore := permission.NewStore(cfg.DataDir)
+
 	return core.New(core.Params{
 		Channel:      ch,
 		Store:        st,
@@ -325,6 +328,7 @@ func buildEngine(ctx context.Context, cfg *config.Config, ch channel.Channel) (*
 		Projects:     projMgr,
 		MCP:          mcpMgr,
 		Tasks:        taskMgr,
+		PermStore:    permStore,
 		RebuildAgent: rebuild,
 	}), nil
 }
