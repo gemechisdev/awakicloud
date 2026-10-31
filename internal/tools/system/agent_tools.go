@@ -2,8 +2,9 @@ package system
 
 import (
 	"context"
-	"github.com/gemechischala/awaki/internal/transport"
+	"github.com/gemechischala/awaki/internal/tasks"
 	"github.com/gemechischala/awaki/internal/tools/types"
+	"github.com/gemechischala/awaki/internal/transport"
 )
 
 func AgentTools(tp *TaskPlan) []types.Tool {
@@ -41,6 +42,9 @@ func reportStatusTool() types.Tool {
 			if sink, ok := transport.SinkFromContext(ctx); ok {
 				sink.Emit(transport.ProgressEvent{Status: text, Percent: pct})
 			}
+			if fn, ok := tasks.ProgressFromContext(ctx); ok {
+				fn(text, pct)
+			}
 			return types.Result{Output: "status updated"}
 		},
 	}
@@ -71,6 +75,9 @@ func sendMessageTool() types.Tool {
 					Text:  text,
 					Level: transport.MessageLevel(level),
 				})
+			}
+			if fn, ok := tasks.ProgressFromContext(ctx); ok {
+				fn(text, nil)
 			}
 			return types.Result{Output: "message sent"}
 		},

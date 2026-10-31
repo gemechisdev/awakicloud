@@ -26,6 +26,7 @@ func NewRegistry(st store.Store, searchFn ChatSearchFunc, extra ...types.Tool) *
 		systemtools.BashTool(),
 		systemtools.EditFileTool(),
 		systemtools.SystemInfoTool(),
+		systemtools.GrepTool(),
 		systemtools.FileSearchTool(),
 	}
 	all = append(all, systemtools.FileTools()...)

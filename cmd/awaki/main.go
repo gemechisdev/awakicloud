@@ -192,6 +192,37 @@ func buildEngine(ctx context.Context, cfg *config.Config, ch channel.Channel) (*
 			if len(msg) > 3500 {
 				msg = msg[:3500] + "…"
 			}
+		} else if t.Status == tasks.StatusFailed {
+			msg = t.Status.Emoji() + " Task `" + t.ID + "` failed: **" + t.Title + "**"
+			if t.Error != "" {
+				msg += "\n\n" + t.Error
+			}
+		}
+		_ = ch.OwnerReplier().SendText(ctx, msg)
+	})
+	taskMgr.SetProgressNotify(func(t tasks.Task) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		var msg string
+		switch t.Status {
+		case tasks.StatusRunning:
+			msg = "🔄 Task `" + t.ID + "` **" + t.Title + "**"
+			if t.Percent != nil {
+				msg += fmt.Sprintf(" · %d%%", *t.Percent)
+			}
+			msg += "\n"
+			if t.LastProgress != "" {
+				msg += "→ " + t.LastProgress
+			} else {
+				msg += "→ started"
+			}
+		case tasks.StatusPending:
+			msg = "⬜ Task `" + t.ID + "` queued: **" + t.Title + "**"
+		default:
+			msg = tasks.FormatBoard([]tasks.Task{t})
+		}
+		if len(msg) > 1500 {
+			msg = msg[:1500] + "…"
 		}
 		_ = ch.OwnerReplier().SendText(ctx, msg)
 	})

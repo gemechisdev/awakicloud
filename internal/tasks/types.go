@@ -42,6 +42,15 @@ type Task struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 	StartedAt  time.Time `json:"started_at,omitempty"`
 	FinishedAt time.Time `json:"finished_at,omitempty"`
+	// Live progress (updated by report_status / send_message during the run).
+	LastProgress string         `json:"last_progress,omitempty"`
+	Percent      *int           `json:"percent,omitempty"`
+	ProgressLog  []progressLine `json:"progress_log,omitempty"`
+}
+
+type progressLine struct {
+	At   time.Time `json:"at"`
+	Text string    `json:"text"`
 }
 
 // Snapshot is a concurrency-safe copy for listing.

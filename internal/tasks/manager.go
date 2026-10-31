@@ -33,6 +33,8 @@ type Manager struct {
 	running    int
 	cancels    map[string]context.CancelFunc
 	notify     func(task Task) // optional: message owner on completion
+	progressNotify   func(task Task) // optional: live progress pushes
+	lastProgressPush map[string]time.Time
 }
 
 func NewManager(maxConcurrent int) *Manager {
@@ -40,15 +42,21 @@ func NewManager(maxConcurrent int) *Manager {
 		maxConcurrent = 1
 	}
 	return &Manager{
-		tasks:   make(map[string]*Task),
-		cancels: make(map[string]context.CancelFunc),
-		maxConc: maxConcurrent,
+		tasks:             make(map[string]*Task),
+		cancels:           make(map[string]context.CancelFunc),
+		lastProgressPush:  make(map[string]time.Time),
+		maxConc:           maxConcurrent,
 	}
 }
 
 func (m *Manager) SetExecutor(exec Executor) { m.mu.Lock(); m.exec = exec; m.mu.Unlock() }
 func (m *Manager) SetPersister(p Persister)  { m.mu.Lock(); m.persist = p; m.mu.Unlock() }
 func (m *Manager) SetNotify(fn func(Task))   { m.mu.Lock(); m.notify = fn; m.mu.Unlock() }
+func (m *Manager) SetProgressNotify(fn func(Task)) {
+	m.mu.Lock()
+	m.progressNotify = fn
+	m.mu.Unlock()
+}
 
 func (m *Manager) Load() {
 	m.mu.Lock()
@@ -188,9 +196,23 @@ func (m *Manager) runOne(ctx context.Context, id, title, prompt string, exec Exe
 		m.mu.Lock()
 		m.running--
 		delete(m.cancels, id)
+		delete(m.lastProgressPush, id)
 		m.mu.Unlock()
 		m.trySchedule()
 	}()
+
+	// Snapshot for start notify
+	m.mu.Lock()
+	var startSnap Task
+	if t, ok := m.tasks[id]; ok {
+		startSnap = t.Snapshot()
+	}
+	m.mu.Unlock()
+	m.notifyStart(startSnap)
+
+	ctx = WithProgress(ctx, func(text string, percent *int) {
+		m.ReportProgress(id, text, percent)
+	})
 
 	var output string
 	var err error
@@ -292,19 +314,26 @@ func FormatBoard(tasks []Task) string {
 	for _, t := range tasks {
 		fmt.Fprintf(&b, "%s `%s` **%s**\n", t.Status.Emoji(), t.ID, t.Title)
 		fmt.Fprintf(&b, "   status: %s", t.Status)
+		if t.Percent != nil {
+			fmt.Fprintf(&b, " · %d%%", *t.Percent)
+		}
 		if !t.StartedAt.IsZero() {
 			fmt.Fprintf(&b, " · started %s", t.StartedAt.Format("15:04"))
 		}
-		if t.Error != "" {
-			fmt.Fprintf(&b, "\n   error: %s", truncate(t.Error, 120))
-		}
-		if t.Status == StatusCompleted && t.Output != "" {
-			fmt.Fprintf(&b, "\n   result: %s", truncate(t.Output, 160))
+		if !t.FinishedAt.IsZero() {
+			fmt.Fprintf(&b, " · done %s", t.FinishedAt.Format("15:04"))
 		}
 		b.WriteByte('\n')
+		if t.LastProgress != "" && (t.Status == StatusRunning || t.Status == StatusPending) {
+			fmt.Fprintf(&b, "   → %s\n", truncate(t.LastProgress, 120))
+		}
+		if t.Error != "" {
+			fmt.Fprintf(&b, "   error: %s\n", truncate(t.Error, 160))
+		}
 	}
-	return strings.TrimSpace(b.String())
+	return strings.TrimRight(b.String(), "\n")
 }
+
 
 func truncate(s string, n int) string {
 	s = strings.TrimSpace(s)
