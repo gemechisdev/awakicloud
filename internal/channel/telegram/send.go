@@ -2,24 +2,20 @@ package telegram
 
 import (
 	"context"
+
 	"github.com/gemechischala/awaki/internal/channel"
 	"github.com/gemechischala/awaki/internal/channel/telegram/format"
-
 	"github.com/go-telegram/bot/models"
 	"github.com/rs/zerolog/log"
 )
 
 func (c *Channel) send(ctx context.Context, chatID int64, markdownText string) {
-	_ = c.sendAndGetID(ctx, chatID, markdownText)
-}
-
-func (c *Channel) sendAndGetID(ctx context.Context, chatID int64, markdownText string) int {
 	msgID, err := c.client.SendMessage(ctx, chatID, markdownText, models.ParseModeMarkdown)
 	if err != nil {
-		log.Error().Err(err).Msg("telegram send failed")
-		return 0
+		log.Warn().Err(err).Msg("telegram markdown send failed, falling back to HTML/plain")
+		c.sendLong(ctx, chatID, markdownText)
+		_ = msgID
 	}
-	return msgID
 }
 
 func (c *Channel) sendHTMLChunk(ctx context.Context, chatID int64, chunk format.FormattedChunk) {
@@ -70,24 +66,52 @@ func (c *Channel) sendOrEditKeyboard(ctx context.Context, chatID int64, editMsgI
 		rows = append(rows, r)
 	}
 
+	// Format body the same way as normal messages (Markdown → Telegram HTML).
+	chunks := format.FormatHTMLChunks(text, maxMessageLen)
+	if len(chunks) == 0 {
+		chunks = []format.FormattedChunk{{HTML: text, Text: text}}
+	}
+	primary := chunks[0]
+
 	if editMsgID > 0 {
-		err := c.client.EditMessageWithKeyboard(ctx, chatID, editMsgID, text, "", rows)
+		err := c.client.EditMessageWithKeyboard(ctx, chatID, editMsgID, primary.HTML, models.ParseModeHTML, rows)
 		if err != nil {
-			log.Warn().Err(err).Int("msg_id", editMsgID).Msg("telegram edit keyboard failed; sending new")
-			// fall through to send new
+			log.Warn().Err(err).Int("msg_id", editMsgID).Msg("telegram edit keyboard HTML failed; trying plain")
+			err = c.client.EditMessageWithKeyboard(ctx, chatID, editMsgID, primary.Text, "", rows)
+			if err != nil {
+				log.Warn().Err(err).Int("msg_id", editMsgID).Msg("telegram edit keyboard failed; sending new")
+			} else {
+				// spill remaining chunks as follow-ups without keyboard
+				for _, ch := range chunks[1:] {
+					c.sendHTMLChunk(ctx, chatID, ch)
+				}
+				return
+			}
 		} else {
+			for _, ch := range chunks[1:] {
+				c.sendHTMLChunk(ctx, chatID, ch)
+			}
 			return
 		}
 	}
 
 	if len(rows) == 0 {
-		c.send(ctx, chatID, text)
+		c.sendLong(ctx, chatID, text)
 		return
 	}
-	_, err := c.client.SendMessageWithKeyboard(ctx, chatID, text, "", rows)
+
+	_, err := c.client.SendMessageWithKeyboard(ctx, chatID, primary.HTML, models.ParseModeHTML, rows)
 	if err != nil {
-		log.Warn().Err(err).Msg("telegram inline keyboard failed")
-		c.send(ctx, chatID, text+"\n(keyboard failed)")
+		log.Warn().Err(err).Msg("telegram inline keyboard HTML failed; trying plain")
+		_, err = c.client.SendMessageWithKeyboard(ctx, chatID, primary.Text, "", rows)
+		if err != nil {
+			log.Warn().Err(err).Msg("telegram inline keyboard failed")
+			c.sendLong(ctx, chatID, text+"\n(keyboard failed)")
+			return
+		}
+	}
+	for _, ch := range chunks[1:] {
+		c.sendHTMLChunk(ctx, chatID, ch)
 	}
 }
 
