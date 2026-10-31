@@ -28,8 +28,7 @@ desktop.ini
 
 # Environment / secrets
 .env
-*.env
-.env.*
+!.env.example
 deploy/.env
 deploy/deploy.sh
 
