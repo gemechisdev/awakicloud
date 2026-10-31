@@ -80,9 +80,23 @@ func main() {
 		return map[string]any{
 			"service":   "awaki",
 			"transport": ch.Name(),
-			"busy":      eng.Busy(),
+			"busy":           eng.Busy(),
+			"hooks_enabled":  health.HookSecretFromEnv() != "",
 		}
 	})
+		hs.SetHooks(health.HookCallbacks{
+		Secret: health.HookSecretFromEnv(),
+		Agent: func(ctx context.Context, text string, plan bool, mode string) (map[string]any, error) {
+			return eng.HookAgent(ctx, text, plan, mode)
+		},
+		Task: func(ctx context.Context, title, prompt string, autoStart bool) (map[string]any, error) {
+			return eng.HookTask(ctx, title, prompt, autoStart)
+		},
+		Schedule: func(ctx context.Context, schedule, command, label string) (map[string]any, error) {
+			return eng.HookSchedule(ctx, schedule, command, label)
+		},
+	})
+
 	if err := hs.Start(ctx); err != nil {
 		log.Error().Err(err).Msg("health server failed to bind — platform may kill the instance")
 	} else {

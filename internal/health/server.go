@@ -22,6 +22,7 @@ type Server struct {
 	status StatusFunc
 	ready  atomic.Bool
 	srv    *http.Server
+	hooks  HookCallbacks
 }
 
 // AddrFromEnv picks the listen address.
@@ -69,6 +70,7 @@ func New(addr string, status StatusFunc) *Server {
 	mux.HandleFunc("/healthz", s.handleHealth)
 	mux.HandleFunc("/ping", s.handlePing)
 	mux.HandleFunc("/ready", s.handleReady)
+	s.registerHookRoutes(mux)
 	s.srv = &http.Server{
 		Addr:              addr,
 		Handler:           mux,
