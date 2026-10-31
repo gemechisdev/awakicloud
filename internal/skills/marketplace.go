@@ -225,15 +225,30 @@ func (m *Manager) installMarketPlugins(ctx context.Context, mk Marketplace, plug
 
 	var targets []string
 	installAll := pluginName == "*" || pluginName == "all" || pluginName == ""
+	matchedPlugin := false
 	for _, p := range mk.Plugins {
 		if installAll || strings.EqualFold(p.Name, pluginName) {
+			matchedPlugin = true
 			for _, rel := range p.Skills {
 				rel = strings.TrimPrefix(rel, "./")
 				targets = append(targets, filepath.Join(root, filepath.FromSlash(rel)))
 			}
+			// Marketplace entries that only declare a name (Claude Code style
+			// git-subdir sources) still map to a folder named after the plugin.
+			if len(p.Skills) == 0 && p.Name != "" {
+				for _, cand := range []string{
+					filepath.Join(root, "plugins", p.Name),
+					filepath.Join(root, "skills", p.Name),
+					filepath.Join(root, p.Name),
+				} {
+					targets = append(targets, cand)
+					// nested skills/<name> under the plugin folder
+					targets = append(targets, filepath.Join(cand, "skills", p.Name))
+				}
+			}
 		}
 	}
-	if len(targets) == 0 && !installAll {
+	if !installAll && !matchedPlugin {
 		return nil, fmt.Errorf("plugin %q not found in marketplace %s", pluginName, mk.ID)
 	}
 	if len(targets) == 0 {

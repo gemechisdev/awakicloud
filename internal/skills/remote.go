@@ -719,15 +719,7 @@ func (m *Manager) installWellKnown(ctx context.Context, c *remoteClient, base *u
 		local := filepath.Join(tmp, fmt.Sprintf("%d", n), sanitize(s.Name))
 		for _, rel := range files {
 			rel = strings.TrimPrefix(filepath.ToSlash(rel), "./")
-			segs := strings.Split(rel, "/")
-			for j := range segs {
-				segs[j] = url.PathEscape(segs[j])
-			}
-			ref, err := idxBase.Parse(url.PathEscape(s.Name) + "/" + strings.Join(segs, "/"))
-			if err != nil {
-				return installed, err
-			}
-			data, _, err := c.get(ctx, ref.String(), maxRemoteFileSz, nil)
+			data, err := fetchWellKnownFile(ctx, c, idxBase, base, s.Name, rel)
 			if err != nil {
 				return installed, err
 			}
@@ -745,6 +737,60 @@ func (m *Manager) installWellKnown(ctx context.Context, c *remoteClient, base *u
 		return nil, fmt.Errorf("%s: nothing installed", idxURL)
 	}
 	return installed, nil
+}
+
+// fetchWellKnownFile tries several relative locations for a file listed in a
+// well-known skills index. Sites disagree on whether files live next to the
+// index, under a skill-name folder, or at the skill page path.
+func fetchWellKnownFile(ctx context.Context, c *remoteClient, idxBase, page *url.URL, skillName, rel string) ([]byte, error) {
+	segs := strings.Split(rel, "/")
+	for j := range segs {
+		segs[j] = url.PathEscape(segs[j])
+	}
+	escaped := strings.Join(segs, "/")
+	nameEsc := url.PathEscape(skillName)
+
+	var candidates []string
+	add := func(u *url.URL, ref string) {
+		if u == nil {
+			return
+		}
+		r, err := u.Parse(ref)
+		if err != nil {
+			return
+		}
+		candidates = append(candidates, r.String())
+	}
+	// Common layouts relative to the index.json location.
+	add(idxBase, nameEsc+"/"+escaped)
+	add(idxBase, escaped)
+	// Relative to the skill page URL the user pasted.
+	add(page, escaped)
+	add(page, nameEsc+"/"+escaped)
+	// Origin-rooted guesses.
+	if page != nil {
+		origin := &url.URL{Scheme: page.Scheme, Host: page.Host}
+		add(origin, nameEsc+"/"+escaped)
+		add(origin, "skills/"+nameEsc+"/"+escaped)
+	}
+
+	var lastErr error
+	seen := map[string]bool{}
+	for _, raw := range candidates {
+		if seen[raw] {
+			continue
+		}
+		seen[raw] = true
+		data, _, err := c.get(ctx, raw, maxRemoteFileSz, nil)
+		if err == nil {
+			return data, nil
+		}
+		lastErr = err
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no candidate URL for %s/%s", skillName, rel)
+	}
+	return nil, lastErr
 }
 
 // ---------------------------------------------------------------------------
@@ -811,9 +857,11 @@ func (m *Manager) installDirect(ctx context.Context, c *remoteClient, u *url.URL
 // ---------------------------------------------------------------------------
 
 // installSmithery handles https://smithery.ai/skills/<owner>/<slug>.
-// Preferred path: hit api.smithery.ai for the skill's gitUrl, then install via
-// the GitHub tree path (which is what the Smithery page itself links to).
-// Fallbacks: well-known index on the skill URL, then direct GitHub heuristics.
+// Strategy (in order):
+//  1. api.smithery.ai → gitUrl → GitHub install (path from API)
+//  2. Same gitUrl but ignore Subpath (stale path under a still-valid repo)
+//  3. Common mirror repos: {owner}/skills, anthropics/skills with skill=slug
+//  4. Well-known index on the skill page
 func (m *Manager) installSmithery(ctx context.Context, c *remoteClient, u *url.URL, opts InstallOptions) ([]domain.Skill, error) {
 	parts := splitPath(u.Path)
 	var owner, slug string
@@ -827,21 +875,96 @@ func (m *Manager) installSmithery(ctx context.Context, c *remoteClient, u *url.U
 		return nil, fmt.Errorf("unrecognised Smithery URL %q — expected https://smithery.ai/skills/<owner>/<skill>", u.String())
 	}
 
+	skillName := opts.Skill
+	if skillName == "" {
+		skillName = slug
+	}
+
 	var errs []string
+	tryGH := func(label string, g ghRef, o InstallOptions) ([]domain.Skill, bool) {
+		sk, err := m.installGitHub(ctx, c, g, o)
+		if err == nil {
+			return sk, true
+		}
+		errs = append(errs, label+": "+err.Error())
+		return nil, false
+	}
 
-	// 1) Official API → gitUrl (most reliable; returns the real GitHub tree path).
-	if sk, err := m.installSmitheryAPI(ctx, c, owner, slug, opts); err == nil {
-		return sk, nil
-	} else {
+	// 1–2) Official API gitUrl, then same repo without the (often stale) subpath.
+	if g, metaSkill, err := fetchSmitheryGitRef(ctx, c, owner, slug); err != nil {
 		errs = append(errs, "api: "+err.Error())
+	} else {
+		o := opts
+		if o.Skill == "" {
+			if metaSkill != "" {
+				o.Skill = metaSkill
+			} else if base := path.Base(g.Subpath); base != "" && base != "." {
+				o.Skill = base
+			} else {
+				o.Skill = skillName
+			}
+		}
+		if sk, ok := tryGH("api-gitUrl", g, o); ok {
+			return sk, nil
+		}
+		// Stale subpath (Smithery often links into claude-code paths that no longer exist).
+		if g.Subpath != "" {
+			g2 := g
+			g2.Subpath = ""
+			if sk, ok := tryGH("api-repo", g2, o); ok {
+				return sk, nil
+			}
+		}
 	}
 
-	// 2) Well-known index on the skill page (name is usually owner-slug).
-	candidates := []string{owner + "-" + slug, slug}
-	if opts.Skill != "" {
-		candidates = []string{opts.Skill}
+	// 3) Conventional skill registries / Claude plugin monorepos.
+	//    Smithery's gitUrl for Anthropic skills is often stale (points into
+	//    claude-code paths that no longer hold SKILL.md). The real content
+	//    lives in anthropics/skills or anthropics/claude-plugins-official.
+	guesses := []ghRef{
+		{Owner: owner, Repo: "skills"},
+		{Owner: owner, Repo: "agent-skills"},
+		{Owner: owner, Repo: "claude-plugins-official", Subpath: "plugins/" + slug},
+		{Owner: "anthropics", Repo: "skills"},
+		{Owner: "anthropics", Repo: "claude-plugins-official", Subpath: "plugins/" + slug},
+		{Owner: "anthropics", Repo: "claude-code"}, // last resort; marketplace may list plugins here
 	}
+	seen := map[string]bool{}
+	for _, g := range guesses {
+		key := g.Owner + "/" + g.Repo
+		if g.Subpath != "" {
+			key += "@" + g.Subpath
+		}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		o := InstallOptions{Skill: skillName, All: opts.All}
+		if sk, ok := tryGH(key, g, o); ok {
+			return sk, nil
+		}
+	}
+
+	// 3b) Marketplace / plugin path (same as /plugin install <slug>@…).
+	//     Auto-add the owner/claude-code marketplace when present and install
+	//     the matching plugin — this is how Claude Code itself ships skills.
+	if sk, err := m.trySmitheryAsPlugin(ctx, owner, slug, skillName); err == nil {
+		return sk, nil
+	} else if err != nil {
+		errs = append(errs, "plugin: "+err.Error())
+	}
+
+	// 4) Well-known index (name is usually "<owner>-<slug>").
+	candidates := []string{owner + "-" + slug, slug, skillName}
+	if opts.Skill != "" {
+		candidates = append([]string{opts.Skill}, candidates...)
+	}
+	tried := map[string]bool{}
 	for _, name := range candidates {
+		if name == "" || tried[name] {
+			continue
+		}
+		tried[name] = true
 		sk, err := m.installWellKnown(ctx, c, u, name, opts)
 		if err == nil {
 			return sk, nil
@@ -852,19 +975,63 @@ func (m *Manager) installSmithery(ctx context.Context, c *remoteClient, u *url.U
 	}
 
 	return nil, fmt.Errorf("could not install %s from Smithery. "+
-		"If the skill's source repo is known, install it directly: /skills add <github-url> --skill <name>. Details: %s",
-		u.String(), strings.Join(errs, "; "))
+		"Try the source repo directly, e.g. /skills add %s/skills --skill %s. Details: %s",
+		u.String(), owner, skillName, strings.Join(errs, "; "))
 }
 
-// installSmitheryAPI fetches https://api.smithery.ai/skills/<owner>/<slug> and
-// installs from the returned gitUrl (a github.com/.../tree/<ref>/<path> link).
-func (m *Manager) installSmitheryAPI(ctx context.Context, c *remoteClient, owner, slug string, opts InstallOptions) ([]domain.Skill, error) {
+// trySmitheryAsPlugin installs via the Claude-compatible marketplace flow:
+// register a known marketplace for the namespace, then install the plugin/skill
+// by name. Content for Anthropic plugins lives in claude-plugins-official;
+// the claude-code repo only holds the marketplace index.
+func (m *Manager) trySmitheryAsPlugin(ctx context.Context, owner, slug, skillName string) ([]domain.Skill, error) {
+	candidates := []string{
+		owner + "/claude-plugins-official",
+		owner + "/skills",
+		owner + "/claude-code",
+		"anthropics/claude-plugins-official",
+		"anthropics/skills",
+		"anthropics/claude-code",
+	}
+	var lastErr error
+	seen := map[string]bool{}
+	for _, src := range candidates {
+		if seen[src] {
+			continue
+		}
+		seen[src] = true
+		mk, err := m.AddMarketplace(ctx, src)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		for _, name := range []string{slug, skillName} {
+			if name == "" {
+				continue
+			}
+			sk, err := m.installMarketPlugins(ctx, mk, name)
+			if err == nil && len(sk) > 0 {
+				return sk, nil
+			}
+			if err != nil {
+				lastErr = err
+			}
+		}
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no matching plugin for %s/%s", owner, slug)
+	}
+	return nil, lastErr
+}
+
+// fetchSmitheryGitRef calls the Smithery skill API and returns a parsed GitHub
+// ref plus a preferred skill directory name.
+func fetchSmitheryGitRef(ctx context.Context, c *remoteClient, owner, slug string) (ghRef, string, error) {
 	apiURL := smitheryAPI + url.PathEscape(owner) + "/" + url.PathEscape(slug)
 	data, _, err := c.get(ctx, apiURL, 1<<20, map[string]string{
 		"Accept": "application/json",
 	})
 	if err != nil {
-		return nil, err
+		return ghRef{}, "", err
 	}
 	var meta struct {
 		GitURL      string `json:"gitUrl"`
@@ -872,28 +1039,23 @@ func (m *Manager) installSmitheryAPI(ctx context.Context, c *remoteClient, owner
 		Slug        string `json:"slug"`
 	}
 	if err := json.Unmarshal(data, &meta); err != nil {
-		return nil, fmt.Errorf("decode smithery api: %w", err)
+		return ghRef{}, "", fmt.Errorf("decode smithery api: %w", err)
 	}
 	if meta.GitURL == "" {
-		return nil, fmt.Errorf("smithery api returned no gitUrl for %s/%s", owner, slug)
+		return ghRef{}, "", fmt.Errorf("smithery api returned no gitUrl for %s/%s", owner, slug)
 	}
-
 	g, ok := parseGitHubRef(meta.GitURL)
 	if !ok {
-		return nil, fmt.Errorf("smithery gitUrl is not a GitHub path: %s", meta.GitURL)
+		return ghRef{}, "", fmt.Errorf("smithery gitUrl is not a GitHub path: %s", meta.GitURL)
 	}
-	// Prefer the leaf skill name from the path / display name when the user
-	// didn't pass --skill. The tree path already scopes Subpath.
-	if opts.Skill == "" {
-		if base := path.Base(g.Subpath); base != "" && base != "." && base != "/" {
-			opts.Skill = base
-		} else if meta.DisplayName != "" {
-			opts.Skill = meta.DisplayName
-		} else if meta.Slug != "" {
-			opts.Skill = meta.Slug
-		}
+	name := meta.DisplayName
+	if name == "" {
+		name = meta.Slug
 	}
-	return m.installGitHub(ctx, c, g, opts)
+	if name == "" {
+		name = slug
+	}
+	return g, name, nil
 }
 
 // ---------------------------------------------------------------------------
