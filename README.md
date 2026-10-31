@@ -182,7 +182,7 @@ Supports GitHub trees, skills.sh, smithery-style URLs, zip / `SKILL.md` URLs, an
 
 ## Tools (high level)
 
-**Files & shell:** `read_file`, `write_file`, `edit_file`, `list_files`, `glob_files`, `directory_tree`, `file_info`, `bash`, `grep` / `file_search`  
+**Files & shell:** `read_file`, `write_file`, `edit_file` (unique-match, multi-hunk, regex, dry-run, diff output), `list_files`, `glob_files`, `directory_tree`, `file_info`, `bash`, `grep` / `file_search`  
 
 **Git:** `git_status`, `git_diff`, `git_log`, `git_show`, `git_stage`, `git_commit`  
 

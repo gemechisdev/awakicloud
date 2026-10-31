@@ -214,7 +214,7 @@ func readFiles(_ context.Context, input map[string]any) types.Result {
 		if path == "" {
 			continue
 		}
-		data, err := os.ReadFile(path)
+		data, err := os.ReadFile(workspace.Resolve(path))
 		b.WriteString("===== " + path + " =====\n")
 		if err != nil {
 			b.WriteString(fmt.Sprintf("ERROR: %v\n\n", err))
@@ -239,6 +239,7 @@ func fileInfo(_ context.Context, input map[string]any) types.Result {
 	if err != nil {
 		return types.ErrResult(err)
 	}
+	path = workspace.Resolve(path)
 	info, err := os.Stat(path)
 	if err != nil {
 		return types.Errf("stat: %v", err)
