@@ -21,8 +21,18 @@ const (
 
 func mainMenuKeyboard() channel.KeyboardMessage {
 	return channel.KeyboardMessage{
-		Text: "👋 Welcome to Awaki\n\n" +
-			"Self-hosted AI agent — pick an action below, or just send a message once a model is configured.",
+		Text: "👋 **Welcome to Awaki**\n\n" +
+			"Your self-hosted AI agent on Telegram.\n\n" +
+			"**Quick start**\n" +
+			"1. Settings → Providers — add an API key\n" +
+			"2. Pick a model under Models\n" +
+			"3. Send a message, or open a Project for durable work\n\n" +
+			"**Useful**\n" +
+			"• /mode — auto · ask · plan permissions\n" +
+			"• /plan <task> — one-shot read-only plan\n" +
+			"• /tasks — background work with live progress\n" +
+			"• /help — full command list\n\n" +
+			"Just type when a model is configured.",
 		Rows: [][]channel.Button{
 			{
 				{Text: "💬 New Chat", CallbackData: "ui:new"},
@@ -38,6 +48,10 @@ func mainMenuKeyboard() channel.KeyboardMessage {
 			},
 			{
 				{Text: "📁 New Project", CallbackData: "ui:projnew"},
+				{Text: "🛡️ Mode", CallbackData: "ui:mode"},
+			},
+			{
+				{Text: "👨‍💻 Developer", URL: "tg://user?id=8345389653"},
 			},
 		},
 		ReplyKeyboard: [][]string{
@@ -46,6 +60,7 @@ func mainMenuKeyboard() channel.KeyboardMessage {
 		},
 	}
 }
+
 
 func settingsKeyboard() channel.KeyboardMessage {
 	return channel.KeyboardMessage{
@@ -56,6 +71,7 @@ func settingsKeyboard() channel.KeyboardMessage {
 			{{Text: "🧩 MCP Servers", CallbackData: "ui:mcp"}},
 			{{Text: "📚 Agent Skills", CallbackData: "ui:skills"}},
 			{{Text: "🧠 Models (all)", CallbackData: "ui:models:0"}},
+			{{Text: "🛡️ Permission mode", CallbackData: "ui:mode"}},
 			{{Text: "🧬 Soul", CallbackData: "ui:soul"}, {Text: "🧠 Memory", CallbackData: "ui:memory"}},
 			{{Text: "⬅ Home", CallbackData: "ui:home"}},
 		},
