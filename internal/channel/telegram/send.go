@@ -34,6 +34,33 @@ func (c *Channel) sendLong(ctx context.Context, chatID int64, text string) {
 	}
 }
 
+
+// sendAndGetID sends a short status-style message (Markdown preferred) and returns the message ID.
+func (c *Channel) sendAndGetID(ctx context.Context, chatID int64, text string) int {
+	id, err := c.client.SendMessage(ctx, chatID, text, models.ParseModeMarkdown)
+	if err != nil {
+		log.Warn().Err(err).Msg("telegram sendAndGetID markdown failed; trying HTML")
+		chunks := format.FormatHTMLChunks(text, maxMessageLen)
+		if len(chunks) == 0 {
+			id, err = c.client.SendMessage(ctx, chatID, text, "")
+			if err != nil {
+				log.Error().Err(err).Msg("telegram sendAndGetID plain failed")
+				return 0
+			}
+			return id
+		}
+		id, err = c.client.SendMessage(ctx, chatID, chunks[0].HTML, models.ParseModeHTML)
+		if err != nil {
+			id, err = c.client.SendMessage(ctx, chatID, chunks[0].Text, "")
+			if err != nil {
+				log.Error().Err(err).Msg("telegram sendAndGetID failed")
+				return 0
+			}
+		}
+	}
+	return id
+}
+
 func (c *Channel) sendKeyboard(ctx context.Context, chatID int64, km channel.KeyboardMessage) {
 	c.sendOrEditKeyboard(ctx, chatID, 0, km)
 }
