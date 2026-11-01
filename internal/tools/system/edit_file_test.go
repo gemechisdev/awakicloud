@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gemechischala/awaki/internal/tools/types"
 	"github.com/gemechischala/awaki/internal/workspace"
@@ -490,3 +491,5 @@ func TestDiffMultiHunkLineNumbers(t *testing.T) {
 		t.Fatalf("diff wrong:\n%s", d)
 	}
 }
+
+func mustTime(year int) time.Time { return time.Date(year, 6, 1, 0, 0, 0, 0, time.UTC) }

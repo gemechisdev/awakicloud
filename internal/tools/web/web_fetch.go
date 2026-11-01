@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	fetchTimeout = 20 * time.Second
-	maxFetchBody = 512 * 1024
+	fetchTimeout  = 20 * time.Second
+	maxFetchBody  = 512 * 1024
+	maxPagedFetch = 400_000 // most characters we ask the reader service for
 )
 
 var defaultSelectors = []string{"article", "main", "[role=main]"}
@@ -45,7 +46,11 @@ func WebFetchTool() types.Tool {
 			},
 			"max_chars": map[string]any{
 				"type":        "integer",
-				"description": "Max characters to return (default 50000)",
+				"description": "Max characters to return per call (default 50000)",
+			},
+			"offset": map[string]any{
+				"type":        "integer",
+				"description": "Character offset to start from, for reading long pages in parts. A truncated result ends with the offset to use next.",
 			},
 		},
 		Required: []string{"url"},
@@ -63,8 +68,12 @@ func webFetch(ctx context.Context, input map[string]any) types.Result {
 	}
 	selector := types.GetStringOpt(input, "selector")
 	maxChars := 50_000
-	if v, ok := input["max_chars"].(float64); ok && v > 0 {
-		maxChars = int(v)
+	if v, ok := types.GetIntOpt(input, "max_chars"); ok && v > 0 {
+		maxChars = v
+	}
+	offset, _ := types.GetIntOpt(input, "offset")
+	if offset < 0 {
+		offset = 0
 	}
 
 	var notes []string
@@ -72,16 +81,18 @@ func webFetch(ctx context.Context, input map[string]any) types.Result {
 	// 1) Parallel MCP
 	if md, title, err := parallelFetch(ctx, rawURL); err == nil {
 		logWeb("parallel", "web_fetch ok", nil)
-		return types.Result{Output: formatFetched(rawURL, "parallel", title, md, maxChars)}
+		return types.Result{Output: formatFetched(rawURL, "parallel", title, md, maxChars, offset, false)}
 	} else {
 		notes = append(notes, "Parallel: "+err.Error())
 		logWeb("parallel", "web_fetch", err)
 	}
 
 	// 2) Jina reader
-	if md, title, err := jinaFetch(ctx, rawURL, maxChars); err == nil {
+	// The reader truncates to its limit, so ask for enough to cover the requested window.
+	if md, title, err := jinaFetch(ctx, rawURL, min(offset+maxChars, maxPagedFetch)); err == nil {
 		logWeb("jina", "web_fetch ok", nil)
-		out := formatFetched(rawURL, "jina.ai", title, md, maxChars)
+		md, cut := strings.CutSuffix(md, "\n… (truncated)")
+		out := formatFetched(rawURL, "jina.ai", title, md, maxChars, offset, cut)
 		if len(notes) > 0 {
 			out = strings.Join(notes, "\n") + "\n\n" + out
 		}
@@ -98,25 +109,38 @@ func webFetch(ctx context.Context, input map[string]any) types.Result {
 		return types.Errf("web_fetch failed:\n%s", strings.Join(notes, "\n"))
 	}
 	logWeb("direct", "web_fetch ok", nil)
-	out := formatFetched(rawURL, "direct", "", direct, maxChars)
+	out := formatFetched(rawURL, "direct", "", direct, maxChars, offset, false)
 	if len(notes) > 0 {
 		out = strings.Join(notes, "\n") + "\n\n" + out
 	}
 	return types.Result{Output: out}
 }
 
-func formatFetched(origin, via, title, body string, maxChars int) string {
-	body = strings.TrimSpace(body)
-	if len(body) > maxChars {
-		body = body[:maxChars] + "\n… (truncated)"
-	}
+func formatFetched(origin, via, title, body string, maxChars, offset int, sourceCut bool) string {
+	page, start, end, total := paginateText(strings.TrimSpace(body), offset, maxChars)
 	var b strings.Builder
 	fmt.Fprintf(&b, "url: %s\nvia: %s\n", origin, via)
 	if title != "" {
 		fmt.Fprintf(&b, "title: %s\n", title)
 	}
 	b.WriteByte('\n')
-	b.WriteString(body)
+	if start >= total && total > 0 {
+		fmt.Fprintf(&b, "(offset %d is past the end of the page, which has %d characters)", offset, total)
+		return b.String()
+	}
+	b.WriteString(page)
+	switch {
+	case end < total:
+		suffix := ""
+		if sourceCut {
+			suffix = "+"
+		}
+		fmt.Fprintf(&b, "\n… [characters %d-%d of %d%s; call web_fetch again with offset=%d for the next part]", start, end, total, suffix, end)
+	case sourceCut:
+		fmt.Fprintf(&b, "\n… [page cut at %d characters by the reader; call web_fetch with offset=%d for more]", total, total)
+	case start > 0:
+		fmt.Fprintf(&b, "\n[end of page: characters %d-%d of %d]", start, end, total)
+	}
 	return b.String()
 }
 

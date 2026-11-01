@@ -182,13 +182,13 @@ Supports GitHub trees, skills.sh, smithery-style URLs, zip / `SKILL.md` URLs, an
 
 ## Tools (high level)
 
-**Files & shell:** `read_file`, `write_file`, `edit_file` (unique-match, multi-hunk, regex, dry-run, diff output), `list_files`, `glob_files`, `directory_tree`, `file_info`, `bash`, `grep` / `file_search`  
+**Files & shell:** `read_file` (paged, offset/limit), `write_file` (atomic, overwrite diff), `edit_file` (unique-match, multi-hunk, regex, dry-run, diff output), `apply_patch` (multi-file unified diff, atomic), `move_file`, `copy_file`, `delete_file`, `make_dir`, `list_files`, `glob_files` (`**`, .gitignore-aware), `directory_tree`, `read_files`, `file_info`, `bash` (head+tail output, `background=true`, progress heartbeats), `grep` / `file_search`  
 
-**Git:** `git_status`, `git_diff`, `git_log`, `git_show`, `git_stage`, `git_commit`  
+**Git:** read-only `git_status`, `git_diff`, `git_log`, `git_show`, `git_blame`, `git_branch`; mutating `git_stage`, `git_commit`, `git_checkout`, `git_restore`, `git_stash`, `git_reset`, `git_branch_update`, `git_sync` (fetch/pull/push), `git_clone` — refs/remotes/URLs are validated, git never prompts  
 
-**Web:** `web_search`, `web_fetch`, `web_request`, `web_download` (SSRF guard on agent-side fetches)  
+**Web:** `web_search`, `web_fetch` (paged with `offset`), `web_request` (`json`/`form`/`query`, binary-safe, cookies redacted), `web_download` (SSRF guard on agent-side fetches)  
 
-**Memory / identity:** `memory_*`, `soul_*`, `user_*`  
+**Memory / identity:** `memory_list`, `memory_read`, `memory_search`, `memory_write`, `memory_append`, `memory_delete`, `soul_*`, `user_*`  
 
 **Skills:** `skill_list`, `skill_read`, `skill_run`, …  
 

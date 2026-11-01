@@ -139,6 +139,8 @@ func grepHandler(ctx context.Context, input map[string]any) types.Result {
 		} else {
 			path = "."
 		}
+	} else {
+		path = workspace.Resolve(path) // relative paths mean "relative to the workspace", like every other file tool
 	}
 
 	maxResults := grepDefaultMax
@@ -329,6 +331,9 @@ func buildGNUGrepArgs(o grepOpts) []string {
 	}
 	if o.FixedString {
 		args = append(args, "-F")
+	} else {
+		// ripgrep patterns are extended-style (a|b, x+, \( literal paren); plain grep would read them as basic regex.
+		args = append(args, "-E")
 	}
 	if o.Word {
 		args = append(args, "-w")

@@ -22,7 +22,7 @@ import (
 const (
 	maxAmbiguousShown  = 5
 	snippetMaxRunes    = 120
-	suggestMinScore    = 0.55
+	suggestMinScore    = 0.45
 	suggestMaxFileLine = 20000
 	suggestMaxOldLines = 40
 	suggestShowLines   = 15

@@ -105,9 +105,9 @@ You may use tools as needed, including mutations. Keep changes scoped and intent
 // PlanDenylist is the tool names removed entirely in plan mode.
 // Keep aligned with researcher read-only denylist / historical PlanMode strip.
 var PlanDenylist = []string{
-	"bash", "write_file", "edit_file", "create_file", "delete_file", "copy_file",
-	"git_stage", "git_commit",
-	"memory_write", "memory_delete",
+	"bash", "write_file", "edit_file", "apply_patch", "create_file", "delete_file", "copy_file", "move_file", "make_dir",
+	"git_stage", "git_commit", "git_checkout", "git_restore", "git_stash", "git_reset", "git_branch_update", "git_sync", "git_clone",
+	"memory_write", "memory_append", "memory_delete",
 	"skill_create", "skill_update", "skill_delete", "skill_run",
 	"soul_write", "user_write",
 	"schedule_add", "schedule_remove", "schedule_pause",
@@ -123,13 +123,13 @@ var readOnlyAllow = map[string]struct{}{
 	"directory_tree": {}, "file_info": {}, "system_info": {},
 	"web_search": {}, "web_fetch": {},
 	"grep": {}, "file_search": {},
-	"memory_list": {}, "memory_read": {},
+	"memory_list": {}, "memory_read": {}, "memory_search": {},
 	"skill_list": {}, "skill_read": {}, "skill_files": {}, "skill_read_file": {},
 	"soul_read": {}, "user_read": {},
 	"recall": {}, "task_plan": {}, "report_status": {},
 	"schedule_list": {},
 	"bg_task_list": {}, "bg_task_get": {},
-	"git_status": {}, "git_diff": {}, "git_log": {}, "git_show": {},
+	"git_status": {}, "git_diff": {}, "git_log": {}, "git_show": {}, "git_blame": {}, "git_branch": {},
 	"ask_user": {}, "send_message": {}, // communication, not env mutation
 }
 
@@ -145,4 +145,20 @@ func RequiresApproval(toolName string) bool {
 	}
 	// MCP and anything else: ask.
 	return true
+}
+
+// Classified reports whether a tool has an explicit permission decision: it is
+// either read-only (never needs approval) or removed in plan mode. A newly added
+// tool that is neither would silently be available in plan mode, so the tools
+// package test fails until its author classifies it here.
+func Classified(toolName string) bool {
+	if _, ok := readOnlyAllow[toolName]; ok {
+		return true
+	}
+	for _, d := range PlanDenylist {
+		if d == toolName {
+			return true
+		}
+	}
+	return false
 }

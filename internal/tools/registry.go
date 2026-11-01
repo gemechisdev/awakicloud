@@ -29,7 +29,9 @@ func NewRegistry(st store.Store, searchFn ChatSearchFunc, extra ...types.Tool) *
 		systemtools.GrepTool(),
 		systemtools.FileSearchTool(),
 	}
+	all = append(all, systemtools.ApplyPatchTool())
 	all = append(all, systemtools.FileTools()...)
+	all = append(all, systemtools.FileOpTools()...)
 	all = append(all, systemtools.BatchFileTools()...)
 	all = append(all, systemtools.GitTools()...)
 	all = append(all, webtools.WebSearchTool())

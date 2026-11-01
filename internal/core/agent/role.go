@@ -101,9 +101,9 @@ func roleCatalogDescription() string {
 
 // readOnlyDenylist mirrors plan-mode tool removals.
 var readOnlyDenylist = []string{
-	"bash", "write_file", "edit_file", "create_file", "delete_file", "copy_file",
-	"git_stage", "git_commit",
-	"memory_write", "memory_delete",
+	"bash", "write_file", "edit_file", "apply_patch", "create_file", "delete_file", "copy_file", "move_file", "make_dir",
+	"git_stage", "git_commit", "git_checkout", "git_restore", "git_stash", "git_reset", "git_branch_update", "git_sync", "git_clone",
+	"memory_write", "memory_append", "memory_delete",
 	"skill_create", "skill_update", "skill_delete",
 	"soul_write", "user_write",
 	"delegate",
