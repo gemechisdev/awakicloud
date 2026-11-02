@@ -46,6 +46,8 @@ var Commands = []CommandSpec{
 	{Slash: "project", Cmd: CmdProject, Description: "Create a project", Help: "<name> — create project", Menu: true},
 	{Slash: "upgrade", Cmd: CmdProjectUpgrade, Description: "Upgrade chat to project", Help: "[name] — upgrade chat → project", Menu: true},
 	{Slash: "sync", Cmd: CmdProjectSync, Description: "Sync project to Telegram", Help: "sync active project to Telegram storage", Menu: true},
+	{Slash: "chatlink", Cmd: CmdChatLink, Description: "Link chat to project", Help: "<slug> — link current chat to project", Menu: true},
+	{Slash: "chats", Cmd: CmdChatsByProject, Description: "Chats in project", Help: "<slug> — list chats linked to project", Menu: true},
 
 	{Slash: "mcp", Cmd: CmdMCP, Description: "List MCP servers", Help: "list MCP servers", Menu: true},
 	{Slash: "mcp_add", Cmd: CmdMCPAdd, Description: "Add MCP server", Help: "add MCP server (wizard)", Menu: true},

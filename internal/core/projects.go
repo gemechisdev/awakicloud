@@ -44,7 +44,7 @@ func (e *Engine) syncActiveProjectIfDirty(ctx context.Context) {
 	if ch.Mode != project.ModeProject || ch.ProjectSlug == "" {
 		return
 	}
-	synced, meta, err := e.projects.SyncIfDirty(ctx, ch.ProjectSlug)
+	synced, meta, err := e.projects.SyncIfDirty(ctx, ch.ProjectSlug, ch.ID)
 	if err != nil {
 		log.Warn().Err(err).Str("slug", ch.ProjectSlug).Msg("project sync-if-dirty failed")
 		return
@@ -215,7 +215,14 @@ func (e *Engine) cmdListProjects(ctx context.Context, msg channel.Message) {
 		if label == "" {
 			label = m.Slug
 		}
-		b.WriteString(fmt.Sprintf("• %s (%s)\n", label, m.Slug))
+		stats := ""
+		if m.FileCount > 0 {
+			stats = fmt.Sprintf(" — %d files, %s", m.FileCount, humanBytes(m.TotalSize))
+		}
+		if m.LastEditor != "" {
+			stats += fmt.Sprintf(" (last: %s)", truncateUI(m.LastEditor, 20))
+		}
+		b.WriteString(fmt.Sprintf("• %s (%s)%s\n", label, m.Slug, stats))
 		rows = append(rows, []channel.Button{
 			{Text: "▶ " + truncateUI(label, 28), CallbackData: "ui:projopen:" + m.Slug},
 		})
@@ -262,7 +269,7 @@ func (e *Engine) cmdSyncProject(ctx context.Context, msg channel.Message) {
 		_ = msg.Reply.SendText(ctx, "Current chat is not a project. Use /project or upgrade first.")
 		return
 	}
-	meta, err := e.projects.Sync(ctx, ch.ProjectSlug)
+	meta, err := e.projects.Sync(ctx, ch.ProjectSlug, ch.ID)
 	if err != nil {
 		_ = msg.Reply.SendText(ctx, "Sync failed: "+err.Error())
 		return
@@ -270,4 +277,91 @@ func (e *Engine) cmdSyncProject(ctx context.Context, msg channel.Message) {
 	ch.ProjectHash = meta.Hash
 	_ = ch.Save()
 	_ = msg.Reply.SendText(ctx, fmt.Sprintf("☁ Synced «%s»\nHash: %s", meta.Name, meta.Hash))
+}
+
+// humanBytes formats bytes into a human-readable string.
+func humanBytes(b int64) string {
+	if b < 0 {
+		return "N/A"
+	}
+	units := []string{"B", "KB", "MB", "GB", "TB"}
+	f := float64(b)
+	i := 0
+	for f >= 1024 && i < len(units)-1 {
+		f /= 1024
+		i++
+	}
+	return fmt.Sprintf("%.0f %s", f, units[i])
+}
+
+// cmdChatLink links the current chat to a project (multi-chat per project).
+func (e *Engine) cmdChatLink(ctx context.Context, msg channel.Message, slug string) {
+	if e.projects == nil {
+		_ = msg.Reply.SendText(ctx, "Projects not available.")
+		return
+	}
+	if slug == "" {
+		_ = msg.Reply.SendText(ctx, "Usage: /chatlink <slug>")
+		return
+	}
+	if _, err := e.projects.ReadMeta(slug); err != nil {
+		_ = msg.Reply.SendText(ctx, "Project not found: "+slug)
+		return
+	}
+	ch, err := e.chats.Resolve()
+	if err != nil {
+		_ = msg.Reply.SendText(ctx, err.Error())
+		return
+	}
+	ch.Mode = project.ModeProject
+	ch.ProjectSlug = slug
+	if meta, err := e.projects.ReadMeta(slug); err == nil {
+		ch.ProjectID = meta.ID
+		ch.ProjectHash = meta.Hash
+		if ch.Title == "" {
+			ch.Title = meta.Name
+		}
+	}
+	if err := e.projects.ActivateProject(ctx, slug); err != nil {
+		_ = msg.Reply.SendText(ctx, "Link failed: "+err.Error())
+		return
+	}
+	_ = ch.Save()
+	_ = msg.Reply.SendText(ctx, fmt.Sprintf("🔗 Chat linked to project «%s» (%s)", meta.Name, slug))
+}
+
+// cmdChatsByProject lists chats bound to a project.
+func (e *Engine) cmdChatsByProject(ctx context.Context, msg channel.Message, slug string) {
+	if e.store == nil {
+		_ = msg.Reply.SendText(ctx, "Store not available.")
+		return
+	}
+	if slug == "" {
+		_ = msg.Reply.SendText(ctx, "Usage: /chats <slug>")
+		return
+	}
+	chats, err := e.store.ListChatsByProject(slug)
+	if err != nil {
+		_ = msg.Reply.SendText(ctx, "Failed to list chats: "+err.Error())
+		return
+	}
+	if len(chats) == 0 {
+		_ = msg.Reply.SendText(ctx, fmt.Sprintf("No chats linked to project «%s».", slug))
+		return
+	}
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("💬 Chats in «%s»\n\n", slug))
+	var rows [][]channel.Button
+	for _, c := range chats {
+		label := c.Title
+		if label == "" {
+			label = c.ID
+		}
+		b.WriteString(fmt.Sprintf("• %s (%s)\n", truncateUI(label, 28), c.ID))
+		rows = append(rows, []channel.Button{
+			{Text: "▶ " + truncateUI(label, 20), CallbackData: "ui:chatopen:" + c.ID},
+		})
+	}
+	rows = append(rows, []channel.Button{{Text: "⬅ Home", CallbackData: "ui:home"}})
+	e.deliverKeyboard(ctx, msg, channel.KeyboardMessage{Text: b.String(), Rows: rows})
 }

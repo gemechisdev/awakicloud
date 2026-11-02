@@ -29,12 +29,12 @@ import (
 // skills/chats are recovered from Telegram via the index (index itself is
 // small and can be rebuilt if we also pin a snapshot later).
 type Store struct {
-	local     store.Store // local.LocalStore for cache + chat JSONL speed
-	api       *api
-	chatID    int64
-	cacheDir  string
-	idx       *index
-	timeout   time.Duration
+	local    store.Store // local.LocalStore for cache + chat JSONL speed
+	api      *api
+	chatID   int64
+	cacheDir string
+	idx      *index
+	timeout  time.Duration
 }
 
 var _ store.Store = (*Store)(nil)
@@ -292,6 +292,10 @@ func (s *Store) LoadChat(id string) (*store.Chat, error) {
 
 func (s *Store) ListChats() ([]store.ChatInfo, error) {
 	return s.local.ListChats()
+}
+
+func (s *Store) ListChatsByProject(slug string) ([]store.ChatInfo, error) {
+	return s.local.ListChatsByProject(slug)
 }
 
 func (s *Store) GetActiveChatID() (string, error) { return s.local.GetActiveChatID() }

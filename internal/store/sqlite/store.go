@@ -581,6 +581,37 @@ func (s *Store) ListChats() ([]store.ChatInfo, error) {
 	return out, rows.Err()
 }
 
+func (s *Store) ListChatsByProject(slug string) ([]store.ChatInfo, error) {
+	rows, err := s.db.Query(`SELECT meta_json FROM chats WHERE json_extract(meta_json, '$.project_slug') = ? ORDER BY updated_at DESC`, slug)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []store.ChatInfo
+	for rows.Next() {
+		var meta string
+		if err := rows.Scan(&meta); err != nil {
+			return nil, err
+		}
+		var ch store.Chat
+		if json.Unmarshal([]byte(meta), &ch) != nil {
+			continue
+		}
+		out = append(out, store.ChatInfo{
+			ID:          ch.ID,
+			Title:       ch.Title,
+			Summary:     ch.Summary,
+			Mode:        ch.Mode,
+			ProjectSlug: ch.ProjectSlug,
+			Tags:        ch.Tags,
+			Status:      ch.Status,
+			StartedAt:   ch.StartedAt,
+			EndedAt:     ch.EndedAt,
+		})
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) LoadMessages(ch *store.Chat) error {
 	rows, err := s.db.Query(`SELECT turn_json FROM messages WHERE chat_id=? ORDER BY seq`, ch.ID)
 	if err != nil {

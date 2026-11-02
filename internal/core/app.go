@@ -213,6 +213,18 @@ func (e *Engine) handleCommand(ctx context.Context, msg channel.Message) {
 		e.cmdUpgradeProject(ctx, msg, name)
 	case channel.CmdProjectSync:
 		e.cmdSyncProject(ctx, msg)
+	case channel.CmdChatLink:
+		raw := ""
+		if cmd.Args != nil {
+			raw = strings.TrimSpace(cmd.Args["raw"])
+		}
+		e.cmdChatLink(ctx, msg, raw)
+	case channel.CmdChatsByProject:
+		raw := ""
+		if cmd.Args != nil {
+			raw = strings.TrimSpace(cmd.Args["raw"])
+		}
+		e.cmdChatsByProject(ctx, msg, raw)
 	case channel.CmdMCP:
 		e.cmdMCPList(ctx, msg)
 	case channel.CmdMCPAdd:

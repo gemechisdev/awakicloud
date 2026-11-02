@@ -21,6 +21,8 @@ const (
 	CmdProject        = "project"
 	CmdProjectUpgrade = "project_upgrade"
 	CmdProjectSync    = "project_sync"
+	CmdChatLink       = "chatlink"
+	CmdChatsByProject = "chats"
 	CmdPlan           = "plan"
 	CmdHelp           = "help"
 	CmdTasks          = "tasks"

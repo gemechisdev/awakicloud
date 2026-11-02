@@ -13,12 +13,10 @@ import (
 	"strings"
 )
 
-// ZipTree archives root into a zip, applying ignore rules. Returns zip data + content hash.
-// The content hash is computed from file contents (not zip bytes), so identical
-// file trees always produce the same hash regardless of zip metadata (timestamps,
-// entry order, compression). This prevents false "changed" detections that cause
-// unnecessary re-uploads to Telegram.
-func ZipTree(root string) (data []byte, contentHash string, err error) {
+// ZipTree archives root into a zip, applying ignore rules. Returns zip data + content hash
+// plus file stats (count, total size). The content hash is computed from file contents
+// (not zip bytes), so identical file trees always produce the same hash.
+func ZipTree(root string) (data []byte, contentHash string, fileCount int, totalSize int64, err error) {
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 
@@ -52,7 +50,7 @@ func ZipTree(root string) (data []byte, contentHash string, err error) {
 	})
 	if err != nil {
 		_ = zw.Close()
-		return nil, "", err
+		return nil, "", 0, 0, err
 	}
 
 	// Sort entries for deterministic zip output.
@@ -67,7 +65,7 @@ func ZipTree(root string) (data []byte, contentHash string, err error) {
 			_, err := zw.Create(e.rel + "/")
 			if err != nil {
 				_ = zw.Close()
-				return nil, "", err
+				return nil, "", 0, 0, err
 			}
 			continue
 		}
@@ -80,42 +78,46 @@ func ZipTree(root string) (data []byte, contentHash string, err error) {
 		f, err := os.Open(e.path)
 		if err != nil {
 			_ = zw.Close()
-			return nil, "", err
+			return nil, "", 0, 0, err
 		}
 		if _, err := io.Copy(h, f); err != nil {
 			f.Close()
 			_ = zw.Close()
-			return nil, "", err
+			return nil, "", 0, 0, err
 		}
 		f.Close()
 		h.Write([]byte("\x00"))
+
+		// Track stats.
+		fileCount++
+		totalSize += e.info.Size()
 
 		// Write to zip.
 		w, err := zw.Create(e.rel)
 		if err != nil {
 			_ = zw.Close()
-			return nil, "", err
+			return nil, "", 0, 0, err
 		}
 		f, err = os.Open(e.path)
 		if err != nil {
 			_ = zw.Close()
-			return nil, "", err
+			return nil, "", 0, 0, err
 		}
 		_, err = io.Copy(w, f)
 		f.Close()
 		if err != nil {
 			_ = zw.Close()
-			return nil, "", err
+			return nil, "", 0, 0, err
 		}
 	}
 
 	if err := zw.Close(); err != nil {
-		return nil, "", err
+		return nil, "", 0, 0, err
 	}
 
 	data = buf.Bytes()
 	contentHash = "sha256:" + hex.EncodeToString(h.Sum(nil))
-	return data, contentHash, nil
+	return data, contentHash, fileCount, totalSize, nil
 }
 
 // LegacyZipHash computes the SHA-256 of the zip bytes (kept for backward

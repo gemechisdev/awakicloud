@@ -116,3 +116,17 @@ func (s *LocalStore) ListChats() ([]store.ChatInfo, error) {
 	})
 	return out, nil
 }
+
+func (s *LocalStore) ListChatsByProject(slug string) ([]store.ChatInfo, error) {
+	all, err := s.ListChats()
+	if err != nil {
+		return nil, err
+	}
+	var out []store.ChatInfo
+	for _, c := range all {
+		if c.ProjectSlug == slug {
+			out = append(out, c)
+		}
+	}
+	return out, nil
+}

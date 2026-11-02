@@ -11,6 +11,7 @@ type Store interface {
 	NewChat() *Chat
 	LoadChat(id string) (*Chat, error)
 	ListChats() ([]ChatInfo, error)
+	ListChatsByProject(slug string) ([]ChatInfo, error)
 
 	// Active chat mapping
 	GetActiveChatID() (string, error)

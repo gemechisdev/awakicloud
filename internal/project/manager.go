@@ -30,6 +30,9 @@ type Meta struct {
 	ChatID      string    `json:"chat_id,omitempty"`
 	Hash        string    `json:"hash,omitempty"`         // legacy: zip-byte hash (backward compat)
 	ContentHash string    `json:"content_hash,omitempty"` // content-based hash (file paths + contents)
+	FileCount   int       `json:"file_count,omitempty"`   // number of non-ignored files
+	TotalSize   int64     `json:"total_size,omitempty"`   // total bytes of non-ignored files
+	LastEditor  string    `json:"last_editor,omitempty"`  // last chat_id that edited
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
@@ -232,13 +235,14 @@ func (m *Manager) ReadMeta(slug string) (Meta, error) {
 // Sync zips the local tree and saves to the blob store if content changed.
 // Change detection uses the content hash (file paths + contents), not zip bytes,
 // so re-zipping the same files does not trigger a re-upload.
-func (m *Manager) Sync(ctx context.Context, slug string) (Meta, error) {
+// lastEditor is the chat_id that triggered the change (may be empty).
+func (m *Manager) Sync(ctx context.Context, slug string, lastEditor ...string) (Meta, error) {
 	meta, err := m.ReadMeta(slug)
 	if err != nil {
 		// synthesize from slug
 		meta = Meta{ID: uuid.NewString(), Name: slug, Slug: slug, UpdatedAt: time.Now().UTC()}
 	}
-	data, contentHash, err := ZipTree(m.ProjectDir(slug))
+	data, contentHash, fileCount, totalSize, err := ZipTree(m.ProjectDir(slug))
 	if err != nil {
 		return meta, err
 	}
@@ -253,6 +257,11 @@ func (m *Manager) Sync(ctx context.Context, slug string) (Meta, error) {
 	// Keep legacy zip-byte hash for backward compatibility.
 	meta.Hash = LegacyZipHash(data)
 	meta.ContentHash = contentHash
+	meta.FileCount = fileCount
+	meta.TotalSize = totalSize
+	if len(lastEditor) > 0 && lastEditor[0] != "" {
+		meta.LastEditor = lastEditor[0]
+	}
 	meta.UpdatedAt = time.Now().UTC()
 	if err := m.blobs.SaveArchive(ctx, meta, data); err != nil {
 		return meta, err
@@ -281,13 +290,13 @@ func (m *Manager) LastSync(slug string) time.Time {
 // SyncIfDirty zips and uploads the project only if it has been marked dirty
 // since the last sync AND the content hash actually changed. Returns
 // (synced, meta, err). If not dirty, returns (false, meta, nil) without
-// touching cloud storage.
-func (m *Manager) SyncIfDirty(ctx context.Context, slug string) (bool, Meta, error) {
+// touching cloud storage. lastEditor is the chat_id that triggered the change.
+func (m *Manager) SyncIfDirty(ctx context.Context, slug string, lastEditor ...string) (bool, Meta, error) {
 	if !m.IsDirtyAndClear(slug) {
 		meta, _ := m.ReadMeta(slug)
 		return false, meta, nil
 	}
-	meta, err := m.Sync(ctx, slug)
+	meta, err := m.Sync(ctx, slug, lastEditor...)
 	if err != nil {
 		return false, meta, err
 	}
