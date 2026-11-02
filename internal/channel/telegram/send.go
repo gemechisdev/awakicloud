@@ -94,7 +94,13 @@ func (c *Channel) sendOrEditKeyboard(ctx context.Context, chatID int64, editMsgI
 	}
 
 	// Format body the same way as normal messages (Markdown → Telegram HTML).
-	chunks := format.FormatHTMLChunks(text, maxMessageLen)
+	// Use a tighter limit when a keyboard is attached so the HTML text stays
+	// under Telegram's 4096-character hard limit after tag/escape expansion.
+	limit := maxMessageLen
+	if len(rows) > 0 {
+		limit = maxKeyboardMessageLen
+	}
+	chunks := format.FormatHTMLChunks(text, limit)
 	if len(chunks) == 0 {
 		chunks = []format.FormattedChunk{{HTML: text, Text: text}}
 	}

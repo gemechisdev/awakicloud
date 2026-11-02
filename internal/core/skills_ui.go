@@ -50,12 +50,12 @@ func (e *Engine) cmdSkills(ctx context.Context, msg channel.Message) {
 	args := skillsRawArgs(msg)
 	fields := strings.Fields(args)
 	if len(fields) == 0 {
-		e.cmdSkillsList(ctx, msg)
+		e.cmdSkillsList(ctx, msg, 0)
 		return
 	}
 	switch strings.ToLower(fields[0]) {
 	case "list", "ls":
-		e.cmdSkillsList(ctx, msg)
+		e.cmdSkillsList(ctx, msg, 0)
 	case "add", "install", "i":
 		e.cmdSkillsAdd(ctx, msg, fields[1:])
 	case "remove", "rm", "delete", "uninstall":
@@ -73,7 +73,7 @@ func (e *Engine) cmdSkills(ctx context.Context, msg channel.Message) {
 			return
 		}
 		_ = msg.Reply.SendText(ctx, "Removed skill: "+fields[1])
-		e.cmdSkillsList(ctx, msg)
+		e.cmdSkillsList(ctx, msg, 0)
 	case "market", "marketplace":
 		e.cmdSkillMarket(ctx, msg)
 	case "help", "?":
@@ -122,10 +122,10 @@ func (e *Engine) installSkillsFromSource(ctx context.Context, msg channel.Messag
 		fmt.Fprintf(&b, "• %s (%s)\n", sk.Name, sk.LevelLabel())
 	}
 	_ = msg.Reply.SendText(ctx, b.String())
-	e.cmdSkillsList(ctx, msg)
+	e.cmdSkillsList(ctx, msg, 0)
 }
 
-func (e *Engine) cmdSkillsList(ctx context.Context, msg channel.Message) {
+func (e *Engine) cmdSkillsList(ctx context.Context, msg channel.Message, page int) {
 	mgr := e.skillMgr()
 	if mgr == nil {
 		_ = msg.Reply.SendText(ctx, "Skills not available.")
@@ -136,29 +136,57 @@ func (e *Engine) cmdSkillsList(ctx context.Context, msg channel.Message) {
 		_ = msg.Reply.SendText(ctx, "Error: "+err.Error())
 		return
 	}
+	total := len(list)
+	if page < 0 {
+		page = 0
+	}
+	start := page * pageSizeSkills
+	if total > 0 && start >= total {
+		page = 0
+		start = 0
+	}
+	end := start + pageSizeSkills
+	if end > total {
+		end = total
+	}
+
 	var b strings.Builder
-	b.WriteString("🧩 Agent Skills\n\n")
+	b.WriteString("🧩 Agent Skills")
+	if total > pageSizeSkills {
+		b.WriteString(fmt.Sprintf(" (page %d/%d)", page+1, (total+pageSizeSkills-1)/pageSizeSkills))
+	}
+	b.WriteString("\n\n")
 	b.WriteString("On disk: /data/skills/{name}/SKILL.md\n")
-	b.WriteString("(+ optional references/, scripts/, assets/ per skill)\n")
-	b.WriteString("Durable: each package is zipped into SQLite (hash-checked) and follows cloud DB sync.\n\n")
-	if len(list) == 0 {
+	b.WriteString("Durable packages synced to SQLite / cloud DB.\n\n")
+	if total == 0 {
 		b.WriteString("None installed. Tap Add, upload a skill .zip / .md, or run /skills add <url>.")
 	} else {
-		for _, s := range list {
-			fmt.Fprintf(&b, "• %s — %s\n  %s\n", s.Name, s.LevelLabel(), s.Description)
+		for _, s := range list[start:end] {
+			desc := truncateUI(s.Description, 80)
+			fmt.Fprintf(&b, "• %s — %s\n  %s\n", s.Name, s.LevelLabel(), desc)
 		}
 	}
 	rows := [][]channel.Button{
 		{{Text: "➕ Add skill", CallbackData: "ui:skilladd"}},
 		{{Text: "🏪 Marketplace", CallbackData: "ui:skillmarket"}},
-		{{Text: "⬅ Settings", CallbackData: "ui:settings"}},
 	}
-	for _, s := range list {
+	for _, s := range list[start:end] {
 		rows = append(rows, []channel.Button{{
-			Text:         "📦 " + s.Name,
+			Text:         "📦 " + truncateUI(s.Name, 28),
 			CallbackData: "ui:skill:" + s.Name,
 		}})
 	}
+	var nav []channel.Button
+	if page > 0 {
+		nav = append(nav, channel.Button{Text: "◀ Previous", CallbackData: fmt.Sprintf("ui:skills:%d", page-1)})
+	}
+	if end < total {
+		nav = append(nav, channel.Button{Text: "Next ▶", CallbackData: fmt.Sprintf("ui:skills:%d", page+1)})
+	}
+	if len(nav) > 0 {
+		rows = append(rows, nav)
+	}
+	rows = append(rows, []channel.Button{{Text: "⬅ Settings", CallbackData: "ui:settings"}})
 	e.deliverKeyboard(ctx, msg, channel.KeyboardMessage{Text: b.String(), Rows: rows})
 }
 
@@ -170,13 +198,15 @@ func (e *Engine) cmdSkillDetail(ctx context.Context, msg channel.Message, name s
 	sk, ok, err := mgr.Get(name)
 	if err != nil || !ok {
 		_ = msg.Reply.SendText(ctx, "Skill not found: "+name)
-		e.cmdSkillsList(ctx, msg)
+		e.cmdSkillsList(ctx, msg, 0)
 		return
 	}
 	tree, _ := mgr.Tree(name)
 	var b strings.Builder
-	fmt.Fprintf(&b, "📦 %s\nLevel: %s\n%s\n\nPath: %s\n", sk.Name, sk.LevelLabel(), sk.Description, sk.Dir)
+	desc := truncateUI(sk.Description, 400)
+	fmt.Fprintf(&b, "📦 %s\nLevel: %s\n%s\n\nPath: %s\n", sk.Name, sk.LevelLabel(), desc, sk.Dir)
 	if tree != "" {
+		tree = truncateUI(tree, 1800)
 		b.WriteString("\nFiles:\n")
 		b.WriteString(tree)
 	}
@@ -297,7 +327,7 @@ func (e *Engine) installSkillPackageForced(ctx context.Context, msg channel.Mess
 		fmt.Fprintf(&b, "• %s (%s)\n", sk.Name, sk.LevelLabel())
 	}
 	_ = msg.Reply.SendText(ctx, b.String())
-	e.cmdSkillsList(ctx, msg)
+	e.cmdSkillsList(ctx, msg, 0)
 }
 
 func zipLooksLikeSkill(path string) bool {
@@ -459,7 +489,7 @@ func (e *Engine) handlePluginArgs(ctx context.Context, msg channel.Message, args
 			fmt.Fprintf(&b, "• %s (%s)\n", sk.Name, sk.LevelLabel())
 		}
 		_ = msg.Reply.SendText(ctx, b.String())
-		e.cmdSkillsList(ctx, msg)
+		e.cmdSkillsList(ctx, msg, 0)
 		return
 	}
 

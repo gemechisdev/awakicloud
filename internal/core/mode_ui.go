@@ -32,7 +32,7 @@ func (e *Engine) uiModeMenu(ctx context.Context, msg channel.Message) {
 				{Text: "🛡️ Ask", CallbackData: "mode:set:ask"},
 				{Text: "📋 Plan", CallbackData: "mode:set:plan"},
 			},
-			{{Text: "« Home", CallbackData: "nav:home"}},
+			{{Text: "« Home", CallbackData: "ui:home"}},
 		},
 	}
 	e.deliverKeyboard(ctx, msg, km)
@@ -65,7 +65,7 @@ func (e *Engine) setPermissionMode(ctx context.Context, msg channel.Message, raw
 				{Text: "🛡️ Ask", CallbackData: "mode:set:ask"},
 				{Text: "📋 Plan", CallbackData: "mode:set:plan"},
 			},
-			{{Text: "« Home", CallbackData: "nav:home"}},
+			{{Text: "« Home", CallbackData: "ui:home"}},
 		},
 	}
 	e.deliverKeyboard(ctx, msg, km)

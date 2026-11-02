@@ -137,7 +137,11 @@ func (e *Engine) routeUI(ctx context.Context, msg channel.Message, data string) 
 	case "mcpadd":
 		e.uiStartAddMCP(ctx, msg)
 	case "skills":
-		e.cmdSkillsList(ctx, msg)
+		page := 0
+		if len(parts) >= 3 {
+			page = parsePage(parts[2])
+		}
+		e.cmdSkillsList(ctx, msg, page)
 	case "skilladd":
 		e.uiStartAddSkill(ctx, msg)
 	case "skillmarket":
@@ -164,7 +168,7 @@ func (e *Engine) routeUI(ctx context.Context, msg channel.Message, data string) 
 			name := strings.Join(parts[2:], ":")
 			_ = e.store.DeleteSkill(name)
 			_ = msg.Reply.SendText(ctx, "Removed skill: "+name)
-			e.cmdSkillsList(ctx, msg)
+			e.cmdSkillsList(ctx, msg, 0)
 		}
 	case "mcpconn":
 		if len(parts) >= 3 && e.mcp != nil {

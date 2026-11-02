@@ -71,4 +71,5 @@ const (
 	pageSizeProviders = 5
 	pageSizeModels    = 6
 	pageSizeHistory   = 5
+	pageSizeSkills    = 6
 )

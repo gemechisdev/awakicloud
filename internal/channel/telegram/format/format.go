@@ -106,7 +106,9 @@ func (w *htmlWriter) flush() {
 }
 
 func (w *htmlWriter) maybeFlush() {
-	if w.limit > 0 && w.plain.Len() >= w.limit {
+	// Flush on plain-text length or HTML length (escapes/tags can expand size).
+	// Telegram limit is 4096 on the text field; keep headroom for open tags.
+	if w.limit > 0 && (w.plain.Len() >= w.limit || w.html.Len() >= w.limit) {
 		w.flush()
 	}
 }
