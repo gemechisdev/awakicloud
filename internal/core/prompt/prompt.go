@@ -103,6 +103,7 @@ func buildWorkStrategySection() string {
 - For tasks requiring 3 or more steps: ALWAYS call task_plan(action="create", tasks=[...]) BEFORE doing any work.
   The user sees your task list as a live progress indicator. Mark each task "in_progress" when starting and "completed" when done.
   Example: task_plan(action="create", tasks=[{title:"Collect data"},{title:"Analyze results"},{title:"Send report"}])
+- UPDATE TASK STATUS AS YOU WORK: After starting each task, call task_plan(action="update", id=<id>, status="in_progress"). When finished, call task_plan(action="update", id=<id>, status="completed"). Do NOT wait until everything is done — update after every step so the owner sees live progress (📋 Plan 0/4 → 1/4 → 2/4 → …).
 - After completing work: review your output for correctness before reporting done.
 - When uncertain: ask the user rather than guessing.
 - When stuck: try a different approach instead of repeating the same one.
