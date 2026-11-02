@@ -176,13 +176,23 @@ func (m *Manager) ActivateProject(ctx context.Context, slug string) error {
 }
 
 // Create creates a new project directory and meta; does not bind chat (caller does).
+// It refuses to reuse a slug that already exists locally or in the blob store
+// (allocates slug-2, slug-3, … instead) so cloud archives are never clobbered.
 func (m *Manager) Create(name, chatID string) (Meta, error) {
+	return m.CreateCtx(context.Background(), name, chatID)
+}
+
+// CreateCtx is Create with a context so cloud existence can be checked.
+func (m *Manager) CreateCtx(ctx context.Context, name, chatID string) (Meta, error) {
 	slug := Slugify(name)
 	base := slug
 	for i := 2; ; i++ {
-		dir := m.ProjectDir(slug)
-		if _, err := os.Stat(dir); os.IsNotExist(err) {
-			break
+		exists, _, _ := m.ProjectExists(ctx, slug)
+		if !exists {
+			// Also require the directory itself to be free (race / empty dir).
+			if _, err := os.Stat(m.ProjectDir(slug)); os.IsNotExist(err) {
+				break
+			}
 		}
 		slug = fmt.Sprintf("%s-%d", base, i)
 		if i > 50 {
@@ -232,6 +242,38 @@ func (m *Manager) ReadMeta(slug string) (Meta, error) {
 	return meta, nil
 }
 
+// ProjectExists reports whether a project is already known: local meta file,
+// local project directory, or an archive in the blob store (cloud/local zip).
+// Use this before creating so /project <slug> activates existing work instead
+// of overwriting it with an empty tree.
+func (m *Manager) ProjectExists(ctx context.Context, slug string) (bool, Meta, error) {
+	slug = strings.TrimSpace(slug)
+	if slug == "" {
+		return false, Meta{}, nil
+	}
+	if meta, err := m.ReadMeta(slug); err == nil {
+		return true, meta, nil
+	}
+	// Directory present but meta missing (e.g. partial restore) — still exists.
+	if info, err := os.Stat(m.ProjectDir(slug)); err == nil && info.IsDir() {
+		return true, Meta{Name: slug, Slug: slug}, nil
+	}
+	if m.blobs != nil {
+		if list, err := m.blobs.ListArchives(ctx); err == nil {
+			for _, meta := range list {
+				if meta.Slug == slug {
+					return true, meta, nil
+				}
+			}
+		}
+		// List may be incomplete; try a direct load as a last resort.
+		if meta, _, err := m.blobs.LoadArchive(ctx, slug); err == nil {
+			return true, meta, nil
+		}
+	}
+	return false, Meta{}, nil
+}
+
 // Sync zips the local tree and saves to the blob store if content changed.
 // Change detection uses the content hash (file paths + contents), not zip bytes,
 // so re-zipping the same files does not trigger a re-upload.
@@ -249,6 +291,20 @@ func (m *Manager) Sync(ctx context.Context, slug string, lastEditor ...string) (
 	if meta.ContentHash == contentHash && contentHash != "" {
 		log.Debug().Str("slug", slug).Msg("project sync skipped (content unchanged)")
 		return meta, nil
+	}
+	// Never push an empty local tree over a non-empty cloud archive.
+	// This is the data-loss path that used to wipe projects after a bad create.
+	if fileCount == 0 && m.blobs != nil {
+		if cloudMeta, _, loadErr := m.blobs.LoadArchive(ctx, slug); loadErr == nil {
+			if cloudMeta.FileCount > 0 || (cloudMeta.ContentHash != "" && cloudMeta.ContentHash != contentHash) {
+				log.Warn().
+					Str("slug", slug).
+					Int("local_files", fileCount).
+					Int("cloud_files", cloudMeta.FileCount).
+					Msg("project sync refused: local empty, cloud has data")
+				return meta, fmt.Errorf("refusing to overwrite non-empty cloud archive for %q with empty local tree", slug)
+			}
+		}
 	}
 	// size guard ~45MB
 	if len(data) > 45<<20 {
@@ -424,8 +480,20 @@ func CopyTreeIgnoring(src, dest string) (int, error) {
 // PromoteFromWorkspace creates a project and copies the current workspace
 // (usually scratch) into it. Caller is responsible for updating chat mode/slug
 // and calling Sync. Returns meta and how many files were copied.
+//
+// If a project with the same slug already exists (local or cloud), this returns
+// an error — callers should ActivateProject instead of promote/create.
 func (m *Manager) PromoteFromWorkspace(name, chatID, currentRoot string) (Meta, int, error) {
-	meta, err := m.Create(name, chatID)
+	return m.PromoteFromWorkspaceCtx(context.Background(), name, chatID, currentRoot)
+}
+
+// PromoteFromWorkspaceCtx is PromoteFromWorkspace with context for existence checks.
+func (m *Manager) PromoteFromWorkspaceCtx(ctx context.Context, name, chatID, currentRoot string) (Meta, int, error) {
+	slug := Slugify(name)
+	if exists, existing, _ := m.ProjectExists(ctx, slug); exists {
+		return existing, 0, fmt.Errorf("project %q already exists (use activate, not create)", existing.Slug)
+	}
+	meta, err := m.CreateCtx(ctx, name, chatID)
 	if err != nil {
 		return Meta{}, 0, err
 	}

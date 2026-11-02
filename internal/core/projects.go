@@ -121,14 +121,18 @@ func (e *Engine) cmdNewProject(ctx context.Context, msg channel.Message, name st
 
 // cmdOpenOrCreateProject opens an existing project slug, or creates a new one
 // (copying current workspace contents if any). Never overwrites existing files.
+//
+// Existence is checked against local disk AND the blob store (cloud archives).
+// If the project exists only in cloud, ActivateProject restores it locally.
 func (e *Engine) cmdOpenOrCreateProject(ctx context.Context, msg channel.Message, name string) {
 	if e.projects == nil {
 		_ = msg.Reply.SendText(ctx, "Projects not available.")
 		return
 	}
 	slug := project.Slugify(name)
-	if _, err := e.projects.ReadMeta(slug); err == nil {
-		// Project exists — activate it without overwriting anything.
+	exists, existing, _ := e.projects.ProjectExists(ctx, slug)
+	if exists {
+		// Project exists (local and/or cloud) — activate without creating or syncing.
 		if err := e.projects.ActivateProject(ctx, slug); err != nil {
 			_ = msg.Reply.SendText(ctx, "Activate failed: "+err.Error())
 			return
@@ -137,30 +141,43 @@ func (e *Engine) cmdOpenOrCreateProject(ctx context.Context, msg channel.Message
 		if err == nil && ch != nil {
 			ch.Mode = project.ModeProject
 			ch.ProjectSlug = slug
+			// Prefer fresh local meta after activate (may have restored from cloud).
 			if meta, err := e.projects.ReadMeta(slug); err == nil {
 				ch.ProjectID = meta.ID
 				ch.ProjectHash = meta.Hash
 				if ch.Title == "" {
 					ch.Title = meta.Name
 				}
+				existing = meta
+			} else {
+				if existing.ID != "" {
+					ch.ProjectID = existing.ID
+				}
+				ch.ProjectHash = existing.Hash
+				if ch.Title == "" && existing.Name != "" {
+					ch.Title = existing.Name
+				}
 			}
 			_ = ch.Save()
 		}
-		meta, _ := e.projects.ReadMeta(slug)
+		nameOut := existing.Name
+		if nameOut == "" {
+			nameOut = slug
+		}
 		_ = msg.Reply.SendText(ctx, fmt.Sprintf(
 			"📂 Project «%s» activated\nSlug: %s\nFiles: %d\nWorkspace bound.",
-			meta.Name, meta.Slug, meta.FileCount,
+			nameOut, slug, existing.FileCount,
 		))
 		return
 	}
-	// Project doesn't exist — create it and copy current workspace contents.
+	// Project doesn't exist anywhere — create it and copy current workspace contents.
 	ch, err := e.chats.Resolve()
 	if err != nil {
 		_ = msg.Reply.SendText(ctx, err.Error())
 		return
 	}
 	prevRoot := workspace.Root()
-	meta, n, err := e.projects.PromoteFromWorkspace(name, ch.ID, prevRoot)
+	meta, n, err := e.projects.PromoteFromWorkspaceCtx(ctx, name, ch.ID, prevRoot)
 	if err != nil {
 		_ = msg.Reply.SendText(ctx, "Create failed: "+err.Error())
 		return
@@ -217,8 +234,14 @@ func (e *Engine) cmdUpgradeProject(ctx context.Context, msg channel.Message, nam
 	// Capture current workspace (usually scratch) before Create rebinds it.
 	prevRoot := workspace.Root()
 
-	meta, n, err := e.projects.PromoteFromWorkspace(name, ch.ID, prevRoot)
+	meta, n, err := e.projects.PromoteFromWorkspaceCtx(ctx, name, ch.ID, prevRoot)
 	if err != nil {
+		// If the slug already exists, activate that project instead of failing.
+		slug := project.Slugify(name)
+		if exists, _, _ := e.projects.ProjectExists(ctx, slug); exists {
+			e.openProjectBySlug(ctx, msg, slug)
+			return
+		}
 		_ = msg.Reply.SendText(ctx, "Promote failed: "+err.Error())
 		return
 	}
