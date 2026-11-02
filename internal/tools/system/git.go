@@ -178,6 +178,20 @@ func finishGit(out string, hint string) types.Result {
 	return types.TruncateOutput(out)
 }
 
+// finishGitDirty marks the project workspace dirty (so auto-sync runs) then returns.
+func finishGitDirty(dir, out, hint string) types.Result {
+	markProjectDirty(dir)
+	return finishGit(out, hint)
+}
+
+// withDirty marks dirty on non-error results from mutating git ops.
+func withDirty(dir string, r types.Result) types.Result {
+	if !r.IsErr {
+		markProjectDirty(dir)
+	}
+	return r
+}
+
 func filesArg(input map[string]any, keys ...string) []string {
 	var out []string
 	for _, k := range keys {
@@ -453,12 +467,12 @@ func GitTools() []types.Tool {
 				if out, err := g.run(ctx, args...); err != nil {
 					return gitFail(args[0], err)
 				} else if out != "" {
-					return types.Result{Output: out}
+					return withDirty(g.dir, types.Result{Output: out})
 				}
 				if unstage {
-					return types.Result{Output: "Unstaged."}
+					return withDirty(g.dir, types.Result{Output: "Unstaged."})
 				}
-				return types.Result{Output: "Staged."}
+				return withDirty(g.dir, types.Result{Output: "Staged."})
 			})),
 
 		gitTool("git_commit", "Git commit",
@@ -505,7 +519,7 @@ func GitTools() []types.Tool {
 				if err != nil {
 					return gitFail("commit", err)
 				}
-				return finishGit(out, "")
+				return finishGitDirty(g.dir, out, "")
 			})),
 
 		gitTool("git_checkout", "Git checkout", "Switch branches (git switch). create=true makes a new branch (from `from`, default HEAD). detach=true checks out a commit/tag without a branch. Fails if local changes would be overwritten.",
@@ -542,7 +556,7 @@ func GitTools() []types.Tool {
 				if err != nil {
 					return gitFail("switch", err)
 				}
-				return finishGit(out, "")
+				return finishGitDirty(g.dir, out, "")
 			})),
 
 		gitTool("git_branch_update", "Git branch", "Create, delete or rename a local branch (action: create | delete | rename). delete refuses unmerged branches unless force=true.",
@@ -587,7 +601,7 @@ func GitTools() []types.Tool {
 				if err != nil {
 					return gitFail("branch", err)
 				}
-				return finishGit(firstNonEmpty(out, "Done."), "")
+				return finishGitDirty(g.dir, firstNonEmpty(out, "Done."), "")
 			})),
 
 		gitTool("git_restore", "Git restore",
@@ -621,7 +635,7 @@ func GitTools() []types.Tool {
 				if err != nil {
 					return gitFail("restore", err)
 				}
-				return types.Result{Output: firstNonEmpty(out, fmt.Sprintf("Restored %d path(s).", len(files)))}
+				return withDirty(g.dir, types.Result{Output: firstNonEmpty(out, fmt.Sprintf("Restored %d path(s).", len(files)))})
 			})),
 
 		gitTool("git_stash", "Git stash", "Shelve and restore local changes. action: push (default) | pop | apply | list | drop | show. include_untracked=true also stashes new files.",
@@ -664,7 +678,11 @@ func GitTools() []types.Tool {
 				if out == "" && args[1] == "list" {
 					out = "(no stashes)"
 				}
-				return finishGit(out, "")
+				// list/show do not change the tree; still cheap to mark only mutating actions
+				if a := firstNonEmpty(types.GetStringOpt(in, "action"), "push"); a == "list" || a == "show" {
+					return finishGit(out, "")
+				}
+				return finishGitDirty(g.dir, out, "")
 			})),
 
 		gitTool("git_reset", "Git reset",
@@ -691,7 +709,7 @@ func GitTools() []types.Tool {
 				if err != nil {
 					return gitFail("reset", err)
 				}
-				return types.Result{Output: firstNonEmpty(out, fmt.Sprintf("Reset (%s) to %s.", mode, ref))}
+				return withDirty(g.dir, types.Result{Output: firstNonEmpty(out, fmt.Sprintf("Reset (%s) to %s.", mode, ref))})
 			})),
 
 		gitTool("git_sync", "Git sync",
@@ -764,6 +782,9 @@ func GitTools() []types.Tool {
 				if err != nil {
 					return gitFail(args[0], err)
 				}
+				if types.GetStringOpt(in, "action") == "pull" {
+					return finishGitDirty(g.dir, firstNonEmpty(out, "Done."), "")
+				}
 				return finishGit(firstNonEmpty(out, "Done."), "")
 			})),
 
@@ -820,6 +841,7 @@ func GitTools() []types.Tool {
 				if err != nil {
 					return gitFail("clone", err)
 				}
+				markProjectDirty(destAbs)
 				return types.Result{Output: fmt.Sprintf("Cloned into %s\n%s", destAbs, types.CutTail(out, 1500))}
 			},
 		},
