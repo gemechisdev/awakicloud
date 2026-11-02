@@ -57,8 +57,9 @@ func FileTools() []types.Tool {
 					"description": "Prefix each line with its line number (default false). Do not include the prefix when copying text into edit_file.",
 				},
 			},
-			Required: []string{"path"},
-			Handler:  readFile,
+			Required:     []string{"path"},
+			ParallelSafe: true,
+			Handler:      readFile,
 		},
 		{
 			Name:  "write_file",
@@ -107,7 +108,8 @@ func FileTools() []types.Tool {
 					"description": "Max entries (default 500)",
 				},
 			},
-			Handler: listFiles,
+			Handler:      listFiles,
+			ParallelSafe: true,
 		},
 	}
 }

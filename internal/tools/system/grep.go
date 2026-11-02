@@ -16,10 +16,10 @@ import (
 )
 
 const (
-	grepTimeout       = 45 * time.Second
-	grepDefaultMax    = 40
-	grepHardMax       = 200
-	grepMaxLineRunes  = 240
+	grepTimeout        = 45 * time.Second
+	grepDefaultMax     = 40
+	grepHardMax        = 200
+	grepMaxLineRunes   = 240
 	grepMaxOutputRunes = 12000
 )
 
@@ -110,8 +110,9 @@ func GrepTool() types.Tool {
 				},
 			},
 		},
-		Required: []string{}, // pattern or query required in handler
-		Handler:  grepHandler,
+		Required:     []string{}, // pattern or query required in handler
+		ParallelSafe: true,
+		Handler:      grepHandler,
 	}
 }
 
@@ -165,22 +166,22 @@ func grepHandler(ctx context.Context, input map[string]any) types.Result {
 	}
 
 	opts := grepOpts{
-		Pattern:          pattern,
-		Path:             path,
-		Include:          stringOrSlice(input["include"]),
-		Exclude:          stringOrSlice(input["exclude"]),
-		Type:             types.GetStringOpt(input, "type"),
-		CaseInsensitive:  boolOpt(input, "case_insensitive"),
-		FixedString:      boolOpt(input, "fixed_string"),
-		Word:             boolOpt(input, "word"),
-		Multiline:        boolOpt(input, "multiline"),
-		Context:          intOpt(input, "context"),
-		Before:           intOpt(input, "before"),
-		After:            intOpt(input, "after"),
-		MaxResults:       maxResults,
-		Mode:             mode,
-		Hidden:           boolOpt(input, "hidden"),
-		MaxFilesize:      types.GetStringOpt(input, "max_filesize"),
+		Pattern:         pattern,
+		Path:            path,
+		Include:         stringOrSlice(input["include"]),
+		Exclude:         stringOrSlice(input["exclude"]),
+		Type:            types.GetStringOpt(input, "type"),
+		CaseInsensitive: boolOpt(input, "case_insensitive"),
+		FixedString:     boolOpt(input, "fixed_string"),
+		Word:            boolOpt(input, "word"),
+		Multiline:       boolOpt(input, "multiline"),
+		Context:         intOpt(input, "context"),
+		Before:          intOpt(input, "before"),
+		After:           intOpt(input, "after"),
+		MaxResults:      maxResults,
+		Mode:            mode,
+		Hidden:          boolOpt(input, "hidden"),
+		MaxFilesize:     types.GetStringOpt(input, "max_filesize"),
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, grepTimeout)

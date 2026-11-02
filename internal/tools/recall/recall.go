@@ -11,8 +11,8 @@ import (
 // RecallTool builds the recall tool that delegates search to the provided function.
 func RecallTool(searchFn store.ChatSearchFunc) types.Tool {
 	return types.Tool{
-		Name:  "recall",
-		Label: "Recalling history",
+		Name:        "recall",
+		Label:       "Recalling history",
 		Description: "Search your conversation history for past context. Use when the user references something from a previous conversation, or when you need to recall what was discussed before. Returns summaries of matching past conversations.",
 		Parameters: map[string]any{
 			"query": map[string]any{
@@ -20,7 +20,8 @@ func RecallTool(searchFn store.ChatSearchFunc) types.Tool {
 				"description": "What to search for — topic, keyword, or question about past conversations",
 			},
 		},
-		Required: []string{"query"},
+		Required:     []string{"query"},
+		ParallelSafe: true,
 		Handler: func(ctx context.Context, input map[string]any) types.Result {
 			query, err := types.GetString(input, "query")
 			if err != nil {

@@ -97,6 +97,13 @@ type Tool struct {
 	Interactive bool                              // agent loop handles user interaction; handler is skipped
 	Phase       string                            // UI phase override (e.g. "planning"); empty = default "tool"
 	DetailFunc  func(input map[string]any) string // extracts short context from input for UI display
+
+	// ParallelSafe marks a tool as safe to run concurrently with other
+	// ParallelSafe tools in the same LLM response. Read-only tools (grep,
+	// read_file, web_search, git_status, ...) should set this. Mutating tools
+	// (write_file, edit_file, bash, git writes, ...) and interactive tools
+	// (ask_user, ...) must remain false so they execute sequentially.
+	ParallelSafe bool
 }
 
 func GetString(input map[string]any, key string) (string, error) {

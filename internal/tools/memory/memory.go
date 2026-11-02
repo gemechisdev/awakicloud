@@ -91,7 +91,8 @@ func MemoryTools(st store.Store) []types.Tool {
 			Label: "Listing memories",
 			Description: "List all files in your persistent memory with a one-line preview of each. Memory survives across all conversations. " +
 				"Check this at the start of each conversation to recall what you know; use memory_search to find a detail without opening every file.",
-			Parameters: map[string]any{},
+			Parameters:   map[string]any{},
+			ParallelSafe: true,
 			Handler: func(_ context.Context, _ map[string]any) types.Result {
 				files, err := st.ListMemory()
 				if err != nil {
@@ -113,11 +114,12 @@ func MemoryTools(st store.Store) []types.Tool {
 			},
 		},
 		{
-			Name:        "memory_read",
-			Label:       "Checking memory",
-			Description: "Read a specific memory file. Your memory is organized as markdown files by topic.",
-			Parameters:  map[string]any{"file": fileParam("Name of the memory file to read, e.g. owner.md")},
-			Required:    []string{"file"},
+			Name:         "memory_read",
+			Label:        "Checking memory",
+			Description:  "Read a specific memory file. Your memory is organized as markdown files by topic.",
+			Parameters:   map[string]any{"file": fileParam("Name of the memory file to read, e.g. owner.md")},
+			Required:     []string{"file"},
+			ParallelSafe: true,
 			Handler: func(_ context.Context, input map[string]any) types.Result {
 				file, err := types.GetString(input, "file")
 				if err != nil {
@@ -144,7 +146,8 @@ func MemoryTools(st store.Store) []types.Tool {
 				"regex":       map[string]any{"type": "boolean", "description": "Treat query as a regular expression (default false)"},
 				"max_results": map[string]any{"type": "integer", "description": "Max matching lines to return (default 20, max 100)"},
 			},
-			Required: []string{"query"},
+			Required:     []string{"query"},
+			ParallelSafe: true,
 			Handler: func(_ context.Context, input map[string]any) types.Result {
 				query, err := types.GetString(input, "query")
 				if err != nil {

@@ -5,13 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
+	"time"
+
 	"github.com/gemechischala/awaki/internal/core/agent/hook"
-	"github.com/gemechischala/awaki/internal/permission"
 	types "github.com/gemechischala/awaki/internal/domain"
 	"github.com/gemechischala/awaki/internal/llm"
+	"github.com/gemechischala/awaki/internal/permission"
 	tooltypes "github.com/gemechischala/awaki/internal/tools/types"
 	"github.com/gemechischala/awaki/internal/transport"
-	"time"
 
 	"github.com/rs/zerolog/log"
 )
@@ -117,7 +119,7 @@ func (a *Agent) Run(ctx context.Context, input RunInput, sink transport.Sink) er
 		if input.ExtraSystem != "" {
 			sys = sys + "\n\n" + input.ExtraSystem
 		}
-				tokensBefore := hook.EstimateTokens(msgs)
+		tokensBefore := hook.EstimateTokens(msgs)
 
 		iterCtx := &hook.IterationContext{
 			Iteration:     iteration,
@@ -244,13 +246,95 @@ func (a *Agent) Run(ctx context.Context, input RunInput, sink transport.Sink) er
 
 const maxDetailLen = 60
 
+// defaultToolTimeout is the per-tool timeout when none is specified.
+const defaultToolTimeout = 60 * time.Second
+
 func (a *Agent) executeToolCallLoop(ctx context.Context, toolCalls []types.ContentBlock, counter *int) ([]types.ContentBlock, []hook.ToolCallSummary) {
 	results := make([]types.ContentBlock, 0, len(toolCalls))
 	summaries := make([]hook.ToolCallSummary, 0, len(toolCalls))
 
 	toolCtx := transport.WithSink(ctx, a.sink)
 
-	for _, tc := range toolCalls {
+	// Partition tool calls: ParallelSafe read-only tools run concurrently,
+	// everything else (mutating, interactive, plan-denied, ask-required) runs
+	// sequentially in order. Results are reassembled in original call order.
+	parallelIdx := make([]int, 0)
+	sequentialIdx := make([]int, 0)
+	for i, tc := range toolCalls {
+		input := unmarshalToolInput(tc.ToolInput)
+		tool, _ := a.lookupTool(tc.ToolName)
+		// Only parallelize non-interactive, non-denied tools that are ParallelSafe.
+		if tool.ParallelSafe && !tool.Interactive &&
+			!(a.runPermMode == permission.ModePlan && permission.IsPlanDenied(tc.ToolName)) &&
+			!(a.runPermMode == permission.ModeAsk && permission.RequiresApproval(tc.ToolName)) {
+			parallelIdx = append(parallelIdx, i)
+		} else {
+			sequentialIdx = append(sequentialIdx, i)
+		}
+	}
+
+	// Run parallel tools concurrently with a per-tool timeout wrapper.
+	if len(parallelIdx) > 0 {
+		var mu sync.Mutex
+		wg := sync.WaitGroup{}
+		parResults := make(map[int]types.ContentBlock, len(parallelIdx))
+		parSummaries := make(map[int]hook.ToolCallSummary, len(parallelIdx))
+
+		for _, i := range parallelIdx {
+			tc := toolCalls[i]
+			wg.Add(1)
+			go func(idx int, tcall types.ContentBlock) {
+				defer wg.Done()
+				in := unmarshalToolInput(tcall.ToolInput)
+				tl, _ := a.lookupTool(tcall.ToolName)
+
+				label := tl.Label
+				if label == "" {
+					label = tcall.ToolName
+				}
+				var detail string
+				if tl.DetailFunc != nil {
+					detail = tl.DetailFunc(in)
+					if len(detail) > maxDetailLen {
+						detail = detail[:maxDetailLen] + "..."
+					}
+				}
+
+				a.emit(transport.ToolStartEvent{
+					Name:   tcall.ToolName,
+					Label:  label,
+					Detail: detail,
+					Phase:  tl.Phase,
+				})
+				*counter++
+
+				tCtx, cancel := context.WithTimeout(toolCtx, defaultToolTimeout)
+				defer cancel()
+				start := time.Now()
+				toolResult := a.executeTool(tCtx, tcall.ToolName, in)
+				elapsed := time.Since(start)
+
+				a.emit(transport.ToolEndEvent{
+					Name: tcall.ToolName, Result: toolResult.Output, DurationMs: elapsed.Milliseconds(),
+				})
+
+				mu.Lock()
+				parResults[idx] = types.ToolResultBlock(tcall.ToolUseID, toolResult.Output, toolResult.IsErr)
+				parSummaries[idx] = hook.ToolCallSummary{Name: tcall.ToolName, Duration: elapsed, IsErr: toolResult.IsErr}
+				mu.Unlock()
+			}(i, tc)
+		}
+		wg.Wait()
+
+		for _, i := range parallelIdx {
+			results = append(results, parResults[i])
+			summaries = append(summaries, parSummaries[i])
+		}
+	}
+
+	// Run remaining tools sequentially (preserves order for mutating/interactive tools).
+	for _, i := range sequentialIdx {
+		tc := toolCalls[i]
 		input := unmarshalToolInput(tc.ToolInput)
 		tool, _ := a.lookupTool(tc.ToolName)
 
@@ -275,8 +359,6 @@ func (a *Agent) executeToolCallLoop(ctx context.Context, toolCalls []types.Conte
 		*counter++
 
 		// Hard-deny denylisted tools even if still reachable via local map / stale defs.
-		// (The skip must apply to the tool-call loop: a `continue` inside a loop over
-		// the denylist would only advance that inner loop and the tool would still run.)
 		if a.runPermMode == permission.ModePlan && permission.IsPlanDenied(tc.ToolName) {
 			msg := "tool unavailable in plan mode: " + tc.ToolName
 			a.emit(transport.ToolEndEvent{Name: tc.ToolName, Result: msg})
@@ -294,7 +376,7 @@ func (a *Agent) executeToolCallLoop(ctx context.Context, toolCalls []types.Conte
 			continue
 		}
 
-		// Ask mode: pause mutating tools for owner approval (enterprise gate).
+		// Ask mode: pause mutating tools for owner approval.
 		if a.runPermMode == permission.ModeAsk && permission.RequiresApproval(tc.ToolName) && !tool.Interactive {
 			approved, reason, err := a.requestToolApproval(ctx, tc.ToolName, input, detail)
 			if err != nil {
@@ -329,9 +411,12 @@ func (a *Agent) executeToolCallLoop(ctx context.Context, toolCalls []types.Conte
 			continue
 		}
 
+		tCtx, cancel := context.WithTimeout(toolCtx, defaultToolTimeout)
+		defer cancel()
 		start := time.Now()
-		toolResult := a.executeTool(toolCtx, tc.ToolName, input)
+		toolResult := a.executeTool(tCtx, tc.ToolName, input)
 		elapsed := time.Since(start)
+		cancel()
 
 		a.emit(transport.ToolEndEvent{
 			Name: tc.ToolName, Result: toolResult.Output, DurationMs: elapsed.Milliseconds(),
@@ -382,7 +467,6 @@ func (a *Agent) handleAskUser(ctx context.Context, input map[string]any) (string
 		return "", ctx.Err()
 	}
 }
-
 
 // requestToolApproval blocks until the owner Approves or Denies a mutating tool.
 func (a *Agent) requestToolApproval(ctx context.Context, name string, input map[string]any, detail string) (approved bool, reason string, err error) {

@@ -43,8 +43,9 @@ func BatchFileTools() []types.Tool {
 				"include_dirs":    map[string]any{"type": "boolean", "description": "Also return matching directories (default false)"},
 				"include_ignored": map[string]any{"type": "boolean", "description": "Search ignored dirs such as node_modules and .git (default false)"},
 			},
-			Required: []string{"pattern"},
-			Handler:  globFiles,
+			Required:     []string{"pattern"},
+			ParallelSafe: true,
+			Handler:      globFiles,
 		},
 		{
 			Name:  "directory_tree",
@@ -56,7 +57,8 @@ func BatchFileTools() []types.Tool {
 				"max_depth":       map[string]any{"type": "integer", "description": "Max depth (default 3, max 8)"},
 				"include_ignored": map[string]any{"type": "boolean", "description": "Include ignored/noisy directories (default false)"},
 			},
-			Handler: directoryTree,
+			ParallelSafe: true,
+			Handler:      directoryTree,
 		},
 		{
 			Name:  "read_files",
@@ -72,8 +74,9 @@ func BatchFileTools() []types.Tool {
 				"max_lines":    map[string]any{"type": "integer", "description": "Max lines per file (default 400)"},
 				"line_numbers": map[string]any{"type": "boolean", "description": "Prefix lines with line numbers (default false)"},
 			},
-			Required: []string{"paths"},
-			Handler:  readFiles,
+			Required:     []string{"paths"},
+			ParallelSafe: true,
+			Handler:      readFiles,
 		},
 		{
 			Name:        "file_info",
@@ -82,8 +85,9 @@ func BatchFileTools() []types.Tool {
 			Parameters: map[string]any{
 				"path": map[string]any{"type": "string", "description": "File or directory path"},
 			},
-			Required: []string{"path"},
-			Handler:  fileInfo,
+			Required:     []string{"path"},
+			ParallelSafe: true,
+			Handler:      fileInfo,
 		},
 	}
 }

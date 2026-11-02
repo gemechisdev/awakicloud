@@ -22,7 +22,8 @@ func SkillTools(st store.Store) []types.Tool {
 			Label: "Listing skills",
 			Description: "List installed Agent Skills (L1 instructions, L2 +references/assets, L3 +scripts). " +
 				"Skills teach workflows; they do not replace tools. Read a matching skill with skill_read before following it.",
-			Parameters: map[string]any{},
+			Parameters:   map[string]any{},
+			ParallelSafe: true,
 			Handler: func(_ context.Context, _ map[string]any) types.Result {
 				loaded, err := st.LoadSkills()
 				if err != nil {
@@ -46,7 +47,8 @@ func SkillTools(st store.Store) []types.Tool {
 			Parameters: map[string]any{
 				"name": map[string]any{"type": "string", "description": "Skill name"},
 			},
-			Required: []string{"name"},
+			Required:     []string{"name"},
+			ParallelSafe: true,
 			Handler: func(_ context.Context, input map[string]any) types.Result {
 				name, err := types.GetString(input, "name")
 				if err != nil {
@@ -66,7 +68,8 @@ func SkillTools(st store.Store) []types.Tool {
 			Parameters: map[string]any{
 				"name": map[string]any{"type": "string", "description": "Skill name"},
 			},
-			Required: []string{"name"},
+			Required:     []string{"name"},
+			ParallelSafe: true,
 			Handler: func(_ context.Context, input map[string]any) types.Result {
 				name, err := types.GetString(input, "name")
 				if err != nil {

@@ -28,8 +28,9 @@ func WebSearchTool() types.Tool {
 				"description": "Max results (default 5, max 10)",
 			},
 		},
-		Required: []string{"query"},
-		Handler:  webSearch,
+		Required:     []string{"query"},
+		ParallelSafe: true,
+		Handler:      webSearch,
 	}
 }
 
@@ -76,4 +77,3 @@ func webSearch(ctx context.Context, input map[string]any) types.Result {
 
 	return types.Errf("web_search failed:\n%s", strings.Join(notes, "\n"))
 }
-
