@@ -2,6 +2,8 @@ package tools
 
 import (
 	"context"
+	"sort"
+
 	llmtypes "github.com/gemechischala/awaki/internal/domain"
 	"github.com/gemechischala/awaki/internal/store"
 	"github.com/gemechischala/awaki/internal/tools/memory"
@@ -27,7 +29,6 @@ func NewRegistry(st store.Store, searchFn ChatSearchFunc, extra ...types.Tool) *
 		systemtools.EditFileTool(),
 		systemtools.SystemInfoTool(),
 		systemtools.GrepTool(),
-		systemtools.FileSearchTool(),
 	}
 	all = append(all, systemtools.ApplyPatchTool())
 	all = append(all, systemtools.FileTools()...)
@@ -60,8 +61,15 @@ func (r *Registry) Execute(ctx context.Context, name string, input map[string]an
 }
 
 func (r *Registry) Definitions() []llmtypes.ToolDef {
-	out := make([]llmtypes.ToolDef, 0, len(r.tt))
-	for _, t := range r.tt {
+	names := make([]string, 0, len(r.tt))
+	for name := range r.tt {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	out := make([]llmtypes.ToolDef, 0, len(names))
+	for _, name := range names {
+		t := r.tt[name]
 		params := normalizeToolParams(t.Parameters)
 		out = append(out, llmtypes.ToolDef{
 			Name:        t.Name,
@@ -187,11 +195,12 @@ func (r *Registry) UnregisterPrefix(prefix string) int {
 	return n
 }
 
-// Names returns all registered tool names.
+// Names returns all registered tool names in sorted order (stable across turns).
 func (r *Registry) Names() []string {
 	out := make([]string, 0, len(r.tt))
 	for name := range r.tt {
 		out = append(out, name)
 	}
+	sort.Strings(out)
 	return out
 }

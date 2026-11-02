@@ -116,14 +116,6 @@ func GrepTool() types.Tool {
 	}
 }
 
-// FileSearchTool keeps the legacy name as an alias of grep for older prompts.
-func FileSearchTool() types.Tool {
-	t := GrepTool()
-	t.Name = "file_search"
-	t.Description = "Alias of grep — search file contents. Prefer calling grep directly."
-	return t
-}
-
 func grepHandler(ctx context.Context, input map[string]any) types.Result {
 	pattern := strings.TrimSpace(types.GetStringOpt(input, "pattern"))
 	if pattern == "" {

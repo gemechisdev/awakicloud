@@ -81,7 +81,7 @@ Keep narration brief and value-dense. Avoid repeating obvious steps.`
 func buildParallelToolSection() string {
 	return `PARALLEL TOOL CALLS: You can request multiple independent read-only tool calls in a single message, and they will execute concurrently. This dramatically reduces round-trips between you and the owner.
 
-TOOLS THAT RUN IN PARALLEL (read-only, safe): read_file, file_info, list_files, directory_tree, glob_files, read_files, grep, file_search, memory_list, memory_read, memory_search, skill_list, skill_read, skill_files, web_search, recall.
+TOOLS THAT RUN IN PARALLEL (read-only, safe): read_file, file_info, list_files, directory_tree, glob_files, read_files, grep, memory_list, memory_read, memory_search, skill_list, skill_read, skill_files, web_search, recall.
 
 TOOLS THAT RUN SEQUENTIALLY (one at a time): write_file, edit_file, apply_patch, delete_file, move_file, copy_file, make_dir, bash, git_*, task_plan, schedule_*, bg_task_*, ask_user, send_message, report_status, memory_write, memory_append, memory_delete, skill_run, skill_create, skill_update, skill_delete, MCP tools, deploy tools.
 

@@ -329,6 +329,7 @@ func writeFile(_ context.Context, input map[string]any) types.Result {
 	if err := writeFileAtomic(path, []byte(content), mode); err != nil {
 		return types.Errf("write error: %v", err)
 	}
+	markProjectDirty(path)
 
 	lines := strings.Count(content, "\n")
 	if content != "" && !strings.HasSuffix(content, "\n") {

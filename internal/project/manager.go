@@ -293,7 +293,6 @@ func (m *Manager) Sync(ctx context.Context, slug string, lastEditor ...string) (
 		return meta, nil
 	}
 	// Never push an empty local tree over a non-empty cloud archive.
-	// This is the data-loss path that used to wipe projects after a bad create.
 	if fileCount == 0 && m.blobs != nil {
 		if cloudMeta, _, loadErr := m.blobs.LoadArchive(ctx, slug); loadErr == nil {
 			if cloudMeta.FileCount > 0 || (cloudMeta.ContentHash != "" && cloudMeta.ContentHash != contentHash) {
