@@ -16,6 +16,7 @@ import (
 	"github.com/gemechischala/awaki/internal/store"
 	"github.com/gemechischala/awaki/internal/tasks"
 	"github.com/gemechischala/awaki/internal/tools"
+	systemtools "github.com/gemechischala/awaki/internal/tools/system"
 	"github.com/gemechischala/awaki/internal/transport"
 	"strings"
 	"sync"
@@ -81,6 +82,14 @@ func New(p Params) *Engine {
 		tasksMgr:            p.Tasks,
 		rebuildAgent:        p.RebuildAgent,
 		projectSyncInterval: p.ProjectSyncInterval,
+	}
+
+	// Wire dirty tracking: when file tools modify files inside an active
+	// project workspace, mark the project dirty so auto-sync picks it up.
+	if eng.projects != nil {
+		systemtools.OnProjectDirty = func(slug string) {
+			eng.projects.MarkDirty(slug)
+		}
 	}
 
 	ownerReply := p.Channel.OwnerReplier()
@@ -373,7 +382,7 @@ func (e *Engine) runAgent(ctx context.Context, msg channel.Message) {
 	}
 
 	e.chats.SummarizeIfNeeded(context.WithoutCancel(ctx), ch)
-	e.syncActiveProject(context.WithoutCancel(ctx))
+	e.syncActiveProjectIfDirty(context.WithoutCancel(ctx))
 }
 
 func (e *Engine) stopAgent(cmd *channel.Command) {

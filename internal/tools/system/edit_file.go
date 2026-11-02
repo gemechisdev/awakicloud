@@ -15,6 +15,42 @@ import (
 	"github.com/gemechischala/awaki/internal/workspace"
 )
 
+// OnProjectDirty is called by mutating file tools when they modify a file
+// inside an active project workspace. Set by the Engine during init.
+var OnProjectDirty func(slug string)
+
+// markProjectDirty resolves the project slug from the resolved path (if the
+// workspace root is a project dir) and calls OnProjectDirty.
+func markProjectDirty(path string) {
+	if OnProjectDirty == nil {
+		return
+	}
+	root := workspace.Root()
+	if root == "" {
+		return
+	}
+	// Project dirs are /data/projects/{slug}/... — extract slug from path.
+	rel, err := filepath.Rel(root, path)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return
+	}
+	// The first path segment under root is the slug if root itself IS a project dir.
+	// If root is exactly the project dir, slug is root's base name.
+	if isProjectRoot(root) {
+		slug := filepath.Base(filepath.Clean(root))
+		if slug != "" {
+			OnProjectDirty(slug)
+		}
+	}
+}
+
+func isProjectRoot(root string) bool {
+	// Project roots live under dataDir/projects/{slug}/. We detect by checking
+	// if root's parent ends with "projects" and root is a directory under it.
+	parent := filepath.Clean(filepath.Dir(root))
+	return strings.HasSuffix(parent, "/projects") || strings.HasSuffix(parent, "\\projects")
+}
+
 const (
 	maxEditFileBytes = 10 * 1024 * 1024
 	maxEditsPerCall  = 50
@@ -240,6 +276,7 @@ func finishEdit(path, original, content string, notes []string, creating, dryRun
 		if err := writeFileAtomic(path, []byte(out), mode); err != nil {
 			return types.Errf("write error: %v", err)
 		}
+		markProjectDirty(path)
 	}
 	return types.TruncateOutput(b.String())
 }

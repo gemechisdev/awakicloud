@@ -185,6 +185,8 @@ func moveFile(_ context.Context, input map[string]any) types.Result {
 			return types.Errf("copied to %s but could not remove source: %v", dst, rerr)
 		}
 	}
+	markProjectDirty(src)
+	markProjectDirty(dst)
 	return types.Result{Output: fmt.Sprintf("Moved %s → %s", src, dst)}
 }
 
@@ -235,6 +237,7 @@ func copyFileTool(_ context.Context, input map[string]any) types.Result {
 	if err != nil {
 		return types.Errf("copy failed: %v", err)
 	}
+	markProjectDirty(dst)
 	if srcInfo.IsDir() {
 		return types.Result{Output: fmt.Sprintf("Copied directory %s → %s (%d files, %s)", src, dst, files, humanBytes(bytes))}
 	}
@@ -350,6 +353,7 @@ func deleteFile(_ context.Context, input map[string]any) types.Result {
 		if err := os.Remove(path); err != nil {
 			return types.Errf("delete error: %v", err)
 		}
+		markProjectDirty(path)
 		return types.Result{Output: fmt.Sprintf("Deleted file %s (%s)", path, humanBytes(info.Size()))}
 	}
 
@@ -384,6 +388,7 @@ func deleteFile(_ context.Context, input map[string]any) types.Result {
 	if err := os.RemoveAll(path); err != nil {
 		return types.Errf("delete error: %v", err)
 	}
+	markProjectDirty(path)
 	return types.Result{Output: fmt.Sprintf("Deleted directory %s (%d files, %d subdirectories, %s)", path, files, dirs, humanBytes(size))}
 }
 
@@ -402,5 +407,6 @@ func makeDir(_ context.Context, input map[string]any) types.Result {
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		return types.Errf("mkdir error: %v", err)
 	}
+	markProjectDirty(path)
 	return types.Result{Output: fmt.Sprintf("Created directory %s", path)}
 }

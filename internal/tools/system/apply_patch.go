@@ -602,6 +602,7 @@ func applyPatch(_ context.Context, input map[string]any) types.Result {
 				rollback()
 				return types.Errf("%s: write error: %v (no changes kept)", p.path, err)
 			}
+			markProjectDirty(p.path)
 			undos = append(undos, func() { _ = os.Remove(p.path) })
 		case "D":
 			orig := p.before.encode(p.before.Content)
@@ -609,6 +610,7 @@ func applyPatch(_ context.Context, input map[string]any) types.Result {
 				rollback()
 				return types.Errf("%s: delete error: %v (no changes kept)", p.path, err)
 			}
+			markProjectDirty(p.path)
 			undos = append(undos, func() { _ = writeFileAtomic(p.path, orig, p.before.Mode) })
 		case "R":
 			orig := p.before.encode(p.before.Content)
@@ -620,11 +622,13 @@ func applyPatch(_ context.Context, input map[string]any) types.Result {
 				rollback()
 				return types.Errf("%s: write error: %v (no changes kept)", p.newPath, err)
 			}
+			markProjectDirty(p.newPath)
 			if err := os.Remove(p.path); err != nil {
 				_ = os.Remove(p.newPath)
 				rollback()
 				return types.Errf("%s: could not remove old path: %v (no changes kept)", p.path, err)
 			}
+			markProjectDirty(p.path)
 			undos = append(undos, func() { _ = os.Remove(p.newPath); _ = writeFileAtomic(p.path, orig, p.before.Mode) })
 		default:
 			orig := p.before.encode(p.before.Content)
@@ -632,6 +636,7 @@ func applyPatch(_ context.Context, input map[string]any) types.Result {
 				rollback()
 				return types.Errf("%s: write error: %v (no changes kept)", p.path, err)
 			}
+			markProjectDirty(p.path)
 			undos = append(undos, func() { _ = writeFileAtomic(p.path, orig, p.before.Mode) })
 		}
 	}

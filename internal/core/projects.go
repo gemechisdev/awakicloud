@@ -28,11 +28,12 @@ func (e *Engine) bindWorkspaceForChat(ctx context.Context, chatID, mode, slug st
 
 // SyncActiveProject uploads zip if current chat is a project.
 func (e *Engine) SyncActiveProject(ctx context.Context) {
-	e.syncActiveProject(ctx)
+	e.syncActiveProjectIfDirty(ctx)
 }
 
-// syncActiveProject uploads zip if current chat is a project.
-func (e *Engine) syncActiveProject(ctx context.Context) {
+// syncActiveProjectIfDirty uploads the project zip only if it has been marked
+// dirty since the last sync AND the content hash actually changed.
+func (e *Engine) syncActiveProjectIfDirty(ctx context.Context) {
 	if e.projects == nil {
 		return
 	}
@@ -43,13 +44,16 @@ func (e *Engine) syncActiveProject(ctx context.Context) {
 	if ch.Mode != project.ModeProject || ch.ProjectSlug == "" {
 		return
 	}
-	meta, err := e.projects.Sync(ctx, ch.ProjectSlug)
+	synced, meta, err := e.projects.SyncIfDirty(ctx, ch.ProjectSlug)
 	if err != nil {
-		log.Warn().Err(err).Str("slug", ch.ProjectSlug).Msg("project sync failed")
+		log.Warn().Err(err).Str("slug", ch.ProjectSlug).Msg("project sync-if-dirty failed")
 		return
 	}
-	ch.ProjectHash = meta.Hash
-	_ = ch.Save()
+	if synced {
+		ch.ProjectHash = meta.Hash
+		_ = ch.Save()
+		log.Debug().Str("slug", ch.ProjectSlug).Str("hash", meta.Hash).Msg("project auto-synced (dirty)")
+	}
 }
 
 // startProjectAutoSync launches a background ticker that auto-syncs the active
@@ -71,7 +75,7 @@ func (e *Engine) startProjectAutoSync(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				e.syncActiveProject(context.WithoutCancel(ctx))
+				e.syncActiveProjectIfDirty(context.WithoutCancel(ctx))
 			}
 		}
 	}()

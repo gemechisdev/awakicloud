@@ -33,6 +33,61 @@ type Meta struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+// ProjectState tracks in-memory dirty state for auto-sync. Not persisted.
+type ProjectState struct {
+	mu          sync.Mutex
+	slug        string
+	dirty       bool
+	changeCount int
+	lastSync    time.Time
+}
+
+func newProjectState(slug string) *ProjectState {
+	return &ProjectState{slug: slug}
+}
+
+func (ps *ProjectState) markDirty() {
+	ps.mu.Lock()
+	ps.dirty = true
+	ps.changeCount++
+	ps.mu.Unlock()
+}
+
+func (ps *ProjectState) isDirtyAndClear() bool {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	d := ps.dirty
+	ps.dirty = false
+	ps.changeCount = 0
+	return d
+}
+
+func (ps *ProjectState) setLastSync(t time.Time) {
+	ps.mu.Lock()
+	ps.lastSync = t
+	ps.mu.Unlock()
+}
+
+func (ps *ProjectState) lastSyncTime() time.Time {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	return ps.lastSync
+}
+
+var psMu sync.Mutex
+var projectStates = map[string]*ProjectState{}
+
+func stateFor(slug string) *ProjectState {
+	psMu.Lock()
+	defer psMu.Unlock()
+	s, ok := projectStates[slug]
+	if !ok {
+		s = newProjectState(slug)
+		projectStates[slug] = s
+	}
+	return s
+}
+
 // BlobStore is the durable backend (local files and/or Telegram).
 type BlobStore interface {
 	SaveArchive(ctx context.Context, meta Meta, zip []byte) error
@@ -46,7 +101,6 @@ type Manager struct {
 	blobs   BlobStore
 
 	mu       sync.Mutex
-	dirty    bool
 	onChange func()
 }
 
@@ -67,7 +121,6 @@ func (m *Manager) SetOnChange(fn func()) {
 
 func (m *Manager) touch() {
 	m.mu.Lock()
-	m.dirty = true
 	fn := m.onChange
 	m.mu.Unlock()
 	if fn != nil {
@@ -211,19 +264,35 @@ func (m *Manager) Sync(ctx context.Context, slug string) (Meta, error) {
 
 // MarkDirty marks the project tree as changed so a debounced auto-sync will
 // pick it up on the next tick.
-func (m *Manager) MarkDirty() {
-	m.mu.Lock()
-	m.dirty = true
-	m.mu.Unlock()
+func (m *Manager) MarkDirty(slug string) {
+	stateFor(slug).markDirty()
 }
 
 // IsDirtyAndClear returns the dirty flag and resets it.
-func (m *Manager) IsDirtyAndClear() bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	d := m.dirty
-	m.dirty = false
-	return d
+func (m *Manager) IsDirtyAndClear(slug string) bool {
+	return stateFor(slug).isDirtyAndClear()
+}
+
+// LastSync returns the last successful sync time for a slug.
+func (m *Manager) LastSync(slug string) time.Time {
+	return stateFor(slug).lastSyncTime()
+}
+
+// SyncIfDirty zips and uploads the project only if it has been marked dirty
+// since the last sync AND the content hash actually changed. Returns
+// (synced, meta, err). If not dirty, returns (false, meta, nil) without
+// touching cloud storage.
+func (m *Manager) SyncIfDirty(ctx context.Context, slug string) (bool, Meta, error) {
+	if !m.IsDirtyAndClear(slug) {
+		meta, _ := m.ReadMeta(slug)
+		return false, meta, nil
+	}
+	meta, err := m.Sync(ctx, slug)
+	if err != nil {
+		return false, meta, err
+	}
+	stateFor(slug).setLastSync(meta.UpdatedAt)
+	return true, meta, nil
 }
 
 // ListLocal returns projects present on disk.
