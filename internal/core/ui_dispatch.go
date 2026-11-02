@@ -328,15 +328,41 @@ func (e *Engine) routeUI(ctx context.Context, msg channel.Message, data string) 
 			Text: "🧬 Soul\n\n" + truncateUI(soul, 3000),
 			Rows: [][]channel.Button{{{Text: "⬅ Settings", CallbackData: "ui:settings"}}},
 		})
+	case "mem":
+		if len(parts) >= 3 {
+			name := strings.Join(parts[2:], ":")
+			content, err := e.store.ReadMemory(name)
+			text := "🧠 Memory — " + name + "\n\n"
+			if err != nil {
+				text += "⚠️ Could not read: " + err.Error()
+			} else {
+				text += truncateUI(content, 4000)
+			}
+			e.deliverKeyboard(ctx, msg, channel.KeyboardMessage{
+				Text: text,
+				Rows: [][]channel.Button{
+					{Text: "◀ Back", CallbackData: "ui:memory"},
+					{Text: "⬅ Settings", CallbackData: "ui:settings"},
+				},
+			})
+		}
 	case "memory":
 		files, err := e.store.ListMemory()
 		text := "🧠 Memory\n\n"
 		if err != nil || len(files) == 0 {
 			text += "Memory is empty."
 		} else {
+			text += "Select a file to read:\n\n"
+			var rows [][]channel.Button
 			for _, f := range files {
 				text += "• " + f.Name + "\n"
+				rows = append(rows, []channel.Button{
+					{Text: "📄 " + truncateUI(f.Name, 40), CallbackData: "ui:mem:" + f.Name},
+				})
 			}
+			rows = append(rows, []channel.Button{{Text: "⬅ Settings", CallbackData: "ui:settings"}})
+			e.deliverKeyboard(ctx, msg, channel.KeyboardMessage{Text: text, Rows: rows})
+			return true
 		}
 		e.deliverKeyboard(ctx, msg, channel.KeyboardMessage{
 			Text: text,

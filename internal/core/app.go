@@ -28,7 +28,8 @@ import (
 
 type activeRun struct {
 	cancel     context.CancelFunc
-	replyInbox chan string // unbuffered; used for ask_user responses
+	replyInbox chan string   // unbuffered; used for ask_user responses
+	done       chan struct{} // closed when the run actually finishes
 }
 
 type Engine struct {
@@ -174,7 +175,7 @@ func (e *Engine) handleCommand(ctx context.Context, msg channel.Message) {
 	case channel.CmdNewChat:
 		cmd.Result.Error = e.chats.Reset(ctx)
 	case channel.CmdStop:
-		e.stopAgent(cmd)
+		e.stopAgent(ctx, cmd)
 	case channel.CmdHistory:
 		chats, err := e.store.ListChats()
 		if err != nil {
@@ -183,12 +184,8 @@ func (e *Engine) handleCommand(ctx context.Context, msg channel.Message) {
 			cmd.Result.Payload = chats
 		}
 	case channel.CmdMemory:
-		files, err := e.store.ListMemory()
-		if err != nil {
-			cmd.Result.Error = err
-		} else {
-			cmd.Result.Payload = files
-		}
+		e.cmdMemory(ctx, msg)
+		return
 	case channel.CmdSoul:
 		if soul := e.store.ReadSoul(); soul != "" {
 			cmd.Result.Data = map[string]string{"text": "🧬 **Soul:**\n\n" + soul}
@@ -328,9 +325,11 @@ func (e *Engine) runAgent(ctx context.Context, msg channel.Message) {
 	run := &activeRun{
 		cancel:     cancel,
 		replyInbox: make(chan string),
+		done:       make(chan struct{}),
 	}
 	releaseActive := e.setActive(run)
 	defer func() {
+		close(run.done)
 		releaseActive()
 		e.drainSteerAfterRun(context.WithoutCancel(ctx))
 	}()
@@ -403,7 +402,7 @@ func (e *Engine) runAgent(ctx context.Context, msg channel.Message) {
 	e.syncActiveProjectIfDirty(context.WithoutCancel(ctx))
 }
 
-func (e *Engine) stopAgent(cmd *channel.Command) {
+func (e *Engine) stopAgent(ctx context.Context, cmd *channel.Command) {
 	e.mu.Lock()
 	run := e.active
 	e.mu.Unlock()
@@ -414,7 +413,40 @@ func (e *Engine) stopAgent(cmd *channel.Command) {
 	}
 
 	run.cancel()
-	cmd.Result.Data = map[string]string{"text": "⏹ Stopping..."}
+
+	// Wait briefly for the run to actually finish cancelling so we can
+	// report "stopped" instead of just "stopping...".
+	select {
+	case <-run.done:
+	case <-ctx.Done():
+	case <-time.After(2 * time.Second):
+	}
+	cmd.Result.Data = map[string]string{"text": "✅ Stopped."}
+}
+
+// cmdMemory shows memory files with inline buttons to select/read each one.
+func (e *Engine) cmdMemory(ctx context.Context, msg channel.Message) {
+	files, err := e.store.ListMemory()
+	text := "🧠 Memory\n\n"
+	if err != nil || len(files) == 0 {
+		text += "Memory is empty."
+	} else {
+		text += "Select a file to read:\n\n"
+		var rows [][]channel.Button
+		for _, f := range files {
+			text += "• " + f.Name + "\n"
+			rows = append(rows, []channel.Button{
+				{Text: "📄 " + truncateUI(f.Name, 40), CallbackData: "ui:mem:" + f.Name},
+			})
+		}
+		rows = append(rows, []channel.Button{{Text: "⬅ Home", CallbackData: "ui:home"}})
+		e.deliverKeyboard(ctx, msg, channel.KeyboardMessage{Text: text, Rows: rows})
+		return
+	}
+	e.deliverKeyboard(ctx, msg, channel.KeyboardMessage{
+		Text: text,
+		Rows: [][]channel.Button{{{Text: "⬅ Home", CallbackData: "ui:home"}}},
+	})
 }
 
 // RunScheduledTask executes a scheduled task in the active chat.
