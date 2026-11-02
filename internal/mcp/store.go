@@ -20,8 +20,8 @@ type Cloud interface {
 
 // Store persists MCP server configs as JSON under dataDir/mcp-servers.json.
 type Store struct {
-	mu   sync.Mutex
-	path string
+	mu    sync.Mutex
+	path  string
 	cloud Cloud
 }
 

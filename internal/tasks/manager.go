@@ -24,15 +24,15 @@ type Persister interface {
 
 // Manager is an in-process background task board (todo-list + worker pool).
 type Manager struct {
-	mu         sync.Mutex
-	tasks      map[string]*Task
-	order      []string // newest last
-	exec       Executor
-	persist    Persister
-	maxConc    int
-	running    int
-	cancels    map[string]context.CancelFunc
-	notify     func(task Task) // optional: message owner on completion
+	mu               sync.Mutex
+	tasks            map[string]*Task
+	order            []string // newest last
+	exec             Executor
+	persist          Persister
+	maxConc          int
+	running          int
+	cancels          map[string]context.CancelFunc
+	notify           func(task Task) // optional: message owner on completion
 	progressNotify   func(task Task) // optional: live progress pushes
 	lastProgressPush map[string]time.Time
 }
@@ -42,10 +42,10 @@ func NewManager(maxConcurrent int) *Manager {
 		maxConcurrent = 1
 	}
 	return &Manager{
-		tasks:             make(map[string]*Task),
-		cancels:           make(map[string]context.CancelFunc),
-		lastProgressPush:  make(map[string]time.Time),
-		maxConc:           maxConcurrent,
+		tasks:            make(map[string]*Task),
+		cancels:          make(map[string]context.CancelFunc),
+		lastProgressPush: make(map[string]time.Time),
+		maxConc:          maxConcurrent,
 	}
 }
 
@@ -333,7 +333,6 @@ func FormatBoard(tasks []Task) string {
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
-
 
 func truncate(s string, n int) string {
 	s = strings.TrimSpace(s)

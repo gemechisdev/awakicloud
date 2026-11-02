@@ -250,7 +250,7 @@ func (e *Engine) startMCPOAuth(ctx context.Context, msg channel.Message, name st
 		_ = msg.Reply.SendText(ctx, "Authorize failed: "+err.Error())
 		return
 	}
-		e.ui.set(&uiWizard{Kind: "mcp_oauth", Step: "code", Draft: map[string]string{"name": name}})
+	e.ui.set(&uiWizard{Kind: "mcp_oauth", Step: "code", Draft: map[string]string{"name": name}})
 	e.deliverKeyboard(ctx, msg, channel.KeyboardMessage{
 		Text: "🔐 Authorize «" + name + "»\n\n" +
 			"1. Open this link (or tap the button):\n" + authURL + "\n\n" +
@@ -281,7 +281,6 @@ func (e *Engine) wizardMCPOAuth(ctx context.Context, msg channel.Message, w *uiW
 	e.cmdMCPDetail(ctx, msg, name)
 	return true
 }
-
 
 // finishMCPAddThenOAuth saves the server from the add wizard without a key,
 // then immediately starts the OAuth browser flow.

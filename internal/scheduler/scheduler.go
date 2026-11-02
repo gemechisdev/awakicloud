@@ -25,8 +25,8 @@ var backoffSchedule = []time.Duration{
 }
 
 type Options struct {
-	TaskTimeout    time.Duration
-	MaxConcurrent  int
+	TaskTimeout   time.Duration
+	MaxConcurrent int
 }
 
 func (o Options) taskTimeout() time.Duration {
@@ -59,7 +59,7 @@ type TaskData struct {
 	Skill     string    `json:"skill,omitempty"`
 	Label     string    `json:"label"`
 	Paused    bool      `json:"paused,omitempty"`
-	RunAt     time.Time `json:"run_at,omitempty"` // absolute fire time for once
+	RunAt     time.Time `json:"run_at,omitempty"`   // absolute fire time for once
 	MaxRuns   int       `json:"max_runs,omitempty"` // 0 = unlimited; once defaults to 1
 	Runs      int       `json:"runs,omitempty"`     // successful+attempted fires
 	CreatedAt time.Time `json:"created_at"`

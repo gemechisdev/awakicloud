@@ -171,6 +171,7 @@ func toolDefsToOpenAI(defs []types.ToolDef) []openai.ChatCompletionToolParam {
 // normalizeFunctionParameters accepts either:
 //   - a full JSON Schema object: {"type":"object","properties":{...},"required":[...]}
 //   - a properties-only map: {"name":{"type":"string"}, ...}  (Awaki tool convention)
+//
 // Strict OpenAI-compatible gateways reject the latter when wrongly nested under properties.
 func normalizeFunctionParameters(params map[string]any, required []string) shared.FunctionParameters {
 	out := shared.FunctionParameters{"type": "object"}

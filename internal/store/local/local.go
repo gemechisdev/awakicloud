@@ -21,7 +21,7 @@ func New(dataDir string) (store.Store, error) {
 	return s, nil
 }
 
-func (s *LocalStore) DataDir() string  { return s.dataDir }
+func (s *LocalStore) DataDir() string   { return s.dataDir }
 func (s *LocalStore) SkillsDir() string { return filepath.Join(s.dataDir, "skills") }
 
 func (s *LocalStore) chatsDir() string       { return filepath.Join(s.dataDir, "episodes") }

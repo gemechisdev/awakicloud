@@ -61,7 +61,6 @@ func mainMenuKeyboard() channel.KeyboardMessage {
 	}
 }
 
-
 func settingsKeyboard() channel.KeyboardMessage {
 	return channel.KeyboardMessage{
 		Text: "⚙️ Settings\n\nConfigure AI providers, models, and agent identity.",
@@ -82,7 +81,6 @@ type keyboardSender interface {
 	SendKeyboardToOwner(ctx context.Context, km channel.KeyboardMessage)
 	SendOrEditKeyboardToOwner(ctx context.Context, editMsgID int, km channel.KeyboardMessage)
 }
-
 
 func (e *Engine) uiHome(ctx context.Context, msg channel.Message) {
 	e.ui.clear()
@@ -204,7 +202,6 @@ func (e *Engine) deliverKeyboard(ctx context.Context, msg channel.Message, km ch
 		_ = msg.Reply.SendText(ctx, b.String())
 	}
 }
-
 
 func truncateUI(s string, n int) string {
 	s = strings.TrimSpace(s)

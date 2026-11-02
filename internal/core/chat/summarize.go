@@ -7,10 +7,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/gemechischala/awaki/internal/utils"
-	"github.com/gemechischala/awaki/internal/llm"
 	types "github.com/gemechischala/awaki/internal/domain"
+	"github.com/gemechischala/awaki/internal/llm"
 	"github.com/gemechischala/awaki/internal/store"
+	"github.com/gemechischala/awaki/internal/utils"
 
 	"github.com/rs/zerolog/log"
 )

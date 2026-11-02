@@ -155,7 +155,7 @@ func directFetch(ctx context.Context, rawURL, selector string) (string, error) {
 	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; AwakiCloudBot/1.0)")
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,text/plain")
 
-	resp, err := safeHTTPClient(30*time.Second).Do(req)
+	resp, err := safeHTTPClient(30 * time.Second).Do(req)
 	if err != nil {
 		return "", fmt.Errorf("http error: %v", err)
 	}

@@ -52,7 +52,7 @@ func (a *Adapter) CallContinue(
 			decls = append(decls, map[string]any{
 				"name":        t.Name,
 				"description": t.Description,
-				"parameters":   t.Parameters,
+				"parameters":  t.Parameters,
 			})
 		}
 		body["tools"] = []map[string]any{{"type": "function", "functions": decls}}

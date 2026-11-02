@@ -14,8 +14,8 @@ import (
 
 func SystemInfoTool() types.Tool {
 	return types.Tool{
-		Name:  "system_info",
-		Label: "Checking system",
+		Name:        "system_info",
+		Label:       "Checking system",
 		Description: "Get a full system overview in one call: hostname, uptime, load average, CPU, RAM, disk usage, top 5 processes by CPU, and network interfaces. Container-aware: reports cgroup limits when running inside a container. Linux only.",
 		Parameters:  map[string]any{},
 		Handler:     systemInfo,

@@ -6,11 +6,11 @@ import "time"
 type Status string
 
 const (
-	StatusPending   Status = "pending"    // queued, not started
-	StatusRunning   Status = "running"    // worker executing
-	StatusCompleted Status = "completed"  // finished successfully
-	StatusFailed    Status = "failed"     // finished with error
-	StatusCancelled Status = "cancelled"  // stopped by user/agent
+	StatusPending   Status = "pending"   // queued, not started
+	StatusRunning   Status = "running"   // worker executing
+	StatusCompleted Status = "completed" // finished successfully
+	StatusFailed    Status = "failed"    // finished with error
+	StatusCancelled Status = "cancelled" // stopped by user/agent
 )
 
 func (s Status) Emoji() string {

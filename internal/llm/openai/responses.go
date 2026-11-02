@@ -73,7 +73,7 @@ func (a *ResponsesAdapter) CallContinue(
 				"type":        "function",
 				"name":        t.Name,
 				"description": t.Description,
-				"parameters":   map[string]any(params),
+				"parameters":  map[string]any(params),
 			})
 		}
 		body["tools"] = oaiTools
@@ -126,24 +126,24 @@ func messagesToResponsesInput(msgs []types.Message) any {
 			}
 			if b.Type == "tool_result" {
 				items = append(items, map[string]any{
-					"type": "function_call_output",
+					"type":    "function_call_output",
 					"call_id": b.ToolUseID,
-					"output": b.ToolOutput,
+					"output":  b.ToolOutput,
 				})
 			}
 			if b.Type == "tool_use" {
 				items = append(items, map[string]any{
-					"type": "function_call",
-					"name": b.ToolName,
+					"type":      "function_call",
+					"name":      b.ToolName,
 					"arguments": string(b.ToolInput),
-					"call_id": b.ToolUseID,
+					"call_id":   b.ToolUseID,
 				})
 			}
 		}
 		if text.Len() > 0 {
 			items = append(items, map[string]any{
-				"type": "message",
-				"role": role,
+				"type":    "message",
+				"role":    role,
 				"content": text.String(),
 			})
 		}

@@ -17,8 +17,8 @@ import (
 
 // Parallel free keyless Search MCP — same endpoint as Awaki Android ParallelProtocol.
 const (
-	parallelMCPURL        = "https://search.parallel.ai/mcp"
-	mcpProtocolVersion    = "2025-03-26"
+	parallelMCPURL         = "https://search.parallel.ai/mcp"
+	mcpProtocolVersion     = "2025-03-26"
 	parallelDefaultTimeout = 25 * time.Second
 )
 

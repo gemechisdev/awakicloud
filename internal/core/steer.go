@@ -19,10 +19,10 @@ type steerOffer struct {
 }
 
 type steerState struct {
-	mu       sync.Mutex
-	offers   map[string]steerOffer // id → pending choice
-	queue    []channel.Message     // run after current finishes
-	interrupt *channel.Message     // run next after cancel
+	mu        sync.Mutex
+	offers    map[string]steerOffer // id → pending choice
+	queue     []channel.Message     // run after current finishes
+	interrupt *channel.Message      // run next after cancel
 }
 
 func (s *steerState) init() {

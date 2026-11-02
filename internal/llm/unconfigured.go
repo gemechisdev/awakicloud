@@ -13,11 +13,11 @@ func (Unconfigured) Call(context.Context, []Message, CallOptions) (*Response, er
 	return nil, fmt.Errorf("no LLM configured — use /providers and /provider_add then /model_add")
 }
 
-func (Unconfigured) ModelID() string        { return "unconfigured" }
-func (Unconfigured) ModelLabel() string     { return "not configured" }
-func (Unconfigured) ContextWindow() int     { return 0 }
-func (Unconfigured) InputPricePerM() float64  { return 0 }
-func (Unconfigured) OutputPricePerM() float64 { return 0 }
+func (Unconfigured) ModelID() string            { return "unconfigured" }
+func (Unconfigured) ModelLabel() string         { return "not configured" }
+func (Unconfigured) ContextWindow() int         { return 0 }
+func (Unconfigured) InputPricePerM() float64    { return 0 }
+func (Unconfigured) OutputPricePerM() float64   { return 0 }
 func (Unconfigured) SupportsContinuation() bool { return false }
 
 // Ensure Unconfigured implements LLM.

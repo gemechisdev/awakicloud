@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gemechischala/awaki/internal/llm"
 	types "github.com/gemechischala/awaki/internal/domain"
+	"github.com/gemechischala/awaki/internal/llm"
 	"github.com/gemechischala/awaki/internal/store"
 )
 

@@ -2,15 +2,15 @@ package agent
 
 import (
 	"context"
-	"sync"
 	"github.com/gemechischala/awaki/internal/core/agent/hook"
-	"github.com/gemechischala/awaki/internal/permission"
-	"github.com/gemechischala/awaki/internal/transport"
-	"github.com/gemechischala/awaki/internal/llm"
 	llmTypes "github.com/gemechischala/awaki/internal/domain"
+	"github.com/gemechischala/awaki/internal/llm"
+	"github.com/gemechischala/awaki/internal/permission"
 	"github.com/gemechischala/awaki/internal/tools"
 	"github.com/gemechischala/awaki/internal/tools/system"
 	toolTypes "github.com/gemechischala/awaki/internal/tools/types"
+	"github.com/gemechischala/awaki/internal/transport"
+	"sync"
 )
 
 type Agent struct {
@@ -23,7 +23,7 @@ type Agent struct {
 	beforeHooks  []hook.BeforeIterationFunc
 	afterHooks   []hook.AfterIterationFunc
 	sink         transport.Sink
-	subMu        sync.Mutex // serializes sub-agent client tool swaps
+	subMu        sync.Mutex      // serializes sub-agent client tool swaps
 	runPermMode  permission.Mode // set for the duration of Run
 }
 
@@ -121,7 +121,6 @@ func (a *Agent) executeTool(ctx context.Context, name string, input map[string]a
 	}
 	return a.registry.Execute(ctx, name, input)
 }
-
 
 // SetClient swaps the LLM backend (used when the user selects another provider/model).
 func (a *Agent) SetClient(client llm.LLM) {

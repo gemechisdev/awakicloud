@@ -128,7 +128,7 @@ var readOnlyAllow = map[string]struct{}{
 	"soul_read": {}, "user_read": {},
 	"recall": {}, "task_plan": {}, "report_status": {},
 	"schedule_list": {},
-	"bg_task_list": {}, "bg_task_get": {},
+	"bg_task_list":  {}, "bg_task_get": {},
 	"git_status": {}, "git_diff": {}, "git_log": {}, "git_show": {}, "git_blame": {}, "git_branch": {},
 	"ask_user": {}, "send_message": {}, // communication, not env mutation
 }

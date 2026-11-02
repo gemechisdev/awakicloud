@@ -47,10 +47,10 @@ type ChatInfo struct {
 	Summary     string
 	Mode        string
 	ProjectSlug string
-	Tags      []string
-	Status    string
-	StartedAt time.Time
-	EndedAt   time.Time
+	Tags        []string
+	Status      string
+	StartedAt   time.Time
+	EndedAt     time.Time
 }
 
 // ChatSearchFunc is a callback that searches past chats by query.

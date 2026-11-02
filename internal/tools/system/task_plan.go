@@ -3,8 +3,8 @@ package system
 import (
 	"context"
 	"fmt"
-	"github.com/gemechischala/awaki/internal/transport"
 	"github.com/gemechischala/awaki/internal/tools/types"
+	"github.com/gemechischala/awaki/internal/transport"
 	"strings"
 	"sync"
 )

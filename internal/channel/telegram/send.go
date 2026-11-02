@@ -34,7 +34,6 @@ func (c *Channel) sendLong(ctx context.Context, chatID int64, text string) {
 	}
 }
 
-
 // sendAndGetID sends a short status-style message (Markdown preferred) and returns the message ID.
 func (c *Channel) sendAndGetID(ctx context.Context, chatID int64, text string) int {
 	id, err := c.client.SendMessage(ctx, chatID, text, models.ParseModeMarkdown)

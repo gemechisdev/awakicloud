@@ -158,4 +158,3 @@ func (c *Client) SupportsContinuation() bool {
 	cont, ok := c.adapter.(Continuer)
 	return ok && cont.SupportsContinuation()
 }
-

@@ -203,7 +203,6 @@ func (s *recordingSink) Emit(ev transport.Event) {
 	}
 }
 
-
 // RunBackground runs a general-purpose worker agent to completion and returns
 // its final text. Used by the background task board (async, not the main UI run).
 func (a *Agent) RunBackground(ctx context.Context, prompt string) (string, error) {
