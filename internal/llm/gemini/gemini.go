@@ -76,10 +76,10 @@ func (a *Adapter) Call(
 // --- request types ---
 
 type genRequest struct {
-	SystemInstruction *contentPart  `json:"systemInstruction,omitempty"`
-	Contents          []genContent  `json:"contents"`
-	Tools             []genTool     `json:"tools,omitempty"`
-	GenerationConfig  *genConfig    `json:"generationConfig,omitempty"`
+	SystemInstruction *contentPart `json:"systemInstruction,omitempty"`
+	Contents          []genContent `json:"contents"`
+	Tools             []genTool    `json:"tools,omitempty"`
+	GenerationConfig  *genConfig   `json:"generationConfig,omitempty"`
 }
 
 type genContent struct {
@@ -88,10 +88,10 @@ type genContent struct {
 }
 
 type genPart struct {
-	Text             string            `json:"text,omitempty"`
-	FunctionCall     *genFunctionCall  `json:"functionCall,omitempty"`
-	FunctionResponse *genFunctionResp  `json:"functionResponse,omitempty"`
-	InlineData       *genInlineData    `json:"inlineData,omitempty"`
+	Text             string           `json:"text,omitempty"`
+	FunctionCall     *genFunctionCall `json:"functionCall,omitempty"`
+	FunctionResponse *genFunctionResp `json:"functionResponse,omitempty"`
+	InlineData       *genInlineData   `json:"inlineData,omitempty"`
 }
 
 type genFunctionCall struct {
@@ -138,7 +138,7 @@ func buildRequest(system string, messages []types.Message, tools []types.ToolDef
 	if len(tools) > 0 {
 		decls := make([]genFnDecl, 0, len(tools))
 		for _, t := range tools {
-			params := t.Parameters
+			params := cleanGeminiSchema(t.Parameters)
 			if params == nil {
 				params = map[string]any{"type": "object", "properties": map[string]any{}}
 			}
@@ -288,4 +288,39 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// cleanGeminiSchema recursively removes fields that Gemini rejects
+// ($schema, additionalProperties) from a JSON-schema parameter object and all
+// nested property schemas.
+func cleanGeminiSchema(schema map[string]any) map[string]any {
+	if schema == nil {
+		return nil
+	}
+	cleaned := make(map[string]any, len(schema))
+	for k, v := range schema {
+		if k == "$schema" || k == "additionalProperties" {
+			continue
+		}
+		if m, ok := v.(map[string]any); ok {
+			cleaned[k] = cleanGeminiSchema(m)
+		} else if arr, ok := v.([]any); ok {
+			cleaned[k] = cleanGeminiSchemaArray(arr)
+		} else {
+			cleaned[k] = v
+		}
+	}
+	return cleaned
+}
+
+func cleanGeminiSchemaArray(arr []any) []any {
+	out := make([]any, 0, len(arr))
+	for _, v := range arr {
+		if m, ok := v.(map[string]any); ok {
+			out = append(out, cleanGeminiSchema(m))
+		} else {
+			out = append(out, v)
+		}
+	}
+	return out
 }

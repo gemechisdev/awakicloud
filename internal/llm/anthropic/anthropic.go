@@ -98,14 +98,24 @@ func messagesToAnthropic(msgs []types.Message) []anthropic.MessageParam {
 func toolDefsToAnthropic(defs []types.ToolDef) []anthropic.ToolUnionParam {
 	out := make([]anthropic.ToolUnionParam, 0, len(defs))
 	for _, d := range defs {
+		schema := anthropic.ToolInputSchemaParam{
+			Properties: map[string]any{},
+		}
+		if props, ok := d.Parameters["properties"].(map[string]any); ok {
+			schema.Properties = props
+		}
+		if req, ok := d.Parameters["required"].([]any); ok {
+			for _, r := range req {
+				if s, ok := r.(string); ok {
+					schema.Required = append(schema.Required, s)
+				}
+			}
+		}
 		out = append(out, anthropic.ToolUnionParam{
 			OfTool: &anthropic.ToolParam{
 				Name:        d.Name,
 				Description: anthropic.String(d.Description),
-				InputSchema: anthropic.ToolInputSchemaParam{
-					Properties: d.Parameters,
-					Required:   d.Required,
-				},
+				InputSchema: schema,
 			},
 		})
 	}

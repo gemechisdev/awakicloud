@@ -62,12 +62,63 @@ func (r *Registry) Execute(ctx context.Context, name string, input map[string]an
 func (r *Registry) Definitions() []llmtypes.ToolDef {
 	out := make([]llmtypes.ToolDef, 0, len(r.tt))
 	for _, t := range r.tt {
+		params := normalizeToolParams(t.Parameters)
 		out = append(out, llmtypes.ToolDef{
 			Name:        t.Name,
 			Description: t.Description,
-			Parameters:  t.Parameters,
+			Parameters:  params,
 			Required:    t.Required,
 		})
+	}
+	return out
+}
+
+// normalizeToolParams ensures every tool schema is a consistent full JSON-schema
+// object: {type: "object", properties: {...}, required: [...]}. It strips
+// provider-incompatible fields ($schema, additionalProperties) that Gemini and
+// other APIs reject. Some tools (e.g. grep) use the full form already; others
+// use the flat form {properties: {...}} — both are normalized here.
+func normalizeToolParams(params map[string]any) map[string]any {
+	if params == nil {
+		return map[string]any{
+			"type":       "object",
+			"properties": map[string]any{},
+		}
+	}
+
+	// Strip fields some providers reject.
+	delete(params, "$schema")
+	delete(params, "additionalProperties")
+
+	// Ensure we have a properties map.
+	properties, _ := params["properties"].(map[string]any)
+	if properties == nil {
+		// Flat form: params itself might BE the properties, or it might have
+		// type + other top-level keys but no properties. Build a clean object.
+		clean := map[string]any{"type": "object"}
+		for k, v := range params {
+			if k == "type" || k == "properties" || k == "required" {
+				continue
+			}
+			// Treat any remaining top-level keys as if they were property
+			// definitions only if they look like schemas (have "type").
+			if m, ok := v.(map[string]any); ok && m["type"] != nil {
+				if clean["properties"] == nil {
+					clean["properties"] = map[string]any{}
+				}
+				clean["properties"].(map[string]any)[k] = m
+			}
+		}
+		if clean["properties"] == nil {
+			clean["properties"] = map[string]any{}
+		}
+		return clean
+	}
+
+	// Full form: ensure type is set.
+	out := map[string]any{"type": "object", "properties": properties}
+	if req, ok := params["required"]; ok {
+		out["required"] = req
 	}
 	return out
 }
