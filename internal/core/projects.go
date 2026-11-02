@@ -315,11 +315,13 @@ func (e *Engine) cmdChatLink(ctx context.Context, msg channel.Message, slug stri
 	}
 	ch.Mode = project.ModeProject
 	ch.ProjectSlug = slug
-	if meta, err := e.projects.ReadMeta(slug); err == nil {
-		ch.ProjectID = meta.ID
-		ch.ProjectHash = meta.Hash
+	var meta *project.Meta
+	if m, err := e.projects.ReadMeta(slug); err == nil {
+		meta = &m
+		ch.ProjectID = m.ID
+		ch.ProjectHash = m.Hash
 		if ch.Title == "" {
-			ch.Title = meta.Name
+			ch.Title = m.Name
 		}
 	}
 	if err := e.projects.ActivateProject(ctx, slug); err != nil {
@@ -327,7 +329,11 @@ func (e *Engine) cmdChatLink(ctx context.Context, msg channel.Message, slug stri
 		return
 	}
 	_ = ch.Save()
-	_ = msg.Reply.SendText(ctx, fmt.Sprintf("🔗 Chat linked to project «%s» (%s)", meta.Name, slug))
+	name := slug
+	if meta != nil {
+		name = meta.Name
+	}
+	_ = msg.Reply.SendText(ctx, fmt.Sprintf("🔗 Chat linked to project «%s» (%s)", name, slug))
 }
 
 // cmdChatsByProject lists chats bound to a project.

@@ -321,6 +321,10 @@ func (s *UserStore) LoadChat(id string) (*store.Chat, error) {
 
 func (s *UserStore) ListChats() ([]store.ChatInfo, error) { return s.local.ListChats() }
 
+func (s *UserStore) ListChatsByProject(slug string) ([]store.ChatInfo, error) {
+	return s.local.ListChatsByProject(slug)
+}
+
 func (s *UserStore) GetActiveChatID() (string, error) { return s.local.GetActiveChatID() }
 
 func (s *UserStore) SetActiveChatID(id string) error {

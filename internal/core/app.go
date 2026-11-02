@@ -3,6 +3,10 @@ package core
 import (
 	"context"
 	"fmt"
+	"strings"
+	"sync"
+	"time"
+
 	"github.com/gemechischala/awaki/internal/channel"
 	"github.com/gemechischala/awaki/internal/core/agent"
 	"github.com/gemechischala/awaki/internal/core/chat"
@@ -18,8 +22,6 @@ import (
 	"github.com/gemechischala/awaki/internal/tools"
 	systemtools "github.com/gemechischala/awaki/internal/tools/system"
 	"github.com/gemechischala/awaki/internal/transport"
-	"strings"
-	"sync"
 
 	"github.com/rs/zerolog/log"
 )
