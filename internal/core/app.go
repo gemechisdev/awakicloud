@@ -204,9 +204,13 @@ func (e *Engine) handleCommand(ctx context.Context, msg channel.Message) {
 	case channel.CmdProject:
 		name := ""
 		if cmd.Args != nil {
-			name = cmd.Args["raw"]
+			name = strings.TrimSpace(cmd.Args["raw"])
 		}
-		e.cmdNewProject(ctx, msg, name)
+		if name == "" {
+			e.cmdNewProject(ctx, msg, "")
+		} else {
+			e.cmdOpenOrCreateProject(ctx, msg, name)
+		}
 	case channel.CmdProjectUpgrade:
 		name := ""
 		if cmd.Args != nil {

@@ -119,6 +119,75 @@ func (e *Engine) cmdNewProject(ctx context.Context, msg channel.Message, name st
 	))
 }
 
+// cmdOpenOrCreateProject opens an existing project slug, or creates a new one
+// (copying current workspace contents if any). Never overwrites existing files.
+func (e *Engine) cmdOpenOrCreateProject(ctx context.Context, msg channel.Message, name string) {
+	if e.projects == nil {
+		_ = msg.Reply.SendText(ctx, "Projects not available.")
+		return
+	}
+	slug := project.Slugify(name)
+	if _, err := e.projects.ReadMeta(slug); err == nil {
+		// Project exists — activate it without overwriting anything.
+		if err := e.projects.ActivateProject(ctx, slug); err != nil {
+			_ = msg.Reply.SendText(ctx, "Activate failed: "+err.Error())
+			return
+		}
+		ch, err := e.chats.Resolve()
+		if err == nil && ch != nil {
+			ch.Mode = project.ModeProject
+			ch.ProjectSlug = slug
+			if meta, err := e.projects.ReadMeta(slug); err == nil {
+				ch.ProjectID = meta.ID
+				ch.ProjectHash = meta.Hash
+				if ch.Title == "" {
+					ch.Title = meta.Name
+				}
+			}
+			_ = ch.Save()
+		}
+		meta, _ := e.projects.ReadMeta(slug)
+		_ = msg.Reply.SendText(ctx, fmt.Sprintf(
+			"📂 Project «%s» activated\nSlug: %s\nFiles: %d\nWorkspace bound.",
+			meta.Name, meta.Slug, meta.FileCount,
+		))
+		return
+	}
+	// Project doesn't exist — create it and copy current workspace contents.
+	ch, err := e.chats.Resolve()
+	if err != nil {
+		_ = msg.Reply.SendText(ctx, err.Error())
+		return
+	}
+	prevRoot := workspace.Root()
+	meta, n, err := e.projects.PromoteFromWorkspace(name, ch.ID, prevRoot)
+	if err != nil {
+		_ = msg.Reply.SendText(ctx, "Create failed: "+err.Error())
+		return
+	}
+	ch.Mode = project.ModeProject
+	ch.ProjectID = meta.ID
+	ch.ProjectSlug = meta.Slug
+	if ch.Title == "" {
+		ch.Title = meta.Name
+	}
+	_ = ch.Save()
+	synced, err := e.projects.Sync(ctx, meta.Slug, ch.ID)
+	if err != nil {
+		_ = msg.Reply.SendText(ctx, fmt.Sprintf(
+			"🟢 Created «%s» (%s)\nCopied %d files.\nSync deferred: %v",
+			meta.Name, meta.Slug, n, err,
+		))
+		return
+	}
+	ch.ProjectHash = synced.Hash
+	_ = ch.Save()
+	_ = msg.Reply.SendText(ctx, fmt.Sprintf(
+		"🟢 Created «%s» (%s)\nCopied %d files from current workspace.\nChat bound + synced (hash %s).",
+		meta.Name, meta.Slug, n, synced.Hash,
+	))
+}
+
 func (e *Engine) cmdUpgradeProject(ctx context.Context, msg channel.Message, name string) {
 	if e.projects == nil {
 		_ = msg.Reply.SendText(ctx, "Projects not available.")
