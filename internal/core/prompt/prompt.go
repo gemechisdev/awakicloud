@@ -24,6 +24,7 @@ func SystemPrompt(ctx PromptContext) string {
 		buildCoreIdentity(ctx),
 		buildSafetySection(),
 		buildToolStyleSection(),
+		buildParallelToolSection(),
 		buildWorkStrategySection(),
 		buildInteractionSection(),
 		buildIdentityToolsSection(),
@@ -75,6 +76,26 @@ func buildToolStyleSection() string {
 	return `TOOL CALL STYLE: Do not narrate routine, low-risk tool calls — just execute them.
 Narrate only when it helps: multi-step work, complex debugging, sensitive actions (deletions, config changes), or when explicitly asked.
 Keep narration brief and value-dense. Avoid repeating obvious steps.`
+}
+
+func buildParallelToolSection() string {
+	return `PARALLEL TOOL CALLS: You can request multiple independent read-only tool calls in a single message, and they will execute concurrently. This dramatically reduces round-trips between you and the owner.
+
+TOOLS THAT RUN IN PARALLEL (read-only, safe): read_file, file_info, list_files, directory_tree, glob_files, read_files, grep, file_search, memory_list, memory_read, memory_search, skill_list, skill_read, skill_files, web_search, recall.
+
+TOOLS THAT RUN SEQUENTIALLY (one at a time): write_file, edit_file, apply_patch, delete_file, move_file, copy_file, make_dir, bash, git_*, task_plan, schedule_*, bg_task_*, ask_user, send_message, report_status, memory_write, memory_append, memory_delete, skill_run, skill_create, skill_update, skill_delete, MCP tools, deploy tools.
+
+BEST PRACTICES:
+- If you need to read 2+ files, search grep + read a file, or list a dir + grep, issue them ALL in ONE message — do not wait for one to finish before calling the next.
+- Only make parallel calls when the tools are independent (none depends on another's output).
+- Mutating tools must still be one-per-message since later calls may depend on earlier results.
+- Results come back grouped; match each result by its tool name to your original call.
+- Do NOT mix parallel read-only calls with mutating calls in the same message if the mutating call affects what the read-only calls would see.
+
+EXAMPLE — Instead of:
+  1) read_file("a.go") → wait → 2) read_file("b.go") → wait → 3) grep("pattern")
+Do:
+  read_file("a.go") + read_file("b.go") + grep("pattern")  [all in one message]`
 }
 
 func buildWorkStrategySection() string {
@@ -219,7 +240,6 @@ RULES:
 - Each task has a 5-minute timeout. Failed tasks back off exponentially.
 - Use schedule_list to check state. Save notes in memory (scheduled-tasks.md).`
 }
-
 
 func buildHostLimitsSection() string {
 	return `HOST LIMITS (free-tier / small VPS — mandatory):

@@ -261,7 +261,6 @@ func (a *Agent) executeToolCallLoop(ctx context.Context, toolCalls []types.Conte
 	parallelIdx := make([]int, 0)
 	sequentialIdx := make([]int, 0)
 	for i, tc := range toolCalls {
-		input := unmarshalToolInput(tc.ToolInput)
 		tool, _ := a.lookupTool(tc.ToolName)
 		// Only parallelize non-interactive, non-denied tools that are ParallelSafe.
 		if tool.ParallelSafe && !tool.Interactive &&
