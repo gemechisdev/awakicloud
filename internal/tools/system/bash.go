@@ -38,7 +38,8 @@ func BashTool() types.Tool {
 			"Output is cleaned (ANSI colours and progress-bar redraws removed); if it is too long the START and END are kept (errors are usually at the end). " +
 			"Default timeout 120s (max 600): on timeout the whole process group is killed. " +
 			"For anything that may run longer — dev servers, watchers, big builds, long installs — use background=true: it returns immediately with a PID and a log file to poll with `tail`/read_file. " +
-			"stdin is empty, so commands cannot prompt; pass non-interactive flags (-y, --yes). Relative workdir is resolved against the workspace root.",
+			"stdin is empty, so commands cannot prompt; pass non-interactive flags (-y, --yes). Relative workdir is resolved against the workspace root. " +
+			"API keys and tokens from the agent's own environment are not visible to commands.",
 		DetailFunc: func(input map[string]any) string {
 			s, _ := input["command"].(string)
 			return s
@@ -164,7 +165,7 @@ func cleanTerminalOutput(s string) string {
 }
 
 func bashEnv() []string {
-	return append(os.Environ(),
+	return append(safeEnviron(),
 		"PAGER=cat", "GIT_PAGER=cat", "GIT_TERMINAL_PROMPT=0", "DEBIAN_FRONTEND=noninteractive",
 		"NO_COLOR=1", "TERM=dumb", "CI=1",
 	)
@@ -176,21 +177,29 @@ func executeBash(ctx context.Context, input map[string]any) types.Result {
 		return types.ErrResult(err)
 	}
 
-	if destructive, reason := CheckDestructive(command); destructive {
-		mode := GuardMode(os.Getenv("AWAKI_BASH_GUARD"))
-		if mode == "" {
-			mode = GuardWarn
-		}
-		switch mode {
-		case GuardBlock:
-			return types.Errf("blocked destructive command: %s", reason)
-		case GuardWarn, GuardOff:
-			if mode == GuardWarn {
-				log.Warn().Str("command", command).Str("reason", reason).Msg("bash: destructive command allowed with warning")
+	// Guard: critical commands are refused by default, risky ones are annotated;
+	// AWAKI_BASH_GUARD=block refuses both, =off disables the checks.
+	mode := ParseGuardMode(os.Getenv("AWAKI_BASH_GUARD"))
+	note := ""
+	if mode != GuardOff {
+		if sev, reason := Assess(command); sev != SevNone {
+			if sev == SevCritical || mode == GuardBlock {
+				log.Warn().Str("command", command).Str("severity", sev.String()).Str("reason", reason).Msg("bash: command blocked by guard")
+				return types.Errf("blocked by the command guard (%s): %s.\nNothing was run. Use a narrower, explicit command (for example delete_file on a specific path), or ask the owner.", sev, reason)
 			}
+			log.Warn().Str("command", command).Str("reason", reason).Msg("bash: risky command allowed with warning")
+			note = reason
 		}
 	}
 
+	res := runBash(ctx, input, command)
+	if note != "" {
+		res.Output += "\n[guard warning: " + note + "]"
+	}
+	return res
+}
+
+func runBash(ctx context.Context, input map[string]any, command string) types.Result {
 	workdir := types.GetStringOpt(input, "workdir")
 	if workdir == "" {
 		workdir = workspace.Root()
@@ -200,6 +209,14 @@ func executeBash(ctx context.Context, input map[string]any) types.Result {
 			return types.Errf("workdir is not a directory: %s (resolved from %q)", resolved, workdir)
 		}
 		workdir = resolved
+	}
+
+	// A missing working directory makes Go report "fork/exec /usr/bin/bash: no such
+	// file or directory", which blames bash. Say what is actually wrong.
+	if workdir != "" {
+		if info, err := os.Stat(workdir); err != nil || !info.IsDir() {
+			return types.Errf("working directory does not exist: %s (the workspace may have been deleted or moved; pass workdir, or recreate it)", workdir)
+		}
 	}
 
 	if types.GetBoolDefault(input, "background", false) {

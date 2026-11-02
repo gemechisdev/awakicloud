@@ -259,6 +259,26 @@ Agent `mode`: `auto` | `queue` | `interrupt`.
 
 See `.env.example` for the full annotated list.
 
+### Tool safety settings
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `AWAKI_BASH_GUARD` | `warn` | Command guard for `bash`. `warn`: **critical** commands (wiping `/`, system or home directories, `mkfs`/`dd` on a device, fork bombs) are refused, **risky** ones (`rm -rf`, `git push --force`, `git reset --hard`, `curl \| sh`, `DROP TABLE`, stopping sshd, …) run with a warning appended to the result. `block`: refuse both. `off`: no checks. A typo falls back to `warn`. It is a safety net for accidents, not a sandbox. |
+| `AWAKI_BASH_ENV` | `scrub` | `scrub` hides credential-like variables (`*_API_KEY`, `*_TOKEN`, `*_SECRET`, `*PASSWORD*`, all `AWAKI_*` / `TELEGRAM_*`, and values that look like keys) from `bash` and `git` child processes. `inherit` passes everything. |
+| `AWAKI_BASH_ENV_PASSTHROUGH` | – | Comma-separated variables to keep even when scrubbing, e.g. `GITHUB_TOKEN,NPM_TOKEN`. |
+| `AWAKI_SEND_FILE_ROOTS` | – | Extra directories `send_file` may send from (path-list separated). Default: workspace + temp dir; credential-like files are always refused. |
+| `AWAKI_SEND_MAX_MB` | `50` | `send_file` size limit. |
+| `AWAKI_GIT_NAME` / `AWAKI_GIT_EMAIL` | `Awaki Agent` / `awaki@localhost` | Committer identity used only when git has none configured. |
+
+### Hardening
+
+Scrubbing the environment stops `env`/`printenv` from leaking keys, but a command can still try to read the agent's own `/proc/<pid>/environ`, `.env` files, or the session files in the data directory. The agent marks itself non-dumpable at startup (`PR_SET_DUMPABLE`), which blocks that read for processes running as a **non-root** user. **The stock Dockerfile runs as root, where this is not enough** — for real isolation run the container as an unprivileged user that owns only the data and work directories, and keep `ask` permission mode on when untrusted content (web pages, issues, email) can reach the agent:
+
+```dockerfile
+RUN adduser -D -u 10001 awaki && mkdir -p /data /work && chown -R awaki /data /work
+USER awaki
+```
+
 ---
 
 ## Deploy

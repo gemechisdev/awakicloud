@@ -31,3 +31,22 @@ func TestRequiresApproval(t *testing.T) {
 		t.Fatal("mcp")
 	}
 }
+
+func TestIsPlanDenied(t *testing.T) {
+	for _, n := range []string{"bash", "write_file", "edit_file", "apply_patch", "git_commit", "memory_write"} {
+		if !IsPlanDenied(n) {
+			t.Errorf("%s must be denied in plan mode", n)
+		}
+	}
+	for _, n := range []string{"read_file", "grep", "git_diff", "memory_search", "no_such_tool"} {
+		if IsPlanDenied(n) {
+			t.Errorf("%s must not be denied", n)
+		}
+	}
+	// the helper and the list must agree for every entry
+	for _, d := range PlanDenylist {
+		if !IsPlanDenied(d) {
+			t.Errorf("%s is in PlanDenylist but IsPlanDenied says no", d)
+		}
+	}
+}

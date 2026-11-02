@@ -49,6 +49,12 @@ func main() {
 
 	logger.Init(cfg.LogLevel)
 
+	// Keep the agent's own environment (provider keys, bot token) unreadable to the
+	// commands it spawns via /proc/<pid>/environ; see system.HardenProcess.
+	if err := system.HardenProcess(); err != nil {
+		log.Warn().Err(err).Msg("could not mark process non-dumpable; commands may be able to read the agent's environment")
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 

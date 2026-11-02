@@ -98,7 +98,7 @@ func gitDir(input map[string]any) (string, error) {
 }
 
 func gitEnv(dir string) []string {
-	env := append(os.Environ(),
+	env := append(safeEnviron(),
 		"GIT_TERMINAL_PROMPT=0", "GIT_PAGER=cat", "GIT_EDITOR=true", "GIT_SEQUENCE_EDITOR=true",
 		"GCM_INTERACTIVE=never", "LC_ALL=C",
 	)

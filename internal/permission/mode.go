@@ -162,3 +162,14 @@ func Classified(toolName string) bool {
 	}
 	return false
 }
+
+// IsPlanDenied reports whether a tool must not run in plan mode. The agent loop
+// uses it as a hard backstop on top of removing the tools from the definitions.
+func IsPlanDenied(toolName string) bool {
+	for _, d := range PlanDenylist {
+		if d == toolName {
+			return true
+		}
+	}
+	return false
+}

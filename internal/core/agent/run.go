@@ -275,16 +275,14 @@ func (a *Agent) executeToolCallLoop(ctx context.Context, toolCalls []types.Conte
 		*counter++
 
 		// Hard-deny denylisted tools even if still reachable via local map / stale defs.
-		if a.runPermMode == permission.ModePlan {
-			for _, d := range permission.PlanDenylist {
-				if d == tc.ToolName {
-					msg := "tool unavailable in plan mode: " + tc.ToolName
-					a.emit(transport.ToolEndEvent{Name: tc.ToolName, Result: msg})
-					results = append(results, types.ToolResultBlock(tc.ToolUseID, msg, true))
-					summaries = append(summaries, hook.ToolCallSummary{Name: tc.ToolName, IsErr: true})
-					continue
-				}
-			}
+		// (The skip must apply to the tool-call loop: a `continue` inside a loop over
+		// the denylist would only advance that inner loop and the tool would still run.)
+		if a.runPermMode == permission.ModePlan && permission.IsPlanDenied(tc.ToolName) {
+			msg := "tool unavailable in plan mode: " + tc.ToolName
+			a.emit(transport.ToolEndEvent{Name: tc.ToolName, Result: msg})
+			results = append(results, types.ToolResultBlock(tc.ToolUseID, msg, true))
+			summaries = append(summaries, hook.ToolCallSummary{Name: tc.ToolName, IsErr: true})
+			continue
 		}
 
 		if err := a.loopDetector.Check(tc.ToolName, tc.ToolInput); err != nil {
