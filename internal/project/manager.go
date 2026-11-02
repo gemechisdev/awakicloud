@@ -24,12 +24,13 @@ const (
 
 // Meta is persisted next to the working tree and in archive captions.
 type Meta struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Slug      string    `json:"slug"`
-	ChatID    string    `json:"chat_id,omitempty"`
-	Hash      string    `json:"hash,omitempty"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Slug        string    `json:"slug"`
+	ChatID      string    `json:"chat_id,omitempty"`
+	Hash        string    `json:"hash,omitempty"`         // legacy: zip-byte hash (backward compat)
+	ContentHash string    `json:"content_hash,omitempty"` // content-based hash (file paths + contents)
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // BlobStore is the durable backend (local files and/or Telegram).
@@ -176,31 +177,35 @@ func (m *Manager) ReadMeta(slug string) (Meta, error) {
 }
 
 // Sync zips the local tree and saves to the blob store if content changed.
+// Change detection uses the content hash (file paths + contents), not zip bytes,
+// so re-zipping the same files does not trigger a re-upload.
 func (m *Manager) Sync(ctx context.Context, slug string) (Meta, error) {
 	meta, err := m.ReadMeta(slug)
 	if err != nil {
 		// synthesize from slug
 		meta = Meta{ID: uuid.NewString(), Name: slug, Slug: slug, UpdatedAt: time.Now().UTC()}
 	}
-	data, hash, err := ZipTree(m.ProjectDir(slug))
+	data, contentHash, err := ZipTree(m.ProjectDir(slug))
 	if err != nil {
 		return meta, err
 	}
-	if meta.Hash == hash && hash != "" {
-		log.Debug().Str("slug", slug).Msg("project sync skipped (unchanged)")
+	if meta.ContentHash == contentHash && contentHash != "" {
+		log.Debug().Str("slug", slug).Msg("project sync skipped (content unchanged)")
 		return meta, nil
 	}
 	// size guard ~45MB
 	if len(data) > 45<<20 {
 		return meta, fmt.Errorf("project archive too large (%d bytes); add ignores or split the project", len(data))
 	}
-	meta.Hash = hash
+	// Keep legacy zip-byte hash for backward compatibility.
+	meta.Hash = LegacyZipHash(data)
+	meta.ContentHash = contentHash
 	meta.UpdatedAt = time.Now().UTC()
 	if err := m.blobs.SaveArchive(ctx, meta, data); err != nil {
 		return meta, err
 	}
 	_ = m.writeMeta(meta)
-	log.Info().Str("slug", slug).Str("hash", hash).Int("bytes", len(data)).Msg("project synced")
+	log.Info().Str("slug", slug).Str("content_hash", contentHash).Int("bytes", len(data)).Msg("project synced")
 	return meta, nil
 }
 

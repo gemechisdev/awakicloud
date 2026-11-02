@@ -9,8 +9,8 @@ import (
 	"github.com/gemechischala/awaki/internal/core/prompt"
 	types "github.com/gemechischala/awaki/internal/domain"
 	"github.com/gemechischala/awaki/internal/mcp"
-	"github.com/gemechischala/awaki/internal/project"
 	"github.com/gemechischala/awaki/internal/permission"
+	"github.com/gemechischala/awaki/internal/project"
 	"github.com/gemechischala/awaki/internal/providers"
 	"github.com/gemechischala/awaki/internal/scheduler"
 	"github.com/gemechischala/awaki/internal/store"
@@ -44,39 +44,43 @@ type Engine struct {
 	steer     steerState
 	// rebuildAgent recreates the LLM client from the active provider/model pair.
 	rebuildAgent func() error
+	// projectSyncInterval is the debounced auto-sync tick for active projects.
+	projectSyncInterval time.Duration
 
 	mu     sync.Mutex
 	active *activeRun
 }
 
 type Params struct {
-	Channel      channel.Channel
-	Store        store.Store
-	Agent        *agent.Agent
-	Chats        *chat.Manager
-	Scheduler    *scheduler.Scheduler
-	Registry     *tools.Registry
-	Providers    *providers.Store
-	Projects     *project.Manager
-	MCP          *mcp.Manager
-	Tasks        *tasks.Manager
-	PermStore    *permission.Store
-	RebuildAgent func() error
+	Channel             channel.Channel
+	Store               store.Store
+	Agent               *agent.Agent
+	Chats               *chat.Manager
+	Scheduler           *scheduler.Scheduler
+	Registry            *tools.Registry
+	Providers           *providers.Store
+	Projects            *project.Manager
+	MCP                 *mcp.Manager
+	Tasks               *tasks.Manager
+	PermStore           *permission.Store
+	ProjectSyncInterval time.Duration
+	RebuildAgent        func() error
 }
 
 func New(p Params) *Engine {
 	eng := &Engine{
-		ch:           p.Channel,
-		store:        p.Store,
-		agent:        p.Agent,
-		chats:        p.Chats,
-		scheduler:    p.Scheduler,
-		registry:     p.Registry,
-		providers:    p.Providers,
-		projects:     p.Projects,
-		mcp:          p.MCP,
-		tasksMgr:     p.Tasks,
-		rebuildAgent: p.RebuildAgent,
+		ch:                  p.Channel,
+		store:               p.Store,
+		agent:               p.Agent,
+		chats:               p.Chats,
+		scheduler:           p.Scheduler,
+		registry:            p.Registry,
+		providers:           p.Providers,
+		projects:            p.Projects,
+		mcp:                 p.MCP,
+		tasksMgr:            p.Tasks,
+		rebuildAgent:        p.RebuildAgent,
+		projectSyncInterval: p.ProjectSyncInterval,
 	}
 
 	ownerReply := p.Channel.OwnerReplier()
@@ -349,8 +353,8 @@ func (e *Engine) runAgent(ctx context.Context, msg channel.Message) {
 	}
 
 	input := agent.RunInput{
-		Messages:   ch.Messages(),
-		UserBlocks: blocks,
+		Messages:       ch.Messages(),
+		UserBlocks:     blocks,
 		PlanMode:       planMode,
 		PermissionMode: effective.String(),
 	}

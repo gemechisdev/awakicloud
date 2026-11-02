@@ -39,6 +39,10 @@ type SchedulerConfig struct {
 	MaxConcurrent int
 }
 
+type ProjectConfig struct {
+	SyncInterval time.Duration
+}
+
 type Config struct {
 	Transport string
 	DataDir   string
@@ -48,6 +52,7 @@ type Config struct {
 	Telegram  TelegramConfig
 	LLM       LLMConfig
 	Scheduler SchedulerConfig
+	Project   ProjectConfig
 }
 
 func env(key string) string {
@@ -89,6 +94,9 @@ func Load() (*Config, error) {
 		Scheduler: SchedulerConfig{
 			TaskTimeout:   5 * time.Minute,
 			MaxConcurrent: 2,
+		},
+		Project: ProjectConfig{
+			SyncInterval: 30 * time.Second,
 		},
 	}
 
@@ -146,6 +154,12 @@ func Load() (*Config, error) {
 	if s := env("AWAKI_SCHEDULER_MAX_CONCURRENT"); s != "" {
 		if v, err := strconv.Atoi(s); err == nil && v > 0 {
 			cfg.Scheduler.MaxConcurrent = v
+		}
+	}
+
+	if s := env("AWAKI_PROJECT_SYNC_INTERVAL"); s != "" {
+		if d, err := time.ParseDuration(s); err == nil && d > 0 {
+			cfg.Project.SyncInterval = d
 		}
 	}
 

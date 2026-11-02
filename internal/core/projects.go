@@ -54,13 +54,17 @@ func (e *Engine) syncActiveProject(ctx context.Context) {
 
 // startProjectAutoSync launches a background ticker that auto-syncs the active
 // project whenever the project manager reports dirty (file changes, DB updates,
-// etc.). Runs every 30s to match the DB snapshot cadence.
+// etc.). Interval is configurable (default 30s).
 func (e *Engine) startProjectAutoSync(ctx context.Context) {
 	if e.projects == nil {
 		return
 	}
+	interval := e.projectSyncInterval
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
 	go func() {
-		t := time.NewTicker(30 * time.Second)
+		t := time.NewTicker(interval)
 		defer t.Stop()
 		for {
 			select {

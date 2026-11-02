@@ -9,13 +9,26 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
-// ZipTree archives root into a zip, applying ignore rules. Returns data + content hash.
-func ZipTree(root string) (data []byte, hash string, err error) {
+// ZipTree archives root into a zip, applying ignore rules. Returns zip data + content hash.
+// The content hash is computed from file contents (not zip bytes), so identical
+// file trees always produce the same hash regardless of zip metadata (timestamps,
+// entry order, compression). This prevents false "changed" detections that cause
+// unnecessary re-uploads to Telegram.
+func ZipTree(root string) (data []byte, contentHash string, err error) {
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
+
+	type fileEntry struct {
+		rel  string
+		path string
+		info os.FileInfo
+	}
+	var entries []fileEntry
+
 	err = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -34,35 +47,82 @@ func ZipTree(root string) (data []byte, hash string, err error) {
 			}
 			return nil
 		}
-		if info.IsDir() {
-			_, err := zw.Create(relSlash + "/")
-			return err
-		}
-		if !info.Mode().IsRegular() {
-			return nil
-		}
-		w, err := zw.Create(relSlash)
-		if err != nil {
-			return err
-		}
-		f, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-		_, err = io.Copy(w, f)
-		return err
+		entries = append(entries, fileEntry{rel: relSlash, path: path, info: info})
+		return nil
 	})
 	if err != nil {
 		_ = zw.Close()
 		return nil, "", err
 	}
+
+	// Sort entries for deterministic zip output.
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].rel < entries[j].rel
+	})
+
+	// Compute content hash from sorted (path, content) pairs.
+	h := sha256.New()
+	for _, e := range entries {
+		if e.info.IsDir() {
+			_, err := zw.Create(e.rel + "/")
+			if err != nil {
+				_ = zw.Close()
+				return nil, "", err
+			}
+			continue
+		}
+		if !e.info.Mode().IsRegular() {
+			continue
+		}
+		// Hash the relative path + file content.
+		h.Write([]byte(e.rel))
+		h.Write([]byte("\x00"))
+		f, err := os.Open(e.path)
+		if err != nil {
+			_ = zw.Close()
+			return nil, "", err
+		}
+		if _, err := io.Copy(h, f); err != nil {
+			f.Close()
+			_ = zw.Close()
+			return nil, "", err
+		}
+		f.Close()
+		h.Write([]byte("\x00"))
+
+		// Write to zip.
+		w, err := zw.Create(e.rel)
+		if err != nil {
+			_ = zw.Close()
+			return nil, "", err
+		}
+		f, err = os.Open(e.path)
+		if err != nil {
+			_ = zw.Close()
+			return nil, "", err
+		}
+		_, err = io.Copy(w, f)
+		f.Close()
+		if err != nil {
+			_ = zw.Close()
+			return nil, "", err
+		}
+	}
+
 	if err := zw.Close(); err != nil {
 		return nil, "", err
 	}
+
 	data = buf.Bytes()
+	contentHash = "sha256:" + hex.EncodeToString(h.Sum(nil))
+	return data, contentHash, nil
+}
+
+// LegacyZipHash computes the SHA-256 of the zip bytes (kept for backward
+// compatibility with existing project meta that may store zip_hash).
+func LegacyZipHash(data []byte) string {
 	sum := sha256.Sum256(data)
-	return data, "sha256:" + hex.EncodeToString(sum[:]), nil
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 // ExtractZip writes zip data into dest (created if needed). Existing files may be overwritten.

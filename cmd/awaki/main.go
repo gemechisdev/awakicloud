@@ -21,8 +21,8 @@ import (
 	"github.com/gemechischala/awaki/internal/llm"
 	"github.com/gemechischala/awaki/internal/logger"
 	"github.com/gemechischala/awaki/internal/mcp"
-	"github.com/gemechischala/awaki/internal/project"
 	"github.com/gemechischala/awaki/internal/permission"
+	"github.com/gemechischala/awaki/internal/project"
 	"github.com/gemechischala/awaki/internal/providers"
 	"github.com/gemechischala/awaki/internal/scheduler"
 	"github.com/gemechischala/awaki/internal/store"
@@ -85,13 +85,13 @@ func main() {
 	// HTTP health endpoints for Koyeb / Render / Railway (PORT or AWAKI_HTTP_PORT, default 8000).
 	hs := health.New(health.AddrFromEnv(), func() map[string]any {
 		return map[string]any{
-			"service":   "awaki",
-			"transport": ch.Name(),
-			"busy":           eng.Busy(),
-			"hooks_enabled":  health.HookSecretFromEnv() != "",
+			"service":       "awaki",
+			"transport":     ch.Name(),
+			"busy":          eng.Busy(),
+			"hooks_enabled": health.HookSecretFromEnv() != "",
 		}
 	})
-		hs.SetHooks(health.HookCallbacks{
+	hs.SetHooks(health.HookCallbacks{
 		Secret: health.HookSecretFromEnv(),
 		Agent: func(ctx context.Context, text string, plan bool, mode string) (map[string]any, error) {
 			return eng.HookAgent(ctx, text, plan, mode)
@@ -355,18 +355,19 @@ func buildEngine(ctx context.Context, cfg *config.Config, ch channel.Channel) (*
 	permStore := permission.NewStore(cfg.DataDir)
 
 	return core.New(core.Params{
-		Channel:      ch,
-		Store:        st,
-		Agent:        ag,
-		Chats:        chatMgr,
-		Scheduler:    sched,
-		Registry:     reg,
-		Providers:    provStore,
-		Projects:     projMgr,
-		MCP:          mcpMgr,
-		Tasks:        taskMgr,
-		PermStore:    permStore,
-		RebuildAgent: rebuild,
+		Channel:             ch,
+		Store:               st,
+		Agent:               ag,
+		Chats:               chatMgr,
+		Scheduler:           sched,
+		Registry:            reg,
+		Providers:           provStore,
+		Projects:            projMgr,
+		MCP:                 mcpMgr,
+		Tasks:               taskMgr,
+		PermStore:           permStore,
+		ProjectSyncInterval: cfg.Project.SyncInterval,
+		RebuildAgent:        rebuild,
 	}), nil
 }
 
