@@ -162,13 +162,14 @@ func (e *Engine) handleMessage(ctx context.Context, msg channel.Message) {
 		return
 	}
 
-	// Agent Skill package upload (zip with SKILL.md)
-	if e.trySkillPackageMessage(ctx, msg) {
+	// Data import package while the import wizard is waiting for a file.
+	// Must run before skill-package detection so export ZIPs are not misrouted.
+	if e.tryImportAttachment(ctx, msg) {
 		return
 	}
 
-	// Data import package while the import wizard is waiting for a file
-	if e.tryImportAttachment(ctx, msg) {
+	// Agent Skill package upload (zip with SKILL.md)
+	if e.trySkillPackageMessage(ctx, msg) {
 		return
 	}
 

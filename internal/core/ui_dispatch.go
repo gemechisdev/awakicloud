@@ -50,12 +50,17 @@ func (e *Engine) handleUICallback(ctx context.Context, msg channel.Message) bool
 		}
 	}
 
-	// Active wizard consumes free text (not commands starting with / except cancel)
+	// Active wizard consumes free text (not commands starting with / except cancel).
+	// Import waits for a ZIP attachment: if one is present, let the attachment
+	// path handle it instead of swallowing the message as empty wizard text.
 	if w := e.ui.get(); w != nil && !strings.HasPrefix(text, "ui:") && !strings.HasPrefix(text, "prv:") && !strings.HasPrefix(text, "mdl:") {
 		if strings.HasPrefix(text, "/") && text != "/cancel" {
 			// allow other slash commands to break out
 			e.ui.clear()
 			return false
+		}
+		if w.Kind == "import" && w.Step == "wait_file" && len(msg.Attachments) > 0 {
+			return e.tryImportAttachment(ctx, msg)
 		}
 		return e.handleWizardInput(ctx, msg, w, text)
 	}
@@ -473,7 +478,15 @@ func (e *Engine) toggleModelCap(ctx context.Context, msg channel.Message, id, wh
 
 func (e *Engine) handleWizardInput(ctx context.Context, msg channel.Message, w *uiWizard, text string) bool {
 	text = strings.TrimSpace(text)
+	// Empty text: only claim the message for text-entry wizards. Import (and
+	// similar attachment wizards) must not swallow document-only updates.
 	if text == "" {
+		if w.Kind == "import" && w.Step == "wait_file" {
+			if len(msg.Attachments) > 0 {
+				return e.tryImportAttachment(ctx, msg)
+			}
+			return true // still waiting for the file; ignore empty pings
+		}
 		return true
 	}
 	switch w.Kind {
@@ -509,6 +522,15 @@ func (e *Engine) handleWizardInput(ctx context.Context, msg channel.Message, w *
 		return e.wizardAddSkill(ctx, msg, w, text)
 	case "mcp_key":
 		return e.wizardMCPUpdateKey(ctx, msg, w, text)
+	case "import":
+		// Caption on a document, or a stray message while waiting for the ZIP.
+		if w.Step == "wait_file" && len(msg.Attachments) > 0 {
+			return e.tryImportAttachment(ctx, msg)
+		}
+		_ = msg.Reply.SendText(ctx, "Send an awaki-export-*.zip document, or tap Cancel.")
+		return true
+	case "export":
+		return true
 	}
 	e.ui.clear()
 	return false
