@@ -211,10 +211,15 @@ func (e *Engine) uiModelDetail(ctx context.Context, msg channel.Message, id stri
 	}
 	cw := m.ContextWindow
 	if cw == 0 {
-		cw = 128000
+		cw = 250000
 	}
-	text := fmt.Sprintf("🤖 Model: %s%s\n\nWire ID: %s\nProvider: %s\nContext: %d\nTools: %v · Images: %v · Stream: %v",
-		m.DisplayName, mark, m.ModelID, p.Name, cw, m.Capabilities.Tools, m.Capabilities.Images, m.Capabilities.Streaming)
+	imgGenMark := ""
+	if e.providers.ImageGenModelID() == id {
+		imgGenMark = " · 🖼 fallback"
+	}
+	text := fmt.Sprintf("🤖 Model: %s%s%s\n\nWire ID: %s\nProvider: %s\nContext: %d\nTools: %v · Vision: %v · ImgGen: %v · Stream: %v",
+		m.DisplayName, mark, imgGenMark, m.ModelID, p.Name, cw,
+		m.Capabilities.Tools, m.Capabilities.Images, m.Capabilities.ImageGeneration, m.Capabilities.Streaming)
 	rows := [][]channel.Button{
 		{{Text: "🟢 Use this model", CallbackData: "ui:mdlsel:" + id}},
 		{{Text: "✏️ Display name", CallbackData: "ui:mdlf:" + id + ":display"}},
@@ -222,9 +227,13 @@ func (e *Engine) uiModelDetail(ctx context.Context, msg channel.Message, id stri
 		{{Text: "✏️ Context length", CallbackData: "ui:mdlf:" + id + ":context"}},
 		{
 			{Text: toggleLabel("Tools", m.Capabilities.Tools), CallbackData: "ui:mdltog:" + id + ":tools"},
-			{Text: toggleLabel("Images", m.Capabilities.Images), CallbackData: "ui:mdltog:" + id + ":images"},
+			{Text: toggleLabel("Vision", m.Capabilities.Images), CallbackData: "ui:mdltog:" + id + ":images"},
 		},
-		{{Text: toggleLabel("Streaming", m.Capabilities.Streaming), CallbackData: "ui:mdltog:" + id + ":stream"}},
+		{
+			{Text: toggleLabel("ImgGen", m.Capabilities.ImageGeneration), CallbackData: "ui:mdltog:" + id + ":imggen"},
+			{Text: toggleLabel("Stream", m.Capabilities.Streaming), CallbackData: "ui:mdltog:" + id + ":stream"},
+		},
+		{{Text: "🖼 Set as image-gen fallback", CallbackData: "ui:imggen:" + id}},
 		{{Text: "🗑 Delete Model", CallbackData: "ui:mdldelc:" + id}},
 		{{Text: "⬅ Provider", CallbackData: "ui:prv:" + m.ProviderID}},
 	}
@@ -320,7 +329,7 @@ func (e *Engine) uiEditModelField(ctx context.Context, msg channel.Message, id, 
 	e.ui.set(&uiWizard{Kind: "edit_model", Step: field, ModelID: id, Field: field, Draft: map[string]string{}})
 	prompts := map[string]string{
 		"display": "Send the new display name.", "model_id": "Send the new wire model ID.",
-		"context": "Send context window size as a number (e.g. 128000).",
+		"context": "Send context window size as a number (e.g. 250000).",
 	}
 	e.deliverKeyboard(ctx, msg, channel.KeyboardMessage{
 		Text: "✏️ " + prompts[field] + "\n\nSend /cancel to abort.",

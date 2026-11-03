@@ -204,7 +204,7 @@ func resolveOpenAIUnknown(model string) (*Provider, error) {
 	return &Provider{
 		ID: model, Label: model, Model: model,
 		BaseURL: base, APIKey: apiKey, Format: "openai",
-		ContextWindow: 128000, SupportsVision: true,
+		ContextWindow: 250000, SupportsVision: true,
 	}, nil
 }
 
@@ -244,7 +244,7 @@ func resolveOpenRouter(id, slug string) (*Provider, error) {
 		ID: id, Model: slug, Label: slug,
 		BaseURL: base,
 		APIKey:  apiKey, Format: "openai",
-		ContextWindow: 128000,
+		ContextWindow: 250000,
 	}
 	if def, ok := getOpenRouterCatalog()[slug]; ok {
 		p.Label = def.Label
@@ -274,7 +274,7 @@ func resolveCustom(model string) (*Provider, error) {
 	return &Provider{
 		ID: model, Label: "custom/" + model, Model: model,
 		BaseURL: base, APIKey: apiKey, Format: "openai",
-		ContextWindow: 128000, SupportsVision: true,
+		ContextWindow: 250000, SupportsVision: true,
 	}, nil
 }
 

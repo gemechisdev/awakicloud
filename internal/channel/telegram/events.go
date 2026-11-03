@@ -166,6 +166,13 @@ func (r *replier) ConsumeEvents(ctx context.Context, events <-chan transport.Eve
 				flush()
 				_ = r.SendText(ctx, formatMessageWithLevel(e.Text, e.Level))
 
+			case transport.MediaEvent:
+				cancelThinking()
+				flush()
+				if len(e.Data) > 0 {
+					_ = r.SendPhotoBytes(ctx, e.Filename, e.Data, e.Caption)
+				}
+
 			case transport.AskEvent:
 				flush()
 				if statusID != 0 {

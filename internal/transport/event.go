@@ -95,6 +95,16 @@ type MidMessageEvent struct {
 	Level MessageLevel
 }
 
+// MediaEvent delivers a generated or fetched binary (photo/document) to the user
+// mid-run. Channels that support media (Telegram) send it as a photo/document.
+type MediaEvent struct {
+	BaseEvent
+	Filename string // e.g. "generated.png"
+	MimeType string // e.g. "image/png"
+	Data     []byte
+	Caption  string
+}
+
 // LoopWarningEvent signals a detected tool-call loop (identical args repeated).
 type LoopWarningEvent struct {
 	BaseEvent

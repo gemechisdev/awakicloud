@@ -22,7 +22,7 @@ func ToLLMProvider(p Provider, m Model, timeout time.Duration) (*llm.Provider, e
 	}
 	cw := m.ContextWindow
 	if cw <= 0 {
-		cw = 128000
+		cw = 250000
 	}
 	label := m.DisplayName
 	if label == "" {

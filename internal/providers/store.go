@@ -112,7 +112,7 @@ func (s *Store) save() error {
 func (s *Store) Snapshot() ConfigFile {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	out := ConfigFile{ActiveModelID: s.cfg.ActiveModelID}
+	out := ConfigFile{ActiveModelID: s.cfg.ActiveModelID, ImageGenModelID: s.cfg.ImageGenModelID}
 	out.Providers = append([]Provider(nil), s.cfg.Providers...)
 	out.Models = append([]Model(nil), s.cfg.Models...)
 	return out
@@ -222,7 +222,7 @@ func (s *Store) ImportConfig(incoming ConfigFile, overwrite bool) (providersAdde
 		}
 		if m.Capabilities == (Capabilities{}) {
 			m.Capabilities = Capabilities{
-				Tools: true, Images: true, Streaming: true, MaxTokensParameter: true,
+				Tools: true, Images: true, ImageGeneration: false, Streaming: true, MaxTokensParameter: true,
 			}
 		}
 		if idx, ok := byModelID[m.ID]; ok {
@@ -254,6 +254,11 @@ func (s *Store) ImportConfig(incoming ConfigFile, overwrite bool) (providersAdde
 			s.cfg.ActiveModelID = incoming.ActiveModelID
 		} else if s.cfg.ActiveModelID == "" && len(s.cfg.Models) > 0 {
 			s.cfg.ActiveModelID = s.cfg.Models[0].ID
+		}
+	}
+	if incoming.ImageGenModelID != "" {
+		if _, ok := byModelID[incoming.ImageGenModelID]; ok {
+			s.cfg.ImageGenModelID = incoming.ImageGenModelID
 		}
 	}
 
@@ -425,7 +430,7 @@ func (s *Store) AddModel(providerID, modelID, displayName string, contextWindow 
 		DisplayName:   displayName,
 		ContextWindow: contextWindow,
 		Capabilities: Capabilities{
-			Tools: true, Images: true, Streaming: true, MaxTokensParameter: true,
+			Tools: true, Images: true, ImageGeneration: false, Streaming: true, MaxTokensParameter: true,
 		},
 	}
 	s.mu.Lock()
@@ -521,6 +526,70 @@ func (s *Store) ActiveModelID() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.cfg.ActiveModelID
+}
+
+// SetImageGenModel sets the fallback image-generation model (by model UUID).
+// Pass empty string to clear. The model should prefer Capabilities.ImageGeneration.
+func (s *Store) SetImageGenModel(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id = strings.TrimSpace(id)
+	if id != "" {
+		found := false
+		for _, m := range s.cfg.Models {
+			if m.ID == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("model %q not found", id)
+		}
+	}
+	s.cfg.ImageGenModelID = id
+	return s.save()
+}
+
+func (s *Store) ImageGenModelID() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.cfg.ImageGenModelID
+}
+
+// ResolveImageGen returns the model+provider to use for text-to-image.
+// Preference: explicit ImageGenModelID → any model with ImageGeneration → error.
+func (s *Store) ResolveImageGen() (Model, Provider, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	pick := func(id string) (Model, Provider, bool) {
+		for _, m := range s.cfg.Models {
+			if m.ID != id {
+				continue
+			}
+			for _, p := range s.cfg.Providers {
+				if p.ID == m.ProviderID {
+					return m, p, true
+				}
+			}
+		}
+		return Model{}, Provider{}, false
+	}
+	if s.cfg.ImageGenModelID != "" {
+		if m, p, ok := pick(s.cfg.ImageGenModelID); ok {
+			return m, p, nil
+		}
+	}
+	for _, m := range s.cfg.Models {
+		if !m.Capabilities.ImageGeneration {
+			continue
+		}
+		for _, p := range s.cfg.Providers {
+			if p.ID == m.ProviderID {
+				return m, p, nil
+			}
+		}
+	}
+	return Model{}, Provider{}, fmt.Errorf("no image-generation model configured — mark a model with Image Generation capability or set a fallback via Settings")
 }
 
 // ActivePair returns the active model and its provider.

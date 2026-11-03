@@ -236,6 +236,7 @@ func buildEngine(ctx context.Context, cfg *config.Config, ch channel.Channel) (*
 	extra := append(comm.ChannelTools(),
 		system.ScheduleTools(sched)...,
 	)
+	extra = append(extra, system.ImageGenTools(provStore)...)
 	extra = append(extra, tasks.Tools(taskMgr)...)
 	extra = append(extra, identity.IdentityTools(st, sched.SetLocation)...)
 

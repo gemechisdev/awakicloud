@@ -48,6 +48,15 @@ func (r *replier) SendFile(ctx context.Context, path, caption string) error {
 	}
 }
 
+// SendPhotoBytes sends an in-memory image to the chat as a photo.
+func (r *replier) SendPhotoBytes(ctx context.Context, filename string, data []byte, caption string) error {
+	if filename == "" {
+		filename = "image.png"
+	}
+	upload := &models.InputFileUpload{Filename: filename, Data: bytes.NewReader(data)}
+	return r.ch.client.SendPhoto(ctx, r.chatID, upload, caption)
+}
+
 func (r *replier) SendAsk(ctx context.Context, prompt string, kind transport.AskKind, options []transport.AskOption) error {
 	text := "❓ " + prompt
 

@@ -355,6 +355,17 @@ func (e *Engine) routeUI(ctx context.Context, msg channel.Message, data string) 
 		if len(parts) >= 4 {
 			e.uiEditModelField(ctx, msg, parts[2], parts[3])
 		}
+	case "imggen":
+		if len(parts) >= 3 {
+			id := parts[2]
+			if err := e.providers.SetImageGenModel(id); err != nil {
+				_ = msg.Reply.SendText(ctx, err.Error())
+				return
+			}
+			m, _ := e.providers.GetModel(id)
+			_ = msg.Reply.SendText(ctx, "🖼 Image-gen fallback set to "+m.DisplayName)
+			e.uiModelDetail(ctx, msg, id)
+		}
 	case "mdltog":
 		if len(parts) >= 4 {
 			e.toggleModelCap(ctx, msg, parts[2], parts[3])
@@ -466,6 +477,8 @@ func (e *Engine) toggleModelCap(ctx context.Context, msg channel.Message, id, wh
 		caps.Tools = !caps.Tools
 	case "images":
 		caps.Images = !caps.Images
+	case "imggen":
+		caps.ImageGeneration = !caps.ImageGeneration
 	case "stream":
 		caps.Streaming = !caps.Streaming
 	}
@@ -639,7 +652,7 @@ func (e *Engine) wizardAddModel(ctx context.Context, msg channel.Message, w *uiW
 		e.ui.setDraft("display_name", text)
 		e.ui.setStep("context_window")
 		e.deliverKeyboard(ctx, msg, channel.KeyboardMessage{
-			Text: "➕ Step 3/3 — Context length\n\nSend a number (e.g. 128000), or 0 for default.",
+			Text: "➕ Step 3/3 — Context length\n\nSend a number (e.g. 250000), or 0 for default.",
 			Rows: [][]channel.Button{{{Text: "❌ Cancel", CallbackData: "ui:prv:" + w.ProviderID}}},
 		})
 	case "context_window":

@@ -65,7 +65,8 @@ func ParseProtocol(raw string) (Protocol, bool) {
 // Capabilities mirrors ModelCapabilities from Awaki.
 type Capabilities struct {
 	Tools              bool `json:"tools"`
-	Images             bool `json:"images"`
+	Images             bool `json:"images"` // vision / image input
+	ImageGeneration    bool `json:"image_generation"` // text-to-image output
 	ParallelToolCalls  bool `json:"parallel_tool_calls"`
 	PromptCaching      bool `json:"prompt_caching"`
 	MaxTokensParameter bool `json:"max_tokens_parameter"`
@@ -96,8 +97,12 @@ type Model struct {
 // ConfigFile is the on-disk JSON document.
 type ConfigFile struct {
 	ActiveModelID string     `json:"active_model_id"`
-	Providers     []Provider `json:"providers"`
-	Models        []Model    `json:"models"`
+	// ImageGenModelID is the fallback model used by the generate_image tool when
+	// the active chat model does not have Capabilities.ImageGeneration.
+	// Prefer models marked ImageGeneration; otherwise any OpenAI/Gemini image endpoint works.
+	ImageGenModelID string     `json:"image_gen_model_id,omitempty"`
+	Providers       []Provider `json:"providers"`
+	Models          []Model    `json:"models"`
 }
 
 // MaskKey redacts an API key for display (never log or show full secrets).
