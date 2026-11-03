@@ -83,6 +83,8 @@ Commands are defined in **one catalog** (`internal/channel/commands.go`) that fe
 | `/skills` | List agent skills |
 | `/skill_add` | Add a skill |
 | `/plugin` | Skills marketplace helpers |
+| `/export` | Selective data export (ZIP) |
+| `/import` | Import an Awaki export ZIP |
 
 Inline menus cover the same flows (Settings → providers, MCP, skills, permission mode, tasks, projects).
 
@@ -152,6 +154,15 @@ Time to call your team.
 | **MTProto user session** | Optional Telegrive-style storage (`AWAKI_TG_*`) |
 
 On cold start, configuration rehydrates from SQLite (and TG snapshots when configured).
+
+### Selective export / import
+
+Settings → **Export data** / **Import data**, or `/export` and `/import`.
+
+- Categories: providers & models, MCP (with config/tokens), skills, identity (soul/user), memory, schedules, permission modes, projects (workspace ZIP), chats (meta + messages).
+- Toggle any subset; optional merge vs overwrite on import.
+- Format: versioned ZIP with `manifest.json` + per-category JSON/files. **Secrets (API keys, OAuth tokens) are included** — treat the archive as confidential.
+- Full DB snapshots to Telegram storage remain available for disaster recovery; this feature is for selective migration and backups.
 
 ---
 

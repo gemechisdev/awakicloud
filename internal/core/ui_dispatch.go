@@ -156,6 +156,10 @@ func (e *Engine) routeUI(ctx context.Context, msg channel.Message, data string) 
 		}
 	case "settings":
 		e.uiSettings(ctx, msg)
+	case "export":
+		e.handleExportUI(ctx, msg, parts)
+	case "import":
+		e.handleImportUI(ctx, msg, parts)
 	case "mode":
 		e.uiModeMenu(ctx, msg)
 	case "tasks":

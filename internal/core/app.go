@@ -88,6 +88,7 @@ func New(p Params) *Engine {
 		projects:            p.Projects,
 		mcp:                 p.MCP,
 		tasksMgr:            p.Tasks,
+		permStore:           p.PermStore,
 		rebuildAgent:        p.RebuildAgent,
 		projectSyncInterval: p.ProjectSyncInterval,
 	}
@@ -163,6 +164,11 @@ func (e *Engine) handleMessage(ctx context.Context, msg channel.Message) {
 
 	// Agent Skill package upload (zip with SKILL.md)
 	if e.trySkillPackageMessage(ctx, msg) {
+		return
+	}
+
+	// Data import package while the import wizard is waiting for a file
+	if e.tryImportAttachment(ctx, msg) {
 		return
 	}
 
@@ -258,6 +264,12 @@ func (e *Engine) handleCommand(ctx context.Context, msg channel.Message) {
 			return
 		}
 		e.setPermissionMode(ctx, msg, raw)
+		return
+	case channel.CmdExport:
+		e.uiExportStart(ctx, msg)
+		return
+	case channel.CmdImport:
+		e.uiImportStart(ctx, msg)
 		return
 	case channel.CmdPlan:
 		raw := ""

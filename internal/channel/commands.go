@@ -60,6 +60,9 @@ var Commands = []CommandSpec{
 	{Slash: "skills", Cmd: CmdSkills, Description: "List Agent Skills", Help: "list agent skills", Menu: true},
 	{Slash: "skill_add", Cmd: CmdSkillAdd, Description: "Add a skill", Help: "add a skill", Menu: true},
 	{Slash: "plugin", Cmd: CmdPlugin, Description: "Skills marketplace", Help: "skills marketplace", Menu: true},
+
+	{Slash: "export", Cmd: CmdExport, Description: "Export data (selective ZIP)", Help: "export providers, MCP, skills, … as a ZIP", Menu: true},
+	{Slash: "import", Cmd: CmdImport, Description: "Import data from ZIP", Help: "import an awaki-export ZIP (selective)", Menu: true},
 }
 
 // CommandMap builds "/slash" → engine Cmd name for routing.

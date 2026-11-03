@@ -2,15 +2,20 @@ package core
 
 import "sync"
 
-// uiWizard tracks multi-step Telegram input for provider/model forms.
+// uiWizard tracks multi-step Telegram input for provider/model forms and data export/import.
 type uiWizard struct {
-	Kind       string // add_provider | edit_provider | add_model | edit_model_field
-	Step       string // name | base_url | protocol | api_key | model_id | display_name | context_window | field
+	Kind       string // add_provider | edit_provider | add_model | edit_model_field | export | import
+	Step       string // name | base_url | protocol | api_key | model_id | display_name | context_window | field | cats | items | confirm
 	ProviderID string
 	ModelID    string
 	Field      string // when editing a single field
 	Draft      map[string]string
 	Page       int
+	// Selection state for export/import (category keys and optional item names).
+	SelectedCats map[string]bool
+	SelectedItems map[string]map[string]bool // cat → name → selected
+	Overwrite    bool
+	PendingData  []byte // import archive held until confirm
 }
 
 type uiState struct {
@@ -30,13 +35,31 @@ func (s *uiState) get() *uiWizard {
 	if s.wizard == nil {
 		return nil
 	}
-	// return a shallow copy of draft pointer is fine for same process
+	// return a copy so callers can mutate without racing the live wizard
 	cp := *s.wizard
 	if s.wizard.Draft != nil {
 		cp.Draft = map[string]string{}
 		for k, v := range s.wizard.Draft {
 			cp.Draft[k] = v
 		}
+	}
+	if s.wizard.SelectedCats != nil {
+		cp.SelectedCats = map[string]bool{}
+		for k, v := range s.wizard.SelectedCats {
+			cp.SelectedCats[k] = v
+		}
+	}
+	if s.wizard.SelectedItems != nil {
+		cp.SelectedItems = map[string]map[string]bool{}
+		for cat, m := range s.wizard.SelectedItems {
+			cp.SelectedItems[cat] = map[string]bool{}
+			for k, v := range m {
+				cp.SelectedItems[cat][k] = v
+			}
+		}
+	}
+	if s.wizard.PendingData != nil {
+		cp.PendingData = append([]byte(nil), s.wizard.PendingData...)
 	}
 	return &cp
 }

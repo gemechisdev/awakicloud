@@ -124,3 +124,44 @@ func (s *Store) Default() Mode {
 func (s *Store) SetDefault(m Mode) error {
 	return s.Set("", m)
 }
+
+// ExportJSON returns the current permission_modes document for backup/export.
+func (s *Store) ExportJSON() ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f := fileShape{
+		Default: string(s.defMode),
+		Chats:   make(map[string]string, len(s.modes)),
+	}
+	for id, m := range s.modes {
+		f.Chats[id] = string(m)
+	}
+	return json.MarshalIndent(f, "", "  ")
+}
+
+// ImportJSON merges or replaces modes from an export document.
+// When overwrite is true, existing chat modes are replaced; otherwise only
+// missing chat IDs are added. Default is always updated when present.
+func (s *Store) ImportJSON(data []byte, overwrite bool) error {
+	var f fileShape
+	if err := json.Unmarshal(data, &f); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if f.Default != "" {
+		if m, err := Parse(f.Default); err == nil {
+			s.defMode = m
+		}
+	}
+	for id, raw := range f.Chats {
+		if m, err := Parse(raw); err == nil {
+			if overwrite {
+				s.modes[id] = m
+			} else if _, exists := s.modes[id]; !exists {
+				s.modes[id] = m
+			}
+		}
+	}
+	return s.saveLocked()
+}
