@@ -53,17 +53,23 @@ RUN ln -sf /usr/bin/fdfind /usr/local/bin/fd || true
 
 # --- Go toolchain (matches module go 1.25) ---
 # Agent can `go build` / `go test` / `go run` inside the container.
+# Try golang.org mirror first; fall back to go.dev. Skip if already installed.
 RUN set -eux; \
     arch="${TARGETARCH:-amd64}"; \
     case "$arch" in \
       amd64|arm64) ;; \
       *) arch=amd64 ;; \
     esac; \
-    curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${arch}.tar.gz" -o /tmp/go.tgz; \
-    rm -rf /usr/local/go; \
-    tar -C /usr/local -xzf /tmp/go.tgz; \
-    rm -f /tmp/go.tgz; \
-    /usr/local/go/bin/go version
+    if [ -x /usr/local/go/bin/go ] && /usr/local/go/bin/go version | grep -q "go${GO_VERSION}"; then \
+      echo "Go ${GO_VERSION} already installed, skipping download"; \
+    else \
+      rm -rf /usr/local/go; \
+      curl -fsSL "https://golang.org/dl/go${GO_VERSION}.linux-${arch}.tar.gz" -o /tmp/go.tgz || \
+      curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${arch}.tar.gz" -o /tmp/go.tgz; \
+      tar -C /usr/local -xzf /tmp/go.tgz; \
+      rm -f /tmp/go.tgz; \
+      /usr/local/go/bin/go version; \
+    fi
 
 ENV PATH="/usr/local/go/bin:/root/go/bin:${PATH}"
 ENV GOPATH=/root/go
