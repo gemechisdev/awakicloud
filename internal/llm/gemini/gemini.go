@@ -299,15 +299,18 @@ func truncate(s string, n int) string {
 	return s[:n] + "…"
 }
 
-// geminiSchemaKeys is the OpenAPI 3.0 subset that Gemini function_declarations
-// parameters accept. See:
+// geminiSchemaKeys is the Schema subset Gemini accepts on
+// function_declarations[].parameters (OpenAPI 3.0 / Google Schema proto).
 //
-//	https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/tools/function-calling
+// Officially supported: type, nullable, required, format, description,
+// properties, items, enum, anyOf.
 //
-// Supported: type, nullable, required, format, description, properties, items,
-// enum, anyOf (and title, which is harmless). Everything else — exclusiveMinimum,
-// propertyNames, additionalProperties, $schema, minLength, maxItems, default,
-// oneOf, pattern, etc. — is rejected with HTTP 400 "Unknown name".
+// NOT supported (cause HTTP 400): title, $schema, additionalProperties,
+// exclusiveMinimum, propertyNames, minimum, maximum, minLength, maxItems,
+// default, oneOf, pattern, const, etc.
+//
+// type must be a single string ("object","string",…), never an array — JSON
+// Schema union types like ["string","null"] become type+"nullable".
 var geminiSchemaKeys = map[string]bool{
 	"type":        true,
 	"description": true,
@@ -318,16 +321,17 @@ var geminiSchemaKeys = map[string]bool{
 	"nullable":    true,
 	"format":      true,
 	"anyOf":       true,
-	"title":       true,
 }
 
 // cleanGeminiSchema recursively rewrites a JSON-schema object to the Gemini
-// allowlist only. Nested maps under properties/items/anyOf are cleaned the same way.
+// allowlist with correct scalar types so protobuf JSON does not see
+// "Starting an object on a scalar field".
 func cleanGeminiSchema(schema map[string]any) map[string]any {
 	if schema == nil {
 		return nil
 	}
 	cleaned := make(map[string]any, len(schema))
+
 	for k, v := range schema {
 		if !geminiSchemaKeys[k] {
 			continue
@@ -342,34 +346,56 @@ func cleanGeminiSchema(schema map[string]any) map[string]any {
 			for pk, pv := range props {
 				if m, ok := pv.(map[string]any); ok {
 					out[pk] = cleanGeminiSchema(m)
-				} else {
-					// Non-object property defs are invalid for Gemini; skip
-					continue
 				}
 			}
-			cleaned[k] = out
+			cleaned["properties"] = out
+
 		case "items":
 			if m, ok := v.(map[string]any); ok {
-				cleaned[k] = cleanGeminiSchema(m)
-			} else if arr, ok := v.([]any); ok {
-				// Rare tuple form — keep only object schemas
-				cleaned[k] = cleanGeminiSchemaArray(arr)
+				cleaned["items"] = cleanGeminiSchema(m)
+			} else if arr, ok := v.([]any); ok && len(arr) > 0 {
+				// Tuple schemas unsupported — use first object schema if any
+				if m, ok := arr[0].(map[string]any); ok {
+					cleaned["items"] = cleanGeminiSchema(m)
+				}
 			}
+
 		case "anyOf":
 			if arr, ok := v.([]any); ok {
-				cleaned[k] = cleanGeminiSchemaArray(arr)
+				cleaned["anyOf"] = cleanGeminiSchemaArray(arr)
 			}
-		case "required", "enum":
-			cleaned[k] = v
+
+		case "required":
+			if req := scalarStringSlice(v); len(req) > 0 {
+				cleaned["required"] = req
+			}
+
+		case "enum":
+			if en := scalarEnumSlice(v); len(en) > 0 {
+				cleaned["enum"] = en
+			}
+
 		case "type":
-			// Gemini expects uppercase enum values in some APIs but string
-			// lowercase ("object","string",…) is accepted by generateContent.
-			cleaned[k] = v
-		default:
-			cleaned[k] = v
+			t, nullable := normalizeGeminiType(v)
+			if t != "" {
+				cleaned["type"] = t
+			}
+			if nullable {
+				cleaned["nullable"] = true
+			}
+
+		case "nullable":
+			if b, ok := v.(bool); ok {
+				cleaned["nullable"] = b
+			}
+
+		case "description", "format":
+			if s, ok := v.(string); ok && s != "" {
+				cleaned[k] = s
+			}
 		}
 	}
-	// Gemini requires an object schema for parameters.
+
 	if _, ok := cleaned["type"]; !ok {
 		cleaned["type"] = "object"
 	}
@@ -386,6 +412,75 @@ func cleanGeminiSchemaArray(arr []any) []any {
 	for _, v := range arr {
 		if m, ok := v.(map[string]any); ok {
 			out = append(out, cleanGeminiSchema(m))
+		}
+	}
+	return out
+}
+
+// normalizeGeminiType maps JSON Schema type (string or ["string","null"]) to a
+// single Gemini type string and optional nullable flag.
+func normalizeGeminiType(v any) (typeStr string, nullable bool) {
+	switch t := v.(type) {
+	case string:
+		return strings.ToLower(t), false
+	case []any:
+		var primary string
+		for _, item := range t {
+			s, ok := item.(string)
+			if !ok {
+				continue
+			}
+			s = strings.ToLower(s)
+			if s == "null" {
+				nullable = true
+				continue
+			}
+			if primary == "" {
+				primary = s
+			}
+		}
+		return primary, nullable
+	default:
+		return "", false
+	}
+}
+
+func scalarStringSlice(v any) []string {
+	switch t := v.(type) {
+	case []string:
+		return append([]string(nil), t...)
+	case []any:
+		out := make([]string, 0, len(t))
+		for _, item := range t {
+			if s, ok := item.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+// scalarEnumSlice keeps only JSON scalars (string/number/bool); drops objects.
+func scalarEnumSlice(v any) []any {
+	arr, ok := v.([]any)
+	if !ok {
+		// []string from some schemas
+		if ss, ok := v.([]string); ok {
+			out := make([]any, len(ss))
+			for i, s := range ss {
+				out[i] = s
+			}
+			return out
+		}
+		return nil
+	}
+	out := make([]any, 0, len(arr))
+	for _, item := range arr {
+		switch item.(type) {
+		case string, float64, int, int64, float32, bool, nil:
+			out = append(out, item)
 		}
 	}
 	return out
