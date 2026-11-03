@@ -376,6 +376,22 @@ func (e *Engine) runAgent(ctx context.Context, msg channel.Message) {
 		effective = permission.ModePlan
 	}
 
+	// Generate an AI title for brand-new chats from the first user message,
+	// so they never show as "Untitled". Only runs when the chat has no title
+	// and hasn't been manually renamed (TitleLocked == false).
+	if ch.UserTurns == 0 && ch.Title == "" && !ch.TitleLocked {
+		firstMsg := ""
+		for _, b := range blocks {
+			if b.Type == "text" {
+				firstMsg = b.Text
+				break
+			}
+		}
+		if firstMsg != "" {
+			e.chats.GenerateFirstTitle(agentCtx, ch, firstMsg)
+		}
+	}
+
 	input := agent.RunInput{
 		Messages:       ch.Messages(),
 		UserBlocks:     blocks,

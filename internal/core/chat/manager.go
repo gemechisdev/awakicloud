@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	types "github.com/gemechischala/awaki/internal/domain"
 	"github.com/gemechischala/awaki/internal/llm"
 	"github.com/gemechischala/awaki/internal/store"
 
@@ -92,6 +93,59 @@ func applyProject(ch *store.Chat, p Project) {
 	ch.ProjectSlug = ""
 	ch.ProjectID = ""
 	ch.ProjectHash = ""
+}
+
+// GenerateFirstTitle asks the LLM to generate a short title (≤10 words) for
+// a brand-new chat from the user's first message. It only runs when the chat
+// has no title yet and the user hasn't manually renamed it (TitleLocked == false).
+// Returns the generated title (already truncated to 10 words) or "" on failure.
+func (m *Manager) GenerateFirstTitle(ctx context.Context, ch *store.Chat, firstUserMsg string) string {
+	if ch == nil || ch.TitleLocked || m.llm == nil {
+		return ""
+	}
+	firstUserMsg = strings.TrimSpace(firstUserMsg)
+	if firstUserMsg == "" {
+		return ""
+	}
+
+	prompt := `Generate a short, clear title (max 10 words) for a chat conversation based on this first user message. Return only the title, no quotes, no punctuation at the end, no explanation.
+
+Message: ` + firstUserMsg
+
+	resp, err := m.llm.Call(ctx, []types.Message{
+		types.NewUserMessage(types.TextBlock(prompt)),
+	}, llm.CallOptions{
+		System:    "You generate concise chat titles. Max 10 words. No quotes, no trailing punctuation, no explanation.",
+		NoTools:   true,
+		MaxTokens: 40,
+	})
+	if err != nil {
+		log.Error().Err(err).Str("chat", ch.ID).Msg("chat: first-title generation failed")
+		return ""
+	}
+
+	title := strings.TrimSpace(types.ExtractText(resp.Content))
+	title = strings.ReplaceAll(title, "\n", " ")
+	title = strings.Trim(title, "\"'")
+
+	// Enforce ≤10 words by taking the first 10.
+	words := strings.Fields(title)
+	if len(words) > 10 {
+		words = words[:10]
+		title = strings.Join(words, " ")
+	}
+
+	if title == "" {
+		return ""
+	}
+
+	ch.Title = TruncTitle(title)
+	if err := ch.Save(); err != nil {
+		log.Error().Err(err).Str("chat", ch.ID).Msg("chat: failed to save first title")
+		return ""
+	}
+	log.Info().Str("chat", ch.ID).Str("title", ch.Title).Msg("chat: first title generated")
+	return ch.Title
 }
 
 // Reset force-closes the current chat and creates a new general chat
