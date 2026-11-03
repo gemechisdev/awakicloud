@@ -244,7 +244,7 @@ func (a *Agent) Run(ctx context.Context, input RunInput, sink transport.Sink) er
 	return nil
 }
 
-const maxDetailLen = 60
+const maxDetailLen = 500
 
 // defaultToolTimeout is the per-tool timeout when none is specified.
 const defaultToolTimeout = 60 * time.Second

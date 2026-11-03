@@ -122,7 +122,7 @@ var readOnlyAllow = map[string]struct{}{
 	"read_file": {}, "read_files": {}, "list_files": {}, "glob_files": {},
 	"directory_tree": {}, "file_info": {}, "system_info": {},
 	"web_search": {}, "web_fetch": {},
-	"grep": {},
+	"grep":        {},
 	"memory_list": {}, "memory_read": {}, "memory_search": {},
 	"skill_list": {}, "skill_read": {}, "skill_files": {}, "skill_read_file": {},
 	"soul_read": {}, "user_read": {},
