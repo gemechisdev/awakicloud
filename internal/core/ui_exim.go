@@ -219,7 +219,7 @@ func (e *Engine) tryImportAttachment(ctx context.Context, msg channel.Message) b
 	if man.HasSecrets {
 		b.WriteString("⚠️ Package contains secrets.\n")
 	}
-	b.WriteString("\nToggle categories to import, choose merge/overwrite, then confirm.\n")
+	b.WriteString("\nToggle categories, choose merge/overwrite, then confirm.\nMerge unions data (e.g. chats under the same project). Overwrite replaces matching IDs only.\n")
 	e.uiImportCats(ctx, msg, b.String())
 	return true
 }
@@ -236,9 +236,9 @@ func (e *Engine) uiImportCats(ctx context.Context, msg channel.Message, header s
 	} else {
 		b.WriteString("📥 **Import data**\n\nToggle categories, then confirm.\n\n")
 	}
-	mode := "🔀 Merge (skip existing)"
+	mode := "🔀 Merge — add new, keep local, never delete"
 	if w.Overwrite {
-		mode = "♻️ Overwrite existing"
+		mode = "♻️ Overwrite — replace matching keys"
 	}
 	b.WriteString("Mode: " + mode + "\n")
 

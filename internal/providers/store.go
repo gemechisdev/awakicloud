@@ -118,6 +118,152 @@ func (s *Store) Snapshot() ConfigFile {
 	return out
 }
 
+// ImportConfig merges (or replaces) providers and models from an export, preserving
+// original IDs when possible so model→provider links stay valid. When a provider's
+// ID is missing locally but the same name (or name+base URL) already exists, models
+// are remapped onto that local provider. When overwrite is true, matching records
+// are replaced; otherwise existing IDs are left alone.
+func (s *Store) ImportConfig(incoming ConfigFile, overwrite bool) (providersAdded, modelsAdded int, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	byProvID := make(map[string]int, len(s.cfg.Providers))
+	for i, p := range s.cfg.Providers {
+		byProvID[p.ID] = i
+	}
+
+	// oldExportProviderID → localProviderID
+	idMap := map[string]string{}
+
+	for _, p := range incoming.Providers {
+		origID := strings.TrimSpace(p.ID)
+		if origID == "" {
+			origID = uuid.NewString()
+			p.ID = origID
+		}
+		p.Name = strings.TrimSpace(p.Name)
+		p.BaseURL = strings.TrimRight(strings.TrimSpace(p.BaseURL), "/")
+		p.APIKey = strings.TrimSpace(p.APIKey)
+		if p.Name == "" || p.BaseURL == "" {
+			continue
+		}
+
+		if idx, ok := byProvID[p.ID]; ok {
+			idMap[origID] = p.ID
+			if overwrite {
+				s.cfg.Providers[idx] = p
+				providersAdded++
+			}
+			continue
+		}
+
+		// Match existing by name+base (stable across re-imports with new UUIDs)
+		matchedLocal := ""
+		for _, cur := range s.cfg.Providers {
+			if strings.EqualFold(cur.Name, p.Name) && cur.BaseURL == p.BaseURL {
+				matchedLocal = cur.ID
+				break
+			}
+		}
+		if matchedLocal == "" {
+			for _, cur := range s.cfg.Providers {
+				if strings.EqualFold(cur.Name, p.Name) {
+					matchedLocal = cur.ID
+					break
+				}
+			}
+		}
+		if matchedLocal != "" {
+			idMap[origID] = matchedLocal
+			if overwrite {
+				if idx, ok := byProvID[matchedLocal]; ok {
+					p.ID = matchedLocal // keep local id
+					s.cfg.Providers[idx] = p
+					providersAdded++
+				}
+			}
+			continue
+		}
+
+		// Brand new provider — keep exported ID
+		s.cfg.Providers = append(s.cfg.Providers, p)
+		byProvID[p.ID] = len(s.cfg.Providers) - 1
+		idMap[origID] = p.ID
+		providersAdded++
+	}
+
+	byProvID = make(map[string]int, len(s.cfg.Providers))
+	for i, p := range s.cfg.Providers {
+		byProvID[p.ID] = i
+	}
+	byModelID := make(map[string]int, len(s.cfg.Models))
+	for i, m := range s.cfg.Models {
+		byModelID[m.ID] = i
+	}
+
+	for _, m := range incoming.Models {
+		if m.ID == "" {
+			m.ID = uuid.NewString()
+		}
+		m.ProviderID = strings.TrimSpace(m.ProviderID)
+		m.ModelID = strings.TrimSpace(m.ModelID)
+		m.DisplayName = strings.TrimSpace(m.DisplayName)
+		if m.ProviderID == "" || m.ModelID == "" {
+			continue
+		}
+		if mapped, ok := idMap[m.ProviderID]; ok {
+			m.ProviderID = mapped
+		}
+		if _, ok := byProvID[m.ProviderID]; !ok {
+			continue
+		}
+		if m.DisplayName == "" {
+			m.DisplayName = m.ModelID
+		}
+		if m.Capabilities == (Capabilities{}) {
+			m.Capabilities = Capabilities{
+				Tools: true, Images: true, Streaming: true, MaxTokensParameter: true,
+			}
+		}
+		if idx, ok := byModelID[m.ID]; ok {
+			if overwrite {
+				s.cfg.Models[idx] = m
+				modelsAdded++
+			}
+			continue
+		}
+		dup := false
+		if !overwrite {
+			for _, cur := range s.cfg.Models {
+				if cur.ProviderID == m.ProviderID && cur.ModelID == m.ModelID {
+					dup = true
+					break
+				}
+			}
+		}
+		if dup {
+			continue
+		}
+		s.cfg.Models = append(s.cfg.Models, m)
+		byModelID[m.ID] = len(s.cfg.Models) - 1
+		modelsAdded++
+	}
+
+	if incoming.ActiveModelID != "" {
+		if _, ok := byModelID[incoming.ActiveModelID]; ok {
+			s.cfg.ActiveModelID = incoming.ActiveModelID
+		} else if s.cfg.ActiveModelID == "" && len(s.cfg.Models) > 0 {
+			s.cfg.ActiveModelID = s.cfg.Models[0].ID
+		}
+	}
+
+	if err := s.save(); err != nil {
+		return providersAdded, modelsAdded, err
+	}
+	return providersAdded, modelsAdded, nil
+}
+
+
 // --- Providers CRUD ---
 
 func (s *Store) ListProviders() []Provider {

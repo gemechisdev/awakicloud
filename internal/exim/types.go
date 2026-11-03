@@ -80,7 +80,10 @@ type Manifest struct {
 type Selection struct {
 	Categories []string            // empty = none
 	Items      map[string][]string // if set for a category, only those names/ids
-	Overwrite  bool                // import only: replace existing instead of merge/skip
+	// Overwrite controls conflict handling on import (all categories):
+	//   false = merge/union: add missing keys, keep local on conflict, never delete local-only
+	//   true  = replace matching keys with imported data; still never delete local-only keys
+	Overwrite bool
 }
 
 func (s Selection) Has(cat string) bool {

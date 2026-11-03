@@ -230,6 +230,56 @@ func (m *Manager) writeMeta(meta Meta) error {
 	return os.WriteFile(m.metaPath(meta.Slug), data, 0o644)
 }
 
+// ImportProject ensures a project exists at the exact exported slug.
+// Unlike Create, it never allocates a new slug or UUID.
+//
+//	merge (overwrite=false): if slug exists, leave local meta as-is and return it
+//	                         (so chats can be remapped onto the local project id);
+//	                         if missing, create with the exported id/slug.
+//	overwrite: replace meta with the export (same slug), keeping the export id.
+//
+// Returns the effective meta that callers should use for chat linking.
+func (m *Manager) ImportProject(meta Meta, overwrite bool) (effective Meta, changed bool, err error) {
+	meta.Slug = strings.TrimSpace(meta.Slug)
+	meta.Name = strings.TrimSpace(meta.Name)
+	if meta.Slug == "" {
+		if meta.Name != "" {
+			meta.Slug = Slugify(meta.Name)
+		} else {
+			return Meta{}, false, fmt.Errorf("project slug is required")
+		}
+	}
+	if meta.Name == "" {
+		meta.Name = meta.Slug
+	}
+	if meta.ID == "" {
+		meta.ID = uuid.NewString()
+	}
+	if meta.UpdatedAt.IsZero() {
+		meta.UpdatedAt = time.Now().UTC()
+	}
+
+	exists, local, _ := m.ProjectExists(context.Background(), meta.Slug)
+	if exists && !overwrite {
+		// Keep local meta (union semantics). Ensure directory exists for tree merge.
+		_ = os.MkdirAll(m.ProjectDir(local.Slug), 0o755)
+		if local.ID == "" {
+			local.ID = meta.ID
+			_ = m.writeMeta(local)
+		}
+		return local, false, nil
+	}
+	if err := os.MkdirAll(m.ProjectDir(meta.Slug), 0o755); err != nil {
+		return Meta{}, false, err
+	}
+	if err := m.writeMeta(meta); err != nil {
+		return Meta{}, false, err
+	}
+	m.touch()
+	log.Info().Str("slug", meta.Slug).Str("id", meta.ID).Bool("overwrite", overwrite).Msg("project imported")
+	return meta, true, nil
+}
+
 func (m *Manager) ReadMeta(slug string) (Meta, error) {
 	data, err := os.ReadFile(m.metaPath(slug))
 	if err != nil {

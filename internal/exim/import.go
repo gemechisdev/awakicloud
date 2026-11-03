@@ -1,7 +1,6 @@
 package exim
 
 import (
-	"context"
 	"archive/zip"
 	"bytes"
 	"encoding/json"
@@ -10,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/gemechischala/awaki/internal/mcp"
 	"github.com/gemechischala/awaki/internal/permission"
@@ -51,8 +49,21 @@ func Inspect(data []byte) (Manifest, error) {
 	return man, nil
 }
 
-// Import applies the archive according to sel. Categories in sel that are
-// absent from the archive are skipped with a warning.
+// Import applies the archive according to sel.
+//
+// Merge vs overwrite (applies to every category):
+//
+//	Merge (sel.Overwrite == false):
+//	  - Insert entities whose key is missing locally (exact exported IDs/names/slugs).
+//	  - Leave existing local entities unchanged.
+//	  - Never delete local-only entities that are not in the package (union).
+//	  - Related data accumulates (e.g. chats under a project, models under a provider).
+//
+//	Overwrite (sel.Overwrite == true):
+//	  - Replace entities that share the same key with the imported version.
+//	  - Still never delete local-only entities absent from the package.
+//
+// Categories absent from the archive are skipped with a warning.
 func Import(data []byte, tgt Target, sel Selection) (Result, error) {
 	res := Result{Counts: map[string]int{}}
 	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
@@ -99,67 +110,48 @@ func Import(data []byte, tgt Target, sel Selection) (Result, error) {
 		sel.Categories = append([]string(nil), man.Categories...)
 	}
 
-	// providers
+	// providers (and models) — preserve original IDs so model→provider links stay valid
 	if sel.Has(CatProviders) && tgt.Providers != nil {
 		var cfg providers.ConfigFile
 		if err := readJSON("providers.json", &cfg); err != nil {
 			res.Warnings = append(res.Warnings, "providers: "+err.Error())
 		} else {
 			filter := sel.ItemFilter(CatProviders)
-			n := 0
-			for _, p := range cfg.Providers {
-				if filter != nil && !filter[p.ID] && !filter[p.Name] {
-					continue
-				}
-				existing, ok := tgt.Providers.GetProvider(p.ID)
-				if ok && !sel.Overwrite {
-					// still allow key update if empty?
-					_ = existing
-					continue
-				}
-				// Prefer Upsert-style via Add then Update, or direct if available.
-				if !ok {
-					np, err := tgt.Providers.AddProvider(p.Name, p.BaseURL, p.Protocol, p.APIKey)
-					if err != nil {
-						res.Warnings = append(res.Warnings, "provider "+p.Name+": "+err.Error())
-						continue
-					}
-					// keep original ID if possible by re-writing snapshot is hard; use new id mapping
-					_ = np
-				} else if sel.Overwrite {
-					_, _ = tgt.Providers.UpdateProvider(p.ID, &p.Name, &p.BaseURL, &p.APIKey, &p.Protocol)
-				}
-				n++
-			}
-			// models
-			for _, m := range cfg.Models {
-				if filter != nil {
-					// filter by provider presence
-					found := false
-					for _, p := range cfg.Providers {
-						if (filter[p.ID] || filter[p.Name]) && p.ID == m.ProviderID {
-							found = true
-							break
-						}
-					}
-					if !found && len(filter) > 0 {
-						continue
+			if filter != nil {
+				var ps []providers.Provider
+				for _, p := range cfg.Providers {
+					if filter[p.ID] || filter[p.Name] {
+						ps = append(ps, p)
 					}
 				}
-				if _, ok := tgt.Providers.GetModel(m.ID); ok && !sel.Overwrite {
-					continue
+				cfg.Providers = ps
+				keep := map[string]bool{}
+				for _, p := range ps {
+					keep[p.ID] = true
 				}
-				_, err := tgt.Providers.AddModel(m.ProviderID, m.ModelID, m.DisplayName, m.ContextWindow)
-				if err != nil {
-					// may fail if provider id changed; try by name match later
-					res.Warnings = append(res.Warnings, "model "+m.DisplayName+": "+err.Error())
-					continue
+				var ms []providers.Model
+				for _, m := range cfg.Models {
+					if keep[m.ProviderID] {
+						ms = append(ms, m)
+					}
+				}
+				cfg.Models = ms
+			}
+			pn, mn, err := tgt.Providers.ImportConfig(cfg, sel.Overwrite)
+			if err != nil {
+				res.Warnings = append(res.Warnings, "providers: "+err.Error())
+			}
+			res.Counts[CatProviders] = pn
+			if mn > 0 || len(cfg.Models) > 0 {
+				// Informational note (not a failure) so the UI shows model counts
+				res.Warnings = append(res.Warnings, fmt.Sprintf("models: %d applied (%d in package)", mn, len(cfg.Models)))
+			}
+			if mn < len(cfg.Models) {
+				skipped := len(cfg.Models) - mn
+				if skipped > 0 && !sel.Overwrite {
+					res.Warnings = append(res.Warnings, fmt.Sprintf("%d models skipped (already present; use Overwrite to replace)", skipped))
 				}
 			}
-			if cfg.ActiveModelID != "" {
-				_ = tgt.Providers.SetActiveModel(cfg.ActiveModelID)
-			}
-			res.Counts[CatProviders] = n
 		}
 	}
 
@@ -370,62 +362,7 @@ func Import(data []byte, tgt Target, sel Selection) (Result, error) {
 		}
 	}
 
-	// chats
-	if sel.Has(CatChats) && tgt.Store != nil {
-		filter := sel.ItemFilter(CatChats)
-		n := 0
-		for name, f := range files {
-			if !strings.HasPrefix(name, "chats/") || !strings.HasSuffix(name, ".json") {
-				continue
-			}
-			id := strings.TrimSuffix(strings.TrimPrefix(name, "chats/"), ".json")
-			if filter != nil && !filter[id] {
-				continue
-			}
-			rc, err := f.Open()
-			if err != nil {
-				continue
-			}
-			var ce ChatExport
-			err = json.NewDecoder(rc).Decode(&ce)
-			rc.Close()
-			if err != nil {
-				res.Warnings = append(res.Warnings, "chat "+id+": "+err.Error())
-				continue
-			}
-			// decode meta into store.Chat
-			metaBytes, _ := json.Marshal(ce.Meta)
-			var ch store.Chat
-			if err := json.Unmarshal(metaBytes, &ch); err != nil {
-				res.Warnings = append(res.Warnings, "chat meta "+id+": "+err.Error())
-				continue
-			}
-			if existing, err := tgt.Store.LoadChat(ch.ID); err == nil && existing != nil && !sel.Overwrite {
-				continue
-			}
-			ch.SetPersister(tgt.Store)
-			if err := tgt.Store.SaveChat(&ch); err != nil {
-				res.Warnings = append(res.Warnings, "chat save "+id+": "+err.Error())
-				continue
-			}
-			// messages
-			var turns []store.Turn
-			for _, m := range ce.Messages {
-				b, _ := json.Marshal(m)
-				var t store.Turn
-				if json.Unmarshal(b, &t) == nil {
-					turns = append(turns, t)
-				}
-			}
-			if len(turns) > 0 {
-				_ = tgt.Store.ReplaceMessages(&ch, turns)
-			}
-			n++
-		}
-		res.Counts[CatChats] = n
-	}
-
-	// projects
+	// projects FIRST (exact slug + id) so chat links resolve; chats are unioned by id below
 	if sel.Has(CatProjects) && tgt.Projects != nil {
 		filter := sel.ItemFilter(CatProjects)
 		n := 0
@@ -446,48 +383,149 @@ func Import(data []byte, tgt Target, sel Selection) (Result, error) {
 				res.Warnings = append(res.Warnings, "project "+slug+": "+err.Error())
 				continue
 			}
-			exists, _, _ := tgt.Projects.ProjectExists(context.Background(), slug)
-			if exists && !sel.Overwrite {
+			meta := project.Meta{
+				ID:          pe.Meta.ID,
+				Name:        pe.Meta.Name,
+				Slug:        pe.Meta.Slug,
+				ChatID:      pe.Meta.ChatID,
+				ContentHash: pe.Meta.ContentHash,
+				FileCount:   pe.Meta.FileCount,
+				TotalSize:   pe.Meta.TotalSize,
+				UpdatedAt:   pe.Meta.UpdatedAt,
+			}
+			if meta.Slug == "" {
+				meta.Slug = slug
+			}
+			effective, changed, err := tgt.Projects.ImportProject(meta, sel.Overwrite)
+			if err != nil {
+				res.Warnings = append(res.Warnings, "project "+meta.Slug+": "+err.Error())
 				continue
 			}
-			// create if missing
-			if !exists {
-				meta, err := tgt.Projects.Create(pe.Meta.Name, pe.Meta.ChatID)
-				if err != nil {
-					res.Warnings = append(res.Warnings, "project create "+slug+": "+err.Error())
-					continue
-				}
-				slug = meta.Slug
-			}
-			// extract tree
-			treeName := fmt.Sprintf("projects/%s/tree.zip", parts[1])
+			// Workspace tree: overwrite replaces files; merge only adds missing paths
+			treeName := fmt.Sprintf("projects/%s/tree.zip", slug)
+			treeChanged := false
 			if treeData, err := readBytes(treeName); err == nil && len(treeData) > 0 {
-				dir := tgt.Projects.ProjectDir(slug)
+				dir := tgt.Projects.ProjectDir(effective.Slug)
 				_ = os.MkdirAll(dir, 0o755)
-				_ = unzipTo(treeData, dir)
+				var zerr error
+				if sel.Overwrite {
+					zerr = unzipTo(treeData, dir)
+				} else {
+					treeChanged, zerr = unzipToMerge(treeData, dir)
+				}
+				if zerr != nil {
+					res.Warnings = append(res.Warnings, "project tree "+effective.Slug+": "+zerr.Error())
+				}
+			}
+			if changed || treeChanged {
+				n++
+			} else if !sel.Overwrite {
+				// Project already present — still counts as available for chat union
+				n++
+			}
+			_ = effective
+		}
+		res.Counts[CatProjects] = n
+	}
+
+	// chats — exact IDs; merge adds missing chats (union under same project_slug);
+	// overwrite replaces matching chat meta+messages. Local-only chats are never deleted.
+	if sel.Has(CatChats) && tgt.Store != nil {
+		filter := sel.ItemFilter(CatChats)
+		n := 0
+		for name, f := range files {
+			if !strings.HasPrefix(name, "chats/") || !strings.HasSuffix(name, ".json") {
+				continue
+			}
+			fileID := strings.TrimSuffix(strings.TrimPrefix(name, "chats/"), ".json")
+			if filter != nil && !filter[fileID] {
+				continue
+			}
+			rc, err := f.Open()
+			if err != nil {
+				continue
+			}
+			var ce ChatExport
+			err = json.NewDecoder(rc).Decode(&ce)
+			rc.Close()
+			if err != nil {
+				res.Warnings = append(res.Warnings, "chat "+fileID+": "+err.Error())
+				continue
+			}
+			metaBytes, _ := json.Marshal(ce.Meta)
+			var ch store.Chat
+			if err := json.Unmarshal(metaBytes, &ch); err != nil {
+				res.Warnings = append(res.Warnings, "chat meta "+fileID+": "+err.Error())
+				continue
+			}
+			if ch.ID == "" {
+				ch.ID = fileID
+			}
+			if existing, err := tgt.Store.LoadChat(ch.ID); err == nil && existing != nil && !sel.Overwrite {
+				continue // merge: keep local chat as-is
+			}
+			// Point project_id at the local project for this slug (union under one project)
+			if ch.ProjectSlug != "" && tgt.Projects != nil {
+				if pm, err := tgt.Projects.ReadMeta(ch.ProjectSlug); err == nil {
+					ch.ProjectID = pm.ID
+				}
+			}
+			ch.SetPersister(tgt.Store)
+			if err := tgt.Store.SaveChat(&ch); err != nil {
+				res.Warnings = append(res.Warnings, "chat save "+ch.ID+": "+err.Error())
+				continue
+			}
+			var turns []store.Turn
+			for _, m := range ce.Messages {
+				b, _ := json.Marshal(m)
+				var turn store.Turn
+				if json.Unmarshal(b, &turn) == nil {
+					turns = append(turns, turn)
+				}
+			}
+			if len(turns) > 0 || sel.Overwrite {
+				if err := tgt.Store.ReplaceMessages(&ch, turns); err != nil {
+					res.Warnings = append(res.Warnings, "chat messages "+ch.ID+": "+err.Error())
+				}
 			}
 			n++
 		}
-		res.Counts[CatProjects] = n
+		res.Counts[CatChats] = n
 	}
 
 	return res, nil
 }
 
 func unzipTo(data []byte, dest string) error {
+	_, err := unzipExtract(data, dest, true)
+	return err
+}
+
+// unzipToMerge writes only files that do not already exist under dest (union).
+func unzipToMerge(data []byte, dest string) (added bool, err error) {
+	return unzipExtract(data, dest, false)
+}
+
+func unzipExtract(data []byte, dest string, overwrite bool) (wrote bool, err error) {
 	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
-		return err
+		return false, err
 	}
+	destClean := filepath.Clean(dest)
 	for _, f := range zr.File {
 		target := filepath.Join(dest, f.Name)
-		if !strings.HasPrefix(filepath.Clean(target), filepath.Clean(dest)+string(os.PathSeparator)) &&
-			filepath.Clean(target) != filepath.Clean(dest) {
+		clean := filepath.Clean(target)
+		if clean != destClean && !strings.HasPrefix(clean, destClean+string(os.PathSeparator)) {
 			continue // zip slip
 		}
 		if f.FileInfo().IsDir() {
 			_ = os.MkdirAll(target, 0o755)
 			continue
+		}
+		if !overwrite {
+			if _, statErr := os.Stat(target); statErr == nil {
+				continue // keep local file
+			}
 		}
 		_ = os.MkdirAll(filepath.Dir(target), 0o755)
 		rc, err := f.Open()
@@ -502,9 +540,7 @@ func unzipTo(data []byte, dest string) error {
 		_, _ = io.Copy(out, rc)
 		out.Close()
 		rc.Close()
+		wrote = true
 	}
-	return nil
+	return wrote, nil
 }
-
-// unused but keep time for future timestamps
-var _ = time.Now
