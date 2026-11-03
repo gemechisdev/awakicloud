@@ -360,11 +360,11 @@ func (e *Engine) routeUI(ctx context.Context, msg channel.Message, data string) 
 			id := parts[2]
 			if err := e.providers.SetImageGenModel(id); err != nil {
 				_ = msg.Reply.SendText(ctx, err.Error())
-				return
+			} else {
+				m, _ := e.providers.GetModel(id)
+				_ = msg.Reply.SendText(ctx, "🖼 Image-gen fallback set to "+m.DisplayName)
+				e.uiModelDetail(ctx, msg, id)
 			}
-			m, _ := e.providers.GetModel(id)
-			_ = msg.Reply.SendText(ctx, "🖼 Image-gen fallback set to "+m.DisplayName)
-			e.uiModelDetail(ctx, msg, id)
 		}
 	case "mdltog":
 		if len(parts) >= 4 {
