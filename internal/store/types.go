@@ -25,6 +25,7 @@ var FormatSkillsForPrompt = domain.FormatSkillsForPrompt
 type Chat struct {
 	ID          string    `json:"id"`
 	Title       string    `json:"title"`
+	TitleLocked bool      `json:"title_locked,omitempty"` // set when the user renames; summarizer must not overwrite
 	Summary     string    `json:"summary"`
 	Tags        []string  `json:"tags"`
 	Status      string    `json:"status"`         // "active" | "closed"

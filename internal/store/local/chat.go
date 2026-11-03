@@ -107,6 +107,8 @@ func (s *LocalStore) ListChats() ([]store.ChatInfo, error) {
 					ProjectSlug: ch.ProjectSlug,
 					StartedAt:   ch.StartedAt,
 					EndedAt:     ch.EndedAt,
+					UpdatedAt:   ch.UpdatedAt,
+					UserTurns:   ch.UserTurns,
 				})
 			}
 		}

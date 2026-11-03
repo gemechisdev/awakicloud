@@ -8,21 +8,23 @@ import (
 
 	"github.com/gemechischala/awaki/internal/channel"
 	"github.com/gemechischala/awaki/internal/providers"
-	"github.com/gemechischala/awaki/internal/store"
 )
 
 // Reply-keyboard labels (persistent bottom bar).
 const (
 	navNewChat  = "💬 New Chat"
-	navHistory  = "📜 History"
+	navChats    = "📜 Chats"
+	navHistory  = "📜 History" // legacy reply-keyboard label (older clients still send it)
+	navProjects = "📁 Projects"
 	navSettings = "⚙️ Settings"
 	navProfile  = "👤 Profile"
 )
 
-func mainMenuKeyboard() channel.KeyboardMessage {
+func mainMenuKeyboard(current string) channel.KeyboardMessage {
 	return channel.KeyboardMessage{
 		Text: "👋 **Welcome to Awaki**\n\n" +
 			"Your self-hosted AI agent on Telegram.\n\n" +
+			current +
 			"**Quick start**\n" +
 			"1. Settings → Providers — add an API key\n" +
 			"2. Pick a model under Models\n" +
@@ -35,19 +37,19 @@ func mainMenuKeyboard() channel.KeyboardMessage {
 			"Just type when a model is configured.",
 		Rows: [][]channel.Button{
 			{
-				{Text: "💬 New Chat", CallbackData: "ui:new"},
-				{Text: "📁 Projects", CallbackData: "ui:projects"},
+				{Text: "💬 New Chat", CallbackData: cb("new")},
+				{Text: "📜 Chats", CallbackData: cb("chats")},
 			},
 			{
-				{Text: "📜 History", CallbackData: "ui:hist:0"},
+				{Text: "📁 Projects", CallbackData: cb("projects", "0")},
+				{Text: "📍 This chat", CallbackData: cb("cur")},
+			},
+			{
 				{Text: "⚙️ Settings", CallbackData: "ui:settings"},
-			},
-			{
 				{Text: "👤 Profile", CallbackData: "ui:profile"},
-				{Text: "📋 Tasks", CallbackData: "ui:tasks"},
 			},
 			{
-				{Text: "📁 New Project", CallbackData: "ui:projnew"},
+				{Text: "📋 Tasks", CallbackData: "ui:tasks"},
 				{Text: "🛡️ Mode", CallbackData: "ui:mode"},
 			},
 			{
@@ -55,8 +57,8 @@ func mainMenuKeyboard() channel.KeyboardMessage {
 			},
 		},
 		ReplyKeyboard: [][]string{
-			{navNewChat, "📁 Projects"},
-			{navSettings, navProfile},
+			{navNewChat, navChats},
+			{navProjects, navSettings, navProfile},
 		},
 	}
 }
@@ -84,7 +86,7 @@ type keyboardSender interface {
 
 func (e *Engine) uiHome(ctx context.Context, msg channel.Message) {
 	e.ui.clear()
-	e.deliverKeyboard(ctx, msg, mainMenuKeyboard())
+	e.deliverKeyboard(ctx, msg, mainMenuKeyboard(e.currentLine()))
 }
 
 func (e *Engine) uiSettings(ctx context.Context, msg channel.Message) {
@@ -120,64 +122,22 @@ func (e *Engine) uiProfile(ctx context.Context, msg channel.Message) {
 	})
 }
 
-func (e *Engine) uiHistory(ctx context.Context, msg channel.Message, page int) {
-	chats, err := e.store.ListChats()
+// currentLine is the "where am I" header shown on the home screen.
+func (e *Engine) currentLine() string {
+	id := e.chats.ActiveID()
+	if id == "" {
+		return "📍 **Now:** no chat yet — tap New Chat or just send a message.\n\n"
+	}
+	ch, err := e.chats.Get(id)
 	if err != nil {
-		_ = msg.Reply.SendText(ctx, "History error: "+err.Error())
-		return
+		return ""
 	}
-	var closed []store.ChatInfo
-	for _, c := range chats {
-		if c.Status == "closed" || c.Status == "active" {
-			closed = append(closed, c)
-		}
+	info := chatInfoOf(ch)
+	where := "💬 General"
+	if info.ProjectSlug != "" {
+		where = "📁 " + code(info.ProjectSlug)
 	}
-	total := len(closed)
-	if total == 0 {
-		e.deliverKeyboard(ctx, msg, channel.KeyboardMessage{
-			Text: "📜 No conversations yet.",
-			Rows: [][]channel.Button{{{Text: "⬅ Home", CallbackData: "ui:home"}}},
-		})
-		return
-	}
-	if page < 0 {
-		page = 0
-	}
-	start := page * pageSizeHistory
-	if start >= total {
-		page = 0
-		start = 0
-	}
-	end := start + pageSizeHistory
-	if end > total {
-		end = total
-	}
-	var b strings.Builder
-	b.WriteString(fmt.Sprintf("📜 History (page %d)\n\n", page+1))
-	var rows [][]channel.Button
-	for _, c := range closed[start:end] {
-		title := c.Title
-		if title == "" {
-			title = c.ID
-		}
-		title = truncateUI(title, 32)
-		b.WriteString(fmt.Sprintf("• %s\n", title))
-		rows = append(rows, []channel.Button{
-			{Text: "▶ " + title, CallbackData: "ui:open:" + c.ID},
-		})
-	}
-	var nav []channel.Button
-	if page > 0 {
-		nav = append(nav, channel.Button{Text: "◀ Previous", CallbackData: fmt.Sprintf("ui:hist:%d", page-1)})
-	}
-	if end < total {
-		nav = append(nav, channel.Button{Text: "Next ▶", CallbackData: fmt.Sprintf("ui:hist:%d", page+1)})
-	}
-	if len(nav) > 0 {
-		rows = append(rows, nav)
-	}
-	rows = append(rows, []channel.Button{{Text: "⬅ Home", CallbackData: "ui:home"}})
-	e.deliverKeyboard(ctx, msg, channel.KeyboardMessage{Text: b.String(), Rows: rows})
+	return "📍 **Now:** " + where + " › " + mdSafe(truncRunes(chatTitle(info, true), 40)) + "\n\n"
 }
 
 func (e *Engine) deliverKeyboard(ctx context.Context, msg channel.Message, km channel.KeyboardMessage) {

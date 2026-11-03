@@ -58,6 +58,9 @@ func (c *Channel) handleCommand(ctx context.Context, chatID int64, reply transpo
 		c.send(ctx, chatID, "Error: "+client.EscapeMarkdown(cmd.Result.Error.Error()))
 		return
 	}
+	if cmd.Result.Handled {
+		return
+	}
 
 	if km, ok := cmd.Result.Payload.(channel.KeyboardMessage); ok {
 		c.sendKeyboard(ctx, chatID, km)

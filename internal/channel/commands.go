@@ -22,7 +22,14 @@ type CommandSpec struct {
 // Commands is the ordered catalog. Add new bot commands here only.
 var Commands = []CommandSpec{
 	{Slash: "start", Cmd: CmdStart, Description: "Main menu", Help: "main menu", Menu: true},
-	{Slash: "new", Cmd: CmdNewChat, Description: "New conversation", Help: "new conversation", Menu: true},
+	{Slash: "new", Cmd: CmdNewChat, Description: "New chat — pick a project or none", Help: "[project|-] — new chat (asks which project unless given)", Menu: true},
+	{Slash: "chats", Cmd: CmdChatsByProject, Description: "Browse chats (all or by project)", Help: "[project|search words] — all chats with project badges, or filter", Menu: true},
+	{Slash: "chat", Cmd: CmdChat, Description: "Current chat & actions", Help: "current chat card (rename, move, new chat in same project)", Menu: true},
+	{Slash: "move", Cmd: CmdMove, Description: "Move this chat to a project", Help: "[project|-] — move current chat into a project (or out with -)", Menu: true},
+	{Slash: "rename", Cmd: CmdRename, Description: "Rename this chat", Help: "<title> — rename current chat", Menu: true},
+	{Slash: "chat", Cmd: CmdChat, Description: "Current chat & actions", Help: "current chat card (rename, move, new chat in same project)", Menu: true},
+	{Slash: "move", Cmd: CmdMove, Description: "Move this chat to a project", Help: "[project|-] — move current chat into a project (or out with -)", Menu: true},
+	{Slash: "rename", Cmd: CmdRename, Description: "Rename this chat", Help: "<title> — rename current chat", Menu: true},
 	{Slash: "stop", Cmd: CmdStop, Description: "Cancel current task", Help: "cancel current agent run", Menu: true},
 	{Slash: "help", Cmd: CmdHelp, Description: "List all commands", Help: "this list", Menu: true},
 
@@ -32,7 +39,7 @@ var Commands = []CommandSpec{
 	{Slash: "tasks", Cmd: CmdTasks, Description: "Background task board", Help: "background task board", Menu: true},
 	{Slash: "task", Cmd: CmdTaskAdd, Description: "Queue a background task", Help: "<work> — queue background task", Menu: true},
 
-	{Slash: "history", Cmd: CmdHistory, Description: "Past conversations", Help: "past conversations", Menu: true},
+	{Slash: "history", Cmd: CmdHistory, Description: "Past conversations", Help: "alias of /chats", Menu: false, HideHelp: true},
 	{Slash: "memory", Cmd: CmdMemory, Description: "List memory files", Help: "list memory files", Menu: true},
 	{Slash: "soul", Cmd: CmdSoul, Description: "Show agent identity", Help: "agent identity (soul.md)", Menu: true},
 	{Slash: "user", Cmd: CmdUser, Description: "Show user profile", Help: "user profile (user.md)", Menu: true},
@@ -42,12 +49,11 @@ var Commands = []CommandSpec{
 	{Slash: "provider_add", Cmd: CmdProviderAdd, Description: "Quick-add provider", Help: "name|protocol|base_url|api_key", Menu: true},
 	{Slash: "model_add", Cmd: CmdModelAdd, Description: "Quick-add model", Help: "provider|model_id|Display Name", Menu: true},
 
-	{Slash: "projects", Cmd: CmdProjects, Description: "List projects", Help: "list projects", Menu: true},
-	{Slash: "project", Cmd: CmdProject, Description: "Create a project", Help: "<name> — create project", Menu: true},
+	{Slash: "projects", Cmd: CmdProjects, Description: "Projects and their chats", Help: "browse projects → their chats → new chat in project", Menu: true},
+	{Slash: "project", Cmd: CmdProject, Description: "Open or create a project", Help: "[name] — open/create a project and use it for the current chat", Menu: true},
 	{Slash: "upgrade", Cmd: CmdProjectUpgrade, Description: "Upgrade chat to project", Help: "[name] — upgrade chat → project", Menu: true},
 	{Slash: "sync", Cmd: CmdProjectSync, Description: "Sync project to Telegram", Help: "sync active project to Telegram storage", Menu: true},
-	{Slash: "chatlink", Cmd: CmdChatLink, Description: "Link chat to project", Help: "<slug> — link current chat to project", Menu: true},
-	{Slash: "chats", Cmd: CmdChatsByProject, Description: "Chats in project", Help: "<slug> — list chats linked to project", Menu: true},
+	{Slash: "chatlink", Cmd: CmdChatLink, Description: "Link chat to project", Help: "<project> — alias of /move", Menu: false, HideHelp: true},
 
 	{Slash: "mcp", Cmd: CmdMCP, Description: "List MCP servers", Help: "list MCP servers", Menu: true},
 	{Slash: "mcp_add", Cmd: CmdMCPAdd, Description: "Add MCP server", Help: "add MCP server (wizard)", Menu: true},

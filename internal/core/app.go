@@ -53,6 +53,11 @@ type Engine struct {
 
 	mu     sync.Mutex
 	active *activeRun
+
+	// navMu serialises chat/project navigation (new, resume, move, rename,
+	// create) so double-taps and concurrent callbacks cannot interleave.
+	navMu sync.Mutex
+	cloud cloudCache
 }
 
 type Params struct {
@@ -173,17 +178,24 @@ func (e *Engine) handleCommand(ctx context.Context, msg channel.Message) {
 	cmd := msg.Command
 	switch cmd.Name {
 	case channel.CmdNewChat:
-		cmd.Result.Error = e.chats.Reset(ctx)
+		cmd.Result.Handled = true
+		e.cmdNewChat(ctx, msg, cmdRaw(cmd))
 	case channel.CmdStop:
 		e.stopAgent(ctx, cmd)
-	case channel.CmdHistory:
-		chats, err := e.store.ListChats()
-		if err != nil {
-			cmd.Result.Error = err
-		} else {
-			cmd.Result.Payload = chats
-		}
+	case channel.CmdHistory, channel.CmdChatsByProject:
+		cmd.Result.Handled = true
+		e.cmdChats(ctx, msg, cmdRaw(cmd))
+	case channel.CmdChat:
+		cmd.Result.Handled = true
+		e.uiCurrentChat(ctx, msg)
+	case channel.CmdMove, channel.CmdChatLink:
+		cmd.Result.Handled = true
+		e.cmdMove(ctx, msg, cmdRaw(cmd))
+	case channel.CmdRename:
+		cmd.Result.Handled = true
+		e.cmdRename(ctx, msg, cmdRaw(cmd))
 	case channel.CmdMemory:
+		cmd.Result.Handled = true
 		e.cmdMemory(ctx, msg)
 		return
 	case channel.CmdSoul:
@@ -197,14 +209,12 @@ func (e *Engine) handleCommand(ctx context.Context, msg channel.Message) {
 	case channel.CmdStart:
 		e.uiHome(ctx, msg)
 	case channel.CmdProjects:
-		e.cmdListProjects(ctx, msg)
+		cmd.Result.Handled = true
+		e.uiProjects(ctx, msg, 0)
 	case channel.CmdProject:
-		name := ""
-		if cmd.Args != nil {
-			name = strings.TrimSpace(cmd.Args["raw"])
-		}
-		if name == "" {
-			e.cmdNewProject(ctx, msg, "")
+		cmd.Result.Handled = true
+		if name := cmdRaw(cmd); name == "" {
+			e.uiProjects(ctx, msg, 0)
 		} else {
 			e.cmdOpenOrCreateProject(ctx, msg, name)
 		}
@@ -216,18 +226,6 @@ func (e *Engine) handleCommand(ctx context.Context, msg channel.Message) {
 		e.cmdUpgradeProject(ctx, msg, name)
 	case channel.CmdProjectSync:
 		e.cmdSyncProject(ctx, msg)
-	case channel.CmdChatLink:
-		raw := ""
-		if cmd.Args != nil {
-			raw = strings.TrimSpace(cmd.Args["raw"])
-		}
-		e.cmdChatLink(ctx, msg, raw)
-	case channel.CmdChatsByProject:
-		raw := ""
-		if cmd.Args != nil {
-			raw = strings.TrimSpace(cmd.Args["raw"])
-		}
-		e.cmdChatsByProject(ctx, msg, raw)
 	case channel.CmdMCP:
 		e.cmdMCPList(ctx, msg)
 	case channel.CmdMCPAdd:
@@ -530,4 +528,12 @@ func (e *Engine) RunScheduledTask(ctx context.Context, reply transport.Replier, 
 
 func helpCommandText() string {
 	return channel.HelpText()
+}
+
+// cmdRaw returns the trimmed free-text argument of a command.
+func cmdRaw(cmd *channel.Command) string {
+	if cmd == nil || cmd.Args == nil {
+		return ""
+	}
+	return strings.TrimSpace(cmd.Args["raw"])
 }

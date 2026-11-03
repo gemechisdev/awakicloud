@@ -51,6 +51,10 @@ type ChatInfo struct {
 	Status      string
 	StartedAt   time.Time
 	EndedAt     time.Time
+	// UpdatedAt is the last time chat metadata was persisted (≈ last user turn).
+	UpdatedAt time.Time
+	// UserTurns is the number of user messages (0 = empty/abandoned chat).
+	UserTurns int
 }
 
 // ChatSearchFunc is a callback that searches past chats by query.

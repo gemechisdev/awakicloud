@@ -23,6 +23,9 @@ const (
 	CmdProjectSync    = "project_sync"
 	CmdChatLink       = "chatlink"
 	CmdChatsByProject = "chats"
+	CmdChat           = "chat"
+	CmdMove           = "move"
+	CmdRename         = "rename"
 	CmdPlan           = "plan"
 	CmdHelp           = "help"
 	CmdTasks          = "tasks"
@@ -42,6 +45,9 @@ type Command struct {
 }
 
 type CommandResult struct {
+	// Handled is set by the engine when it already delivered its own UI
+	// (inline keyboards etc.); channels must not send "success"/"empty" fallbacks.
+	Handled bool
 	Data    map[string]string
 	Payload any // typed data for channel-specific formatting
 	Error   error

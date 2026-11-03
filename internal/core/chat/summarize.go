@@ -81,6 +81,13 @@ func (m *Manager) summarize(ctx context.Context, ch *store.Chat) {
 	if err != nil || len(messages) == 0 {
 		return
 	}
+	if m.llm == nil {
+		if ch.Title == "" {
+			ch.Title = TruncTitle(messages[0].Content)
+			_ = ch.Save()
+		}
+		return
+	}
 
 	var transcript strings.Builder
 	for _, msg := range messages {
@@ -110,7 +117,7 @@ func (m *Manager) summarize(ctx context.Context, ch *store.Chat) {
 
 	text := types.ExtractText(resp.Content)
 	result := parseSummaryJSON(text)
-	if result.Title != "" {
+	if result.Title != "" && !ch.TitleLocked {
 		ch.Title = result.Title
 	} else if ch.Title == "" && len(messages) > 0 {
 		ch.Title = TruncTitle(messages[0].Content)

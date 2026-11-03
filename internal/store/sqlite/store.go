@@ -576,6 +576,8 @@ func (s *Store) ListChats() ([]store.ChatInfo, error) {
 			Status:      ch.Status,
 			StartedAt:   ch.StartedAt,
 			EndedAt:     ch.EndedAt,
+			UpdatedAt:   ch.UpdatedAt,
+			UserTurns:   ch.UserTurns,
 		})
 	}
 	return out, rows.Err()
@@ -607,6 +609,8 @@ func (s *Store) ListChatsByProject(slug string) ([]store.ChatInfo, error) {
 			Status:      ch.Status,
 			StartedAt:   ch.StartedAt,
 			EndedAt:     ch.EndedAt,
+			UpdatedAt:   ch.UpdatedAt,
+			UserTurns:   ch.UserTurns,
 		})
 	}
 	return out, rows.Err()

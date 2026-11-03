@@ -81,44 +81,6 @@ func (e *Engine) startProjectAutoSync(ctx context.Context) {
 	}()
 }
 
-func (e *Engine) cmdNewProject(ctx context.Context, msg channel.Message, name string) {
-	if e.projects == nil {
-		_ = msg.Reply.SendText(ctx, "Projects not available.")
-		return
-	}
-	name = strings.TrimSpace(name)
-	if name == "" {
-		e.ui.set(&uiWizard{Kind: "new_project", Step: "name", Draft: map[string]string{}})
-		e.deliverKeyboard(ctx, msg, channel.KeyboardMessage{
-			Text: "📁 New Project\n\nSend a project name (e.g. Telebirr Mini App).",
-			Rows: [][]channel.Button{{{Text: "❌ Cancel", CallbackData: "ui:home"}}},
-		})
-		return
-	}
-	ch, err := e.chats.Resolve()
-	if err != nil {
-		_ = msg.Reply.SendText(ctx, err.Error())
-		return
-	}
-	meta, err := e.projects.Create(name, ch.ID)
-	if err != nil {
-		_ = msg.Reply.SendText(ctx, "Create failed: "+err.Error())
-		return
-	}
-	ch.Mode = project.ModeProject
-	ch.ProjectID = meta.ID
-	ch.ProjectSlug = meta.Slug
-	if ch.Title == "" {
-		ch.Title = meta.Name
-	}
-	_ = ch.Save()
-	_, _ = e.projects.Sync(ctx, meta.Slug)
-	_ = msg.Reply.SendText(ctx, fmt.Sprintf(
-		"✅ Project «%s» ready\nSlug: %s\nWorkspace bound. Agent file tools will use this folder.\nSynced to durable storage.",
-		meta.Name, meta.Slug,
-	))
-}
-
 // cmdOpenOrCreateProject opens an existing project slug, or creates a new one
 // (copying current workspace contents if any). Never overwrites existing files.
 //
@@ -129,45 +91,15 @@ func (e *Engine) cmdOpenOrCreateProject(ctx context.Context, msg channel.Message
 		_ = msg.Reply.SendText(ctx, "Projects not available.")
 		return
 	}
+	if e.refuseIfBusy(ctx, msg) {
+		return
+	}
 	slug := project.Slugify(name)
-	exists, existing, _ := e.projects.ProjectExists(ctx, slug)
-	if exists {
-		// Project exists (local and/or cloud) — activate without creating or syncing.
-		if err := e.projects.ActivateProject(ctx, slug); err != nil {
-			_ = msg.Reply.SendText(ctx, "Activate failed: "+err.Error())
-			return
-		}
-		ch, err := e.chats.Resolve()
-		if err == nil && ch != nil {
-			ch.Mode = project.ModeProject
-			ch.ProjectSlug = slug
-			// Prefer fresh local meta after activate (may have restored from cloud).
-			if meta, err := e.projects.ReadMeta(slug); err == nil {
-				ch.ProjectID = meta.ID
-				ch.ProjectHash = meta.Hash
-				if ch.Title == "" {
-					ch.Title = meta.Name
-				}
-				existing = meta
-			} else {
-				if existing.ID != "" {
-					ch.ProjectID = existing.ID
-				}
-				ch.ProjectHash = existing.Hash
-				if ch.Title == "" && existing.Name != "" {
-					ch.Title = existing.Name
-				}
-			}
-			_ = ch.Save()
-		}
-		nameOut := existing.Name
-		if nameOut == "" {
-			nameOut = slug
-		}
-		_ = msg.Reply.SendText(ctx, fmt.Sprintf(
-			"📂 Project «%s» activated\nSlug: %s\nFiles: %d\nWorkspace bound.",
-			nameOut, slug, existing.FileCount,
-		))
+	if exists, _, _ := e.projects.ProjectExists(ctx, slug); exists {
+		// Existing project (local and/or cloud): use it for the current chat.
+		// Never creates or overwrites files.
+		e.invalidateProjects()
+		e.cmdMove(ctx, msg, slug)
 		return
 	}
 	// Project doesn't exist anywhere — create it and copy current workspace contents.
@@ -210,6 +142,9 @@ func (e *Engine) cmdUpgradeProject(ctx context.Context, msg channel.Message, nam
 		_ = msg.Reply.SendText(ctx, "Projects not available.")
 		return
 	}
+	if e.refuseIfBusy(ctx, msg) {
+		return
+	}
 	ch, err := e.chats.Resolve()
 	if err != nil {
 		_ = msg.Reply.SendText(ctx, err.Error())
@@ -239,7 +174,7 @@ func (e *Engine) cmdUpgradeProject(ctx context.Context, msg channel.Message, nam
 		// If the slug already exists, activate that project instead of failing.
 		slug := project.Slugify(name)
 		if exists, _, _ := e.projects.ProjectExists(ctx, slug); exists {
-			e.openProjectBySlug(ctx, msg, slug)
+			e.cmdMove(ctx, msg, slug)
 			return
 		}
 		_ = msg.Reply.SendText(ctx, "Promote failed: "+err.Error())
@@ -274,83 +209,6 @@ func (e *Engine) cmdUpgradeProject(ctx context.Context, msg channel.Message, nam
 		meta.Name, meta.Slug, n, meta.Slug, synced.Hash,
 	))
 }
-
-func (e *Engine) cmdListProjects(ctx context.Context, msg channel.Message) {
-	if e.projects == nil {
-		_ = msg.Reply.SendText(ctx, "Projects not available.")
-		return
-	}
-	local, _ := e.projects.ListLocal()
-	cloud, _ := e.projects.ListCloud(ctx)
-	seen := map[string]project.Meta{}
-	for _, m := range cloud {
-		seen[m.Slug] = m
-	}
-	for _, m := range local {
-		seen[m.Slug] = m
-	}
-	if len(seen) == 0 {
-		e.deliverKeyboard(ctx, msg, channel.KeyboardMessage{
-			Text: "📁 No projects yet.\nCreate one with /project or 📁 New Project.",
-			Rows: [][]channel.Button{
-				{{Text: "📁 New Project", CallbackData: "ui:projnew"}},
-				{{Text: "⬅ Home", CallbackData: "ui:home"}},
-			},
-		})
-		return
-	}
-	var b strings.Builder
-	b.WriteString("📁 Projects\n\n")
-	var rows [][]channel.Button
-	for _, m := range seen {
-		label := m.Name
-		if label == "" {
-			label = m.Slug
-		}
-		stats := ""
-		if m.FileCount > 0 {
-			stats = fmt.Sprintf(" — %d files, %s", m.FileCount, humanBytes(m.TotalSize))
-		}
-		if m.LastEditor != "" {
-			stats += fmt.Sprintf(" (last: %s)", truncateUI(m.LastEditor, 20))
-		}
-		b.WriteString(fmt.Sprintf("• %s (%s)%s\n", label, m.Slug, stats))
-		rows = append(rows, []channel.Button{
-			{Text: "▶ " + truncateUI(label, 28), CallbackData: "ui:projopen:" + m.Slug},
-		})
-	}
-	rows = append(rows,
-		[]channel.Button{{Text: "📁 New Project", CallbackData: "ui:projnew"}},
-		[]channel.Button{{Text: "⬅ Home", CallbackData: "ui:home"}},
-	)
-	e.deliverKeyboard(ctx, msg, channel.KeyboardMessage{Text: b.String(), Rows: rows})
-}
-
-func (e *Engine) openProjectBySlug(ctx context.Context, msg channel.Message, slug string) {
-	if e.projects == nil {
-		return
-	}
-	if err := e.projects.ActivateProject(ctx, slug); err != nil {
-		_ = msg.Reply.SendText(ctx, "Open failed: "+err.Error())
-		return
-	}
-	// bind active chat if it matches, else still set workspace
-	ch, err := e.chats.Resolve()
-	if err == nil && ch != nil {
-		ch.Mode = project.ModeProject
-		ch.ProjectSlug = slug
-		if meta, err := e.projects.ReadMeta(slug); err == nil {
-			ch.ProjectID = meta.ID
-			ch.ProjectHash = meta.Hash
-			if ch.Title == "" {
-				ch.Title = meta.Name
-			}
-		}
-		_ = ch.Save()
-	}
-	_ = msg.Reply.SendText(ctx, "📂 Project workspace active: "+slug)
-}
-
 func (e *Engine) cmdSyncProject(ctx context.Context, msg channel.Message) {
 	ch, err := e.chats.Resolve()
 	if err != nil {
@@ -384,82 +242,4 @@ func humanBytes(b int64) string {
 		i++
 	}
 	return fmt.Sprintf("%.0f %s", f, units[i])
-}
-
-// cmdChatLink links the current chat to a project (multi-chat per project).
-func (e *Engine) cmdChatLink(ctx context.Context, msg channel.Message, slug string) {
-	if e.projects == nil {
-		_ = msg.Reply.SendText(ctx, "Projects not available.")
-		return
-	}
-	if slug == "" {
-		_ = msg.Reply.SendText(ctx, "Usage: /chatlink <slug>")
-		return
-	}
-	if _, err := e.projects.ReadMeta(slug); err != nil {
-		_ = msg.Reply.SendText(ctx, "Project not found: "+slug)
-		return
-	}
-	ch, err := e.chats.Resolve()
-	if err != nil {
-		_ = msg.Reply.SendText(ctx, err.Error())
-		return
-	}
-	ch.Mode = project.ModeProject
-	ch.ProjectSlug = slug
-	var meta *project.Meta
-	if m, err := e.projects.ReadMeta(slug); err == nil {
-		meta = &m
-		ch.ProjectID = m.ID
-		ch.ProjectHash = m.Hash
-		if ch.Title == "" {
-			ch.Title = m.Name
-		}
-	}
-	if err := e.projects.ActivateProject(ctx, slug); err != nil {
-		_ = msg.Reply.SendText(ctx, "Link failed: "+err.Error())
-		return
-	}
-	_ = ch.Save()
-	name := slug
-	if meta != nil {
-		name = meta.Name
-	}
-	_ = msg.Reply.SendText(ctx, fmt.Sprintf("🔗 Chat linked to project «%s» (%s)", name, slug))
-}
-
-// cmdChatsByProject lists chats bound to a project.
-func (e *Engine) cmdChatsByProject(ctx context.Context, msg channel.Message, slug string) {
-	if e.store == nil {
-		_ = msg.Reply.SendText(ctx, "Store not available.")
-		return
-	}
-	if slug == "" {
-		_ = msg.Reply.SendText(ctx, "Usage: /chats <slug>")
-		return
-	}
-	chats, err := e.store.ListChatsByProject(slug)
-	if err != nil {
-		_ = msg.Reply.SendText(ctx, "Failed to list chats: "+err.Error())
-		return
-	}
-	if len(chats) == 0 {
-		_ = msg.Reply.SendText(ctx, fmt.Sprintf("No chats linked to project «%s».", slug))
-		return
-	}
-	var b strings.Builder
-	b.WriteString(fmt.Sprintf("💬 Chats in «%s»\n\n", slug))
-	var rows [][]channel.Button
-	for _, c := range chats {
-		label := c.Title
-		if label == "" {
-			label = c.ID
-		}
-		b.WriteString(fmt.Sprintf("• %s (%s)\n", truncateUI(label, 28), c.ID))
-		rows = append(rows, []channel.Button{
-			{Text: "▶ " + truncateUI(label, 20), CallbackData: "ui:chatopen:" + c.ID},
-		})
-	}
-	rows = append(rows, []channel.Button{{Text: "⬅ Home", CallbackData: "ui:home"}})
-	e.deliverKeyboard(ctx, msg, channel.KeyboardMessage{Text: b.String(), Rows: rows})
 }

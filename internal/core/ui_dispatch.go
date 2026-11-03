@@ -27,16 +27,10 @@ func (e *Engine) handleUICallback(ctx context.Context, msg channel.Message) bool
 	// Persistent reply-keyboard labels
 	switch text {
 	case navNewChat:
-		cmd := &channel.Command{Name: channel.CmdNewChat, Result: &channel.CommandResult{}}
-		e.handleCommand(ctx, channel.Message{Reply: msg.Reply, Command: cmd})
-		if cmd.Result.Error != nil {
-			_ = msg.Reply.SendText(ctx, cmd.Result.Error.Error())
-		} else {
-			_ = msg.Reply.SendText(ctx, "✨ New conversation started.")
-		}
+		e.cmdNewChat(ctx, msg, "")
 		return true
-	case navHistory:
-		e.uiHistory(ctx, msg, 0)
+	case navChats, navHistory:
+		e.uiChats(ctx, msg, scopeAll, 0)
 		return true
 	case navSettings:
 		e.uiSettings(ctx, msg)
@@ -44,8 +38,8 @@ func (e *Engine) handleUICallback(ctx context.Context, msg channel.Message) bool
 	case navProfile:
 		e.uiProfile(ctx, msg)
 		return true
-	case "📁 Projects":
-		e.cmdListProjects(ctx, msg)
+	case navProjects:
+		e.uiProjects(ctx, msg, 0)
 		return true
 	case "/cancel", "cancel":
 		if e.ui.get() != nil {
@@ -84,13 +78,81 @@ func (e *Engine) routeUI(ctx context.Context, msg channel.Message, data string) 
 	switch parts[1] {
 	case "home":
 		e.uiHome(ctx, msg)
+	case "noop":
+		// pagination counter / disabled buttons
 	case "projects":
-		e.cmdListProjects(ctx, msg)
+		e.uiProjects(ctx, msg, argPage(parts, 2))
 	case "projnew":
-		e.cmdNewProject(ctx, msg, "")
-	case "projopen":
+		e.startNewProjectWizard(ctx, msg, "view", "")
+	case "projopen", "pd":
 		if len(parts) >= 3 {
-			e.openProjectBySlug(ctx, msg, parts[2])
+			e.uiProjectDetail(ctx, msg, parts[2], "")
+		}
+	case "psync":
+		if len(parts) >= 3 {
+			e.uiProjectSync(ctx, msg, parts[2])
+		}
+	case "pren":
+		if len(parts) >= 3 {
+			e.startRenameProjectWizard(ctx, msg, parts[2])
+		}
+	case "pmv":
+		if len(parts) >= 3 {
+			e.cmdMove(ctx, msg, parts[2])
+		}
+	case "pnm": // new project, then move chat <ref> into it
+		if len(parts) >= 3 {
+			e.startNewProjectWizard(ctx, msg, "move", parts[2])
+		}
+	case "ncp": // new project, then start a chat in it
+		e.startNewProjectWizard(ctx, msg, "chat", "")
+	case "new":
+		e.uiNewChatPicker(ctx, msg, 0)
+	case "newp":
+		e.uiNewChatPicker(ctx, msg, argPage(parts, 2))
+	case "nc":
+		if len(parts) >= 3 {
+			slug := parts[2]
+			if slug == "-" {
+				slug = ""
+			}
+			e.startChat(ctx, msg, slug)
+		}
+	case "chats":
+		scope := scopeAll
+		if len(parts) >= 3 {
+			scope = parseScope(parts[2])
+		}
+		e.uiChats(ctx, msg, scope, argPage(parts, 3))
+	case "hist": // legacy
+		e.uiChats(ctx, msg, scopeAll, argPage(parts, 2))
+	case "cfp":
+		e.uiChatFilterProjects(ctx, msg, argPage(parts, 2))
+	case "co", "open", "chatopen":
+		if len(parts) >= 3 {
+			e.openChat(ctx, msg, parts[2])
+		}
+	case "cm":
+		if len(parts) >= 3 {
+			if info, err := e.resolveChatRef(parts[2]); err == nil {
+				e.uiChatCard(ctx, msg, info.ID, "")
+			} else {
+				e.uiChats(ctx, msg, scopeAll, 0)
+			}
+		}
+	case "cur":
+		e.uiCurrentChat(ctx, msg)
+	case "cmv":
+		if len(parts) >= 3 {
+			e.uiMovePicker(ctx, msg, parts[2], argPage(parts, 3))
+		}
+	case "cmt":
+		if len(parts) >= 4 {
+			e.moveChat(ctx, msg, parts[2], parts[3])
+		}
+	case "cren":
+		if len(parts) >= 3 {
+			e.startRenameChatWizard(ctx, msg, parts[2])
 		}
 	case "settings":
 		e.uiSettings(ctx, msg)
@@ -112,16 +174,6 @@ func (e *Engine) routeUI(ctx context.Context, msg channel.Message, data string) 
 		}
 	case "profile":
 		e.uiProfile(ctx, msg)
-	case "new":
-		cmd := &channel.Command{Name: channel.CmdNewChat, Result: &channel.CommandResult{}}
-		e.handleCommand(ctx, channel.Message{Reply: msg.Reply, Command: cmd})
-		_ = msg.Reply.SendText(ctx, "✨ New conversation started.")
-	case "hist":
-		page := 0
-		if len(parts) >= 3 {
-			page = parsePage(parts[2])
-		}
-		e.uiHistory(ctx, msg, page)
 	case "providers":
 		page := 0
 		if len(parts) >= 3 {
@@ -341,8 +393,8 @@ func (e *Engine) routeUI(ctx context.Context, msg channel.Message, data string) 
 			e.deliverKeyboard(ctx, msg, channel.KeyboardMessage{
 				Text: text,
 				Rows: [][]channel.Button{
-					{Text: "◀ Back", CallbackData: "ui:memory"},
-					{Text: "⬅ Settings", CallbackData: "ui:settings"},
+					{{Text: "◀ Back", CallbackData: "ui:memory"}},
+					{{Text: "⬅ Settings", CallbackData: "ui:settings"}},
 				},
 			})
 		}
@@ -368,10 +420,6 @@ func (e *Engine) routeUI(ctx context.Context, msg channel.Message, data string) 
 			Text: text,
 			Rows: [][]channel.Button{{{Text: "⬅ Settings", CallbackData: "ui:settings"}}},
 		})
-	case "open":
-		if len(parts) >= 3 {
-			_ = msg.Reply.SendText(ctx, "Open chat: use /history list in chat UI — chat id "+parts[2]+" (resume via normal messaging after /new if needed).")
-		}
 	case "proto":
 		// add_provider protocol pick: ui:proto:oc
 		if len(parts) >= 3 {
@@ -435,7 +483,15 @@ func (e *Engine) handleWizardInput(ctx context.Context, msg channel.Message, w *
 		return e.wizardEditModel(ctx, msg, w, text)
 	case "new_project":
 		e.ui.clear()
-		e.cmdNewProject(ctx, msg, text)
+		e.createProject(ctx, msg, text, w.Draft["then"], w.Draft["ref"])
+		return true
+	case "rename_chat":
+		e.ui.clear()
+		e.renameChat(ctx, msg, w.Draft["ref"], text)
+		return true
+	case "rename_project":
+		e.ui.clear()
+		e.renameProject(ctx, msg, w.Draft["slug"], text)
 		return true
 	case "upgrade_project":
 		e.ui.clear()
@@ -603,4 +659,12 @@ func (e *Engine) wizardEditModel(ctx context.Context, msg channel.Message, w *ui
 	e.ui.clear()
 	e.uiModelDetail(ctx, msg, id)
 	return true
+}
+
+// argPage parses an optional numeric page argument at parts[i].
+func argPage(parts []string, i int) int {
+	if len(parts) > i {
+		return parsePage(parts[i])
+	}
+	return 0
 }

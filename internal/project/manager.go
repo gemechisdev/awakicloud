@@ -514,3 +514,38 @@ func (m *Manager) PromoteFromWorkspaceCtx(ctx context.Context, name, chatID, cur
 	m.touch()
 	return meta, n, nil
 }
+
+// Rename changes the display name of a project (the slug / directory never
+// change, so chats bound to it stay valid). The new name is written to the
+// local meta file and — best effort — to the cloud archive caption.
+func (m *Manager) Rename(ctx context.Context, slug, name string) (Meta, error) {
+	name = strings.TrimSpace(strings.Join(strings.Fields(name), " "))
+	if name == "" {
+		return Meta{}, fmt.Errorf("name is empty")
+	}
+	if len([]rune(name)) > 60 {
+		return Meta{}, fmt.Errorf("name too long (max 60 characters)")
+	}
+	meta, err := m.ReadMeta(slug)
+	if err != nil {
+		if info, serr := os.Stat(m.ProjectDir(slug)); serr != nil || !info.IsDir() {
+			return Meta{}, fmt.Errorf("project %q is not available locally", slug)
+		}
+		meta = Meta{ID: uuid.NewString(), Slug: slug, UpdatedAt: time.Now().UTC()}
+	}
+	meta.Name = name
+	if err := m.writeMeta(meta); err != nil {
+		return Meta{}, err
+	}
+	if m.blobs != nil {
+		// Re-save the archive so the new caption reaches the cloud, but never
+		// push an empty tree (Sync's safety rule).
+		if data, _, fileCount, _, zerr := ZipTree(m.ProjectDir(slug)); zerr == nil && fileCount > 0 {
+			if err := m.blobs.SaveArchive(ctx, meta, data); err != nil {
+				log.Warn().Err(err).Str("slug", slug).Msg("project rename: cloud caption update failed")
+			}
+		}
+	}
+	m.touch()
+	return meta, nil
+}
