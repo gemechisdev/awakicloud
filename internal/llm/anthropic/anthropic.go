@@ -72,7 +72,17 @@ func messagesToAnthropic(msgs []types.Message) []anthropic.MessageParam {
 			case "image":
 				blocks = append(blocks, anthropic.NewImageBlockBase64(b.MimeType, b.ImageData))
 			case "tool_use":
-				blocks = append(blocks, anthropic.NewToolUseBlock(b.ToolUseID, b.ToolInput, b.ToolName))
+				// Prefer a decoded object so the API sees a JSON object, not a string.
+				var input any = map[string]any{}
+				if len(b.ToolInput) > 0 {
+					var obj any
+					if json.Unmarshal(b.ToolInput, &obj) == nil {
+						input = obj
+					} else {
+						input = b.ToolInput
+					}
+				}
+				blocks = append(blocks, anthropic.NewToolUseBlock(b.ToolUseID, input, b.ToolName))
 			case "tool_result":
 				blocks = append(blocks, anthropic.ContentBlockParamUnion{
 					OfToolResult: &anthropic.ToolResultBlockParam{
@@ -98,28 +108,139 @@ func messagesToAnthropic(msgs []types.Message) []anthropic.MessageParam {
 func toolDefsToAnthropic(defs []types.ToolDef) []anthropic.ToolUnionParam {
 	out := make([]anthropic.ToolUnionParam, 0, len(defs))
 	for _, d := range defs {
+		// Official shape (https://platform.claude.com/docs/en/agents-and-tools/tool-use/define-tools):
+		//
+		//	input_schema: {
+		//	  "type": "object",          // required; SDK defaults Type → "object"
+		//	  "properties": { ... },
+		//	  "required": [ ... ]
+		//	}
+		//
+		// Do NOT pass the whole Parameters map as Properties — that was the
+		// original 400-causing nesting bug. Anthropic accepts a broad JSON
+		// Schema subset for non-strict tools; we still drop $schema and
+		// normalize required from either the schema or ToolDef.Required.
+		props := map[string]any{}
+		if p, ok := d.Parameters["properties"].(map[string]any); ok {
+			props = sanitizeAnthropicProps(p)
+		}
+
 		schema := anthropic.ToolInputSchemaParam{
-			Properties: map[string]any{},
+			Properties: props,
 		}
-		if props, ok := d.Parameters["properties"].(map[string]any); ok {
-			schema.Properties = props
-		}
-		if req, ok := d.Parameters["required"].([]any); ok {
-			for _, r := range req {
-				if s, ok := r.(string); ok {
-					schema.Required = append(schema.Required, s)
-				}
-			}
-		}
+		schema.Required = collectRequired(d)
+
+		name := sanitizeAnthropicToolName(d.Name)
 		out = append(out, anthropic.ToolUnionParam{
 			OfTool: &anthropic.ToolParam{
-				Name:        d.Name,
+				Name:        name,
 				Description: anthropic.String(d.Description),
 				InputSchema: schema,
 			},
 		})
 	}
 	return out
+}
+
+// collectRequired prefers Parameters["required"], then ToolDef.Required.
+func collectRequired(d types.ToolDef) []string {
+	if req, ok := d.Parameters["required"].([]any); ok {
+		out := make([]string, 0, len(req))
+		for _, r := range req {
+			if s, ok := r.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	if req, ok := d.Parameters["required"].([]string); ok && len(req) > 0 {
+		return append([]string(nil), req...)
+	}
+	if len(d.Required) > 0 {
+		return append([]string(nil), d.Required...)
+	}
+	return nil
+}
+
+// sanitizeAnthropicProps shallow-copies property defs and strips $schema keys
+// that some MCP/tool authors embed. Anthropic is more permissive than Gemini
+// but $schema at any level is noise and occasionally confuses validators.
+func sanitizeAnthropicProps(props map[string]any) map[string]any {
+	out := make(map[string]any, len(props))
+	for k, v := range props {
+		if m, ok := v.(map[string]any); ok {
+			cp := make(map[string]any, len(m))
+			for pk, pv := range m {
+				if pk == "$schema" {
+					continue
+				}
+				if nested, ok := pv.(map[string]any); ok {
+					cp[pk] = stripSchemaKey(nested)
+				} else {
+					cp[pk] = pv
+				}
+			}
+			out[k] = cp
+		} else {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+func stripSchemaKey(m map[string]any) map[string]any {
+	cp := make(map[string]any, len(m))
+	for k, v := range m {
+		if k == "$schema" {
+			continue
+		}
+		if nested, ok := v.(map[string]any); ok {
+			cp[k] = stripSchemaKey(nested)
+		} else if arr, ok := v.([]any); ok {
+			cp[k] = stripSchemaKeyInArray(arr)
+		} else {
+			cp[k] = v
+		}
+	}
+	return cp
+}
+
+func stripSchemaKeyInArray(arr []any) []any {
+	out := make([]any, 0, len(arr))
+	for _, v := range arr {
+		if m, ok := v.(map[string]any); ok {
+			out = append(out, stripSchemaKey(m))
+		} else {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// sanitizeAnthropicToolName enforces ^[a-zA-Z0-9_-]{1,64}$ from the official docs.
+func sanitizeAnthropicToolName(name string) string {
+	if name == "" {
+		return "tool"
+	}
+	b := make([]byte, 0, len(name))
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '_', c == '-':
+			b = append(b, c)
+		default:
+			b = append(b, '_')
+		}
+	}
+	if len(b) == 0 {
+		return "tool"
+	}
+	if len(b) > 64 {
+		b = b[:64]
+	}
+	return string(b)
 }
 
 func anthropicToResponse(msg *anthropic.Message) *types.Response {

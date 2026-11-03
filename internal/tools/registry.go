@@ -82,10 +82,9 @@ func (r *Registry) Definitions() []llmtypes.ToolDef {
 }
 
 // normalizeToolParams ensures every tool schema is a consistent full JSON-schema
-// object: {type: "object", properties: {...}, required: [...]}. It strips
-// provider-incompatible fields ($schema, additionalProperties) that Gemini and
-// other APIs reject. Some tools (e.g. grep) use the full form already; others
-// use the flat form {properties: {...}} — both are normalized here.
+// object: {type: "object", properties: {...}, required: [...]}.
+// It deep-copies so tool registration maps are never mutated, and leaves
+// provider-specific stripping (Gemini allowlist, etc.) to the LLM adapters.
 func normalizeToolParams(params map[string]any) map[string]any {
 	if params == nil {
 		return map[string]any{
@@ -94,38 +93,38 @@ func normalizeToolParams(params map[string]any) map[string]any {
 		}
 	}
 
-	// Strip fields some providers reject.
-	delete(params, "$schema")
-	delete(params, "additionalProperties")
+	// Deep-ish copy top level so we never mutate the registry tool definition.
+	src := make(map[string]any, len(params))
+	for k, v := range params {
+		src[k] = v
+	}
 
-	// Ensure we have a properties map.
-	properties, _ := params["properties"].(map[string]any)
+	properties, _ := src["properties"].(map[string]any)
 	if properties == nil {
-		// Flat form: params itself might BE the properties, or it might have
-		// type + other top-level keys but no properties. Build a clean object.
-		clean := map[string]any{"type": "object"}
-		for k, v := range params {
-			if k == "type" || k == "properties" || k == "required" {
+		// Flat form: top-level keys that look like property schemas.
+		clean := map[string]any{"type": "object", "properties": map[string]any{}}
+		props := clean["properties"].(map[string]any)
+		for k, v := range src {
+			if k == "type" || k == "properties" || k == "required" || k == "$schema" {
 				continue
 			}
-			// Treat any remaining top-level keys as if they were property
-			// definitions only if they look like schemas (have "type").
 			if m, ok := v.(map[string]any); ok && m["type"] != nil {
-				if clean["properties"] == nil {
-					clean["properties"] = map[string]any{}
-				}
-				clean["properties"].(map[string]any)[k] = m
+				props[k] = m
 			}
 		}
-		if clean["properties"] == nil {
-			clean["properties"] = map[string]any{}
+		if req, ok := src["required"]; ok {
+			clean["required"] = req
 		}
 		return clean
 	}
 
-	// Full form: ensure type is set.
-	out := map[string]any{"type": "object", "properties": properties}
-	if req, ok := params["required"]; ok {
+	// Copy properties map (shallow is enough; adapters deep-clean as needed).
+	propsCopy := make(map[string]any, len(properties))
+	for k, v := range properties {
+		propsCopy[k] = v
+	}
+	out := map[string]any{"type": "object", "properties": propsCopy}
+	if req, ok := src["required"]; ok {
 		out["required"] = req
 	}
 	return out

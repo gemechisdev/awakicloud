@@ -142,14 +142,23 @@ func buildRequest(system string, messages []types.Message, tools []types.ToolDef
 			if params == nil {
 				params = map[string]any{"type": "object", "properties": map[string]any{}}
 			}
-			// Ensure JSON-schema style type
+			// Ensure JSON-schema style type / properties
 			if _, ok := params["type"]; !ok {
 				params = map[string]any{
 					"type":       "object",
 					"properties": params,
-					"required":   t.Required,
 				}
 			}
+			// Prefer ToolDef.Required when schema has none
+			if _, ok := params["required"]; !ok && len(t.Required) > 0 {
+				req := make([]any, len(t.Required))
+				for i, r := range t.Required {
+					req[i] = r
+				}
+				params["required"] = req
+			}
+			// Re-clean after any structural wrap so no banned keys leak back in
+			params = cleanGeminiSchema(params)
 			decls = append(decls, genFnDecl{
 				Name:        t.Name,
 				Description: t.Description,
@@ -290,24 +299,83 @@ func truncate(s string, n int) string {
 	return s[:n] + "…"
 }
 
-// cleanGeminiSchema recursively removes fields that Gemini rejects
-// ($schema, additionalProperties) from a JSON-schema parameter object and all
-// nested property schemas.
+// geminiSchemaKeys is the OpenAPI 3.0 subset that Gemini function_declarations
+// parameters accept. See:
+//
+//	https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/tools/function-calling
+//
+// Supported: type, nullable, required, format, description, properties, items,
+// enum, anyOf (and title, which is harmless). Everything else — exclusiveMinimum,
+// propertyNames, additionalProperties, $schema, minLength, maxItems, default,
+// oneOf, pattern, etc. — is rejected with HTTP 400 "Unknown name".
+var geminiSchemaKeys = map[string]bool{
+	"type":        true,
+	"description": true,
+	"properties":  true,
+	"required":    true,
+	"items":       true,
+	"enum":        true,
+	"nullable":    true,
+	"format":      true,
+	"anyOf":       true,
+	"title":       true,
+}
+
+// cleanGeminiSchema recursively rewrites a JSON-schema object to the Gemini
+// allowlist only. Nested maps under properties/items/anyOf are cleaned the same way.
 func cleanGeminiSchema(schema map[string]any) map[string]any {
 	if schema == nil {
 		return nil
 	}
 	cleaned := make(map[string]any, len(schema))
 	for k, v := range schema {
-		if k == "$schema" || k == "additionalProperties" {
+		if !geminiSchemaKeys[k] {
 			continue
 		}
-		if m, ok := v.(map[string]any); ok {
-			cleaned[k] = cleanGeminiSchema(m)
-		} else if arr, ok := v.([]any); ok {
-			cleaned[k] = cleanGeminiSchemaArray(arr)
-		} else {
+		switch k {
+		case "properties":
+			props, ok := v.(map[string]any)
+			if !ok {
+				continue
+			}
+			out := make(map[string]any, len(props))
+			for pk, pv := range props {
+				if m, ok := pv.(map[string]any); ok {
+					out[pk] = cleanGeminiSchema(m)
+				} else {
+					// Non-object property defs are invalid for Gemini; skip
+					continue
+				}
+			}
+			cleaned[k] = out
+		case "items":
+			if m, ok := v.(map[string]any); ok {
+				cleaned[k] = cleanGeminiSchema(m)
+			} else if arr, ok := v.([]any); ok {
+				// Rare tuple form — keep only object schemas
+				cleaned[k] = cleanGeminiSchemaArray(arr)
+			}
+		case "anyOf":
+			if arr, ok := v.([]any); ok {
+				cleaned[k] = cleanGeminiSchemaArray(arr)
+			}
+		case "required", "enum":
 			cleaned[k] = v
+		case "type":
+			// Gemini expects uppercase enum values in some APIs but string
+			// lowercase ("object","string",…) is accepted by generateContent.
+			cleaned[k] = v
+		default:
+			cleaned[k] = v
+		}
+	}
+	// Gemini requires an object schema for parameters.
+	if _, ok := cleaned["type"]; !ok {
+		cleaned["type"] = "object"
+	}
+	if cleaned["type"] == "object" {
+		if _, ok := cleaned["properties"]; !ok {
+			cleaned["properties"] = map[string]any{}
 		}
 	}
 	return cleaned
@@ -318,8 +386,6 @@ func cleanGeminiSchemaArray(arr []any) []any {
 	for _, v := range arr {
 		if m, ok := v.(map[string]any); ok {
 			out = append(out, cleanGeminiSchema(m))
-		} else {
-			out = append(out, v)
 		}
 	}
 	return out
