@@ -404,6 +404,24 @@ func cleanGeminiSchema(schema map[string]any) map[string]any {
 			cleaned["properties"] = map[string]any{}
 		}
 	}
+	// Gemini rejects required[i] when that name is not in properties
+	// ("property is not defined"). Drop orphan required entries.
+	if req, ok := cleaned["required"].([]string); ok {
+		props, _ := cleaned["properties"].(map[string]any)
+		filtered := req[:0]
+		for _, name := range req {
+			if props != nil {
+				if _, exists := props[name]; exists {
+					filtered = append(filtered, name)
+				}
+			}
+		}
+		if len(filtered) > 0 {
+			cleaned["required"] = filtered
+		} else {
+			delete(cleaned, "required")
+		}
+	}
 	return cleaned
 }
 
