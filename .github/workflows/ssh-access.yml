@@ -1,0 +1,69 @@
+name: Setup SSH access & redeploy Koyeb
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      test_ssh:
+        description: "Test SSH connection to Koyeb proxy"
+        required: false
+        default: "true"
+
+jobs:
+  redeploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Trigger Koyeb redeploy (rebuilds image with SSH)
+        run: |
+          response=$(curl -s -w "\n%{http_code}" -X POST \
+            "https://app.koyeb.com/v1/services/${{ secrets.KOYEB_SERVICE_ID }}/redeploy" \
+            -H "Authorization: Bearer ${{ secrets.KOYEB_API_TOKEN }}" \
+            -H "Content-Type: application/json")
+
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | head -n -1)
+
+          if [ "$http_code" -ge 200 ] && [ "$http_code" -lt 300 ]; then
+            echo "Koyeb redeploy triggered successfully"
+          else
+            echo "Koyeb redeploy failed: $http_code"
+            echo "$body"
+            exit 1
+          fi
+
+  test-ssh:
+    needs: redeploy
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && inputs.test_ssh == 'true'
+    steps:
+      - name: Wait for Koyeb deploy + test SSH
+        run: |
+          echo "Waiting 60s for Koyeb deployment to finish..."
+          sleep 60
+
+          echo "=== Testing SSH to Koyeb TCP Proxy ==="
+          # Koyeb TCP Proxy domain/port is assigned dynamically.
+          # Look it up via Koyeb API or set it as a secret: KOYEB_SSH_HOST:PORT
+          TARGET="${{ secrets.KOYEB_SSH_TARGET }}"
+          if [ -z "$TARGET" ]; then
+            echo "Set KOYEB_SSH_TARGET secret (format: host:port, e.g. 01.proxy.koyeb.app:2222) and re-run"
+            exit 0
+          fi
+
+          HOST="${TARGET%:*}"
+          PORT="${TARGET#*:}"
+
+          echo "Connecting to $HOST:$PORT ..."
+          timeout 10 bash -c "echo > /dev/tcp/$HOST/$PORT" 2>/dev/null \
+            && echo "Port $PORT on $HOST is OPEN ✓" \
+            || echo "Port $PORT on $HOST is CLOSED ✗"
+
+          echo ""
+          echo "=== SSH connection test (will fail without key/password) ==="
+          timeout 10 ssh -o ConnectTimeout=5 -o BatchMode=no \
+            -o StrictHostKeyChecking=no \
+            -p "$PORT" "root@$HOST" "echo SSH-OK" 2>&1 | head -5 || true

@@ -27,7 +27,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # archives
     zip unzip tar gzip rsync \
     # network diagnostics
-    netcat-openbsd dnsutils iputils-ping traceroute openssh-client \
+    netcat-openbsd dnsutils iputils-ping traceroute openssh-client openssh-server socat \
     # languages commonly used by the agent
     python3 python3-pip python3-venv nodejs npm sqlite3 \
     # DB clients
@@ -80,10 +80,21 @@ ENV GOMODCACHE=/data/.cache/go-mod
 
 COPY --from=builder /awaki /usr/local/bin/awaki
 
+# --- SSH access setup ---
+# Configure sshd for password-auth root login (needed for TCP Proxy SSH access)
+RUN sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config && \
+    sed -i 's/^#*Port.*/Port 22/' /etc/ssh/sshd_config && \
+    mkdir -p /run/sshd
+
+# Copy startup script: starts sshd then runs awaki
+COPY deploy/start-ssh.sh /usr/local/bin/start-ssh.sh
+RUN chmod +x /usr/local/bin/start-ssh.sh
+
 ENV AWAKI_DATA_DIR=/data
 ENV AWAKI_WORK_DIR=/work
 RUN mkdir -p /data /work /data/.cache/go-build /data/.cache/go-mod /root/go/bin
 
 WORKDIR /work
 
-ENTRYPOINT ["awaki"]
+ENTRYPOINT ["/usr/local/bin/start-ssh.sh"]
