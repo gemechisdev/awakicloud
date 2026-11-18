@@ -115,9 +115,12 @@ func (m *Manager) Connect(ctx context.Context, name string) error {
 		}
 		return err
 	}
-	// If token was refreshed during connect, persist it
+	// If token was refreshed during connect, persist it. A failure here means the
+	// refreshed token is lost, so the next restart re-authorises — worth surfacing.
 	if srv.OAuth != nil && srv.HasValidToken() {
-		_ = m.store.Upsert(srv)
+		if err := m.store.Upsert(srv); err != nil {
+			log.Warn().Err(err).Str("server", srv.Name).Msg("mcp: refreshed token not persisted")
+		}
 	}
 	m.mu.Lock()
 	m.sessions[name] = sess
@@ -238,7 +241,11 @@ func (m *Manager) BeginOAuth(ctx context.Context, name string) (authURL string, 
 	if pending.ClientID != "" {
 		srv.OAuth.ClientID = pending.ClientID
 	}
-	_ = m.store.Upsert(srv)
+	if err := m.store.Upsert(srv); err != nil {
+		// The OAuth flow can continue with the in-memory value, but the client id
+		// must be durable or the pending authorisation breaks on restart.
+		log.Warn().Err(err).Str("server", srv.Name).Msg("mcp: oauth client id not persisted")
+	}
 
 	m.mu.Lock()
 	m.pending[name] = pending

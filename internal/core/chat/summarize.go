@@ -84,7 +84,9 @@ func (m *Manager) summarize(ctx context.Context, ch *store.Chat) {
 	if m.llm == nil {
 		if ch.Title == "" {
 			ch.Title = TruncTitle(messages[0].Content)
-			_ = ch.Save()
+			if err := ch.Save(); err != nil {
+				log.Warn().Err(err).Str("chat", ch.ID).Msg("chat title not persisted")
+			}
 		}
 		return
 	}

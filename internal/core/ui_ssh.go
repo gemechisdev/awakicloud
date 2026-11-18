@@ -25,7 +25,24 @@ func (e *Engine) uiSSHBoard(ctx context.Context, msg channel.Message) {
 	var b strings.Builder
 	b.WriteString("🔑 SSH / Git identities\n\n")
 	b.WriteString("Used for `git clone/push` over SSH (multi-account GitHub).\n")
-	b.WriteString("Clone with the Host alias, e.g.\n`git@github.com-gemechisdev:user/repo.git`\n\n")
+	b.WriteString("Clone with the Host alias, e.g.\n`git@github.com-gemechisdev:user/repo.git`\n")
+
+	// Durability is the whole point of this board: an identity that is not in the
+	// database disappears on the next restart. Say so up front rather than letting
+	// it be discovered after the fact.
+	if !e.ssh.Durable() {
+		b.WriteString("\n⚠️ **Not durable**: the SSH store has no database backend, so every\n" +
+			"identity here lives on disk only and is lost on restart.\n")
+	} else if diskOnly := e.ssh.DiskOnlyIdentities(); len(diskOnly) > 0 {
+		b.WriteString(fmt.Sprintf("\n⚠️ **%d identity(ies) exist on disk but not in the database.**\n"+
+			"The database wins on restart, so these will be discarded:\n", len(diskOnly)))
+		for _, d := range diskOnly {
+			b.WriteString("• `" + d.Host + "`\n")
+		}
+		b.WriteString("Re-add them with ➕ Add identity to make them durable.\n")
+	}
+	b.WriteString("\n")
+
 	if len(list) == 0 {
 		b.WriteString("No identities yet. Tap Add to set one up interactively.")
 	} else {
