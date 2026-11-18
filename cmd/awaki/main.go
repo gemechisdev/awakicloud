@@ -188,6 +188,17 @@ func buildEngine(ctx context.Context, cfg *config.Config, ch channel.Channel) (*
 		log.Info().Msg("providers + schedules cloud sync enabled (telegram storage)")
 	}
 
+	sshStore := sshcreds.New(cfg.DataDir)
+	if ss, ok := st.(*sqlstore.Store); ok {
+		if err := sshStore.SetPersister(sshDBAdapter{ss}); err != nil {
+			log.Warn().Err(err).Msg("ssh: hydrate from db failed")
+		} else {
+			log.Info().Msg("ssh identities backed by sqlite (survive redeploy)")
+		}
+	} else {
+		_ = sshStore.RebuildConfig()
+	}
+
 	// Background task board (todo-style, in-process, max 1 concurrent on free tier).
 	taskMgr := tasks.NewManager(1)
 	if ss, ok := st.(*sqlstore.Store); ok {
@@ -241,6 +252,7 @@ func buildEngine(ctx context.Context, cfg *config.Config, ch channel.Channel) (*
 	extra := append(comm.ChannelTools(),
 		system.ScheduleTools(sched)...,
 	)
+	extra = append(extra, system.SSHTools(sshStore)...)
 	extra = append(extra, system.ImageGenTools(provStore)...)
 	extra = append(extra, tasks.Tools(taskMgr)...)
 	extra = append(extra, identity.IdentityTools(st, sched.SetLocation)...)
@@ -271,7 +283,7 @@ func buildEngine(ctx context.Context, cfg *config.Config, ch channel.Channel) (*
 		if m, p, err := provStore.ActivePair(); err == nil {
 			label = p.Name + " / " + m.DisplayName
 		}
-		return prompt.SystemPrompt(prompt.PromptContext{
+		base := prompt.SystemPrompt(prompt.PromptContext{
 			TransportName: transportName,
 			ModelLabel:    label,
 			Soul:          st.ReadSoul(),
@@ -279,6 +291,12 @@ func buildEngine(ctx context.Context, cfg *config.Config, ch channel.Channel) (*
 			SkillsBlock:   store.FormatSkillsForPrompt(skills),
 			Timezone:      st.LoadTimezone(),
 		})
+		if sshStore != nil {
+			if block := sshStore.PromptBlock(); block != "" {
+				base = base + "\n\n" + block
+			}
+		}
+		return base
 	}
 
 	ag := agent.New(client, instructions, reg)
@@ -359,9 +377,6 @@ func buildEngine(ctx context.Context, cfg *config.Config, ch channel.Channel) (*
 	}
 
 	permStore := permission.NewStore(cfg.DataDir)
-	sshStore := sshcreds.New(cfg.DataDir)
-	_ = sshStore.RebuildConfig() // ensure managed ~/.ssh/config section is present
-
 	return core.New(core.Params{
 		Channel:             ch,
 		Store:               st,
@@ -513,3 +528,37 @@ func buildChannel(cfg *config.Config) (channel.Channel, error) {
 		return nil, fmt.Errorf("unknown transport: %s", cfg.Transport)
 	}
 }
+
+// sshDBAdapter bridges sqlstore.Store to sshcreds.Persister.
+type sshDBAdapter struct{ s *sqlstore.Store }
+
+func (a sshDBAdapter) ListSSHIdentities() ([]sshcreds.DurableRow, error) {
+	rows, err := a.s.ListSSHIdentities()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]sshcreds.DurableRow, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, sshcreds.DurableRow{
+			ID: r.ID, Host: r.Host, HostName: r.HostName, User: r.User,
+			PrivateKey: r.PrivateKey, PublicKey: r.PublicKey,
+			GitName: r.GitName, GitEmail: r.GitEmail, GitHubUser: r.GitHubUser,
+			CreatedAt: r.CreatedAt,
+		})
+	}
+	return out, nil
+}
+
+func (a sshDBAdapter) UpsertSSHIdentity(r sshcreds.DurableRow) error {
+	return a.s.UpsertSSHIdentity(sqlstore.SSHIdentityRow{
+		ID: r.ID, Host: r.Host, HostName: r.HostName, User: r.User,
+		PrivateKey: r.PrivateKey, PublicKey: r.PublicKey,
+		GitName: r.GitName, GitEmail: r.GitEmail, GitHubUser: r.GitHubUser,
+		CreatedAt: r.CreatedAt,
+	})
+}
+
+func (a sshDBAdapter) DeleteSSHIdentity(id string) error {
+	return a.s.DeleteSSHIdentity(id)
+}
+

@@ -94,3 +94,21 @@ func TestRejectsNonKey(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+
+func TestRewriteGitSSHURL(t *testing.T) {
+	cases := []struct {
+		raw, host, want string
+	}{
+		{"git@github.com:owner/repo.git", "github.com-owner", "git@github.com-owner:owner/repo.git"},
+		{"https://github.com/owner/repo", "github.com-owner", "git@github.com-owner:owner/repo.git"},
+		{"https://github.com/owner/repo.git", "github.com-owner", "git@github.com-owner:owner/repo.git"},
+		{"git@github.com-owner:owner/repo.git", "github.com-owner", "git@github.com-owner:owner/repo.git"},
+	}
+	for _, c := range cases {
+		got := RewriteGitSSHURL(c.raw, c.host)
+		if got != c.want {
+			t.Errorf("RewriteGitSSHURL(%q, %q) = %q, want %q", c.raw, c.host, got, c.want)
+		}
+	}
+}

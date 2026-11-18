@@ -54,4 +54,17 @@ CREATE TABLE IF NOT EXISTS cloud_meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS ssh_identities (
+  id TEXT PRIMARY KEY,
+  host TEXT NOT NULL,
+  host_name TEXT NOT NULL,
+  user_name TEXT NOT NULL DEFAULT 'git',
+  private_key BLOB NOT NULL,
+  public_key TEXT NOT NULL DEFAULT '',
+  git_name TEXT NOT NULL DEFAULT '',
+  git_email TEXT NOT NULL DEFAULT '',
+  github_user TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
 `

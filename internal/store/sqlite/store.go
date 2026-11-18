@@ -939,3 +939,74 @@ func safeName(name string) string {
 	}
 	return name
 }
+
+// ---------------------------------------------------------------------------
+// SSH identities (survive redeploy via DB snapshot)
+// ---------------------------------------------------------------------------
+
+// SSHIdentityRow is the durable form of an SSH identity (private key included).
+type SSHIdentityRow struct {
+	ID         string
+	Host       string
+	HostName   string
+	User       string
+	PrivateKey []byte
+	PublicKey  string
+	GitName    string
+	GitEmail   string
+	GitHubUser string
+	CreatedAt  string
+}
+
+func (s *Store) ListSSHIdentities() ([]SSHIdentityRow, error) {
+	rows, err := s.db.Query(`SELECT id, host, host_name, user_name, private_key, public_key,
+		git_name, git_email, github_user, created_at FROM ssh_identities ORDER BY host`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SSHIdentityRow
+	for rows.Next() {
+		var r SSHIdentityRow
+		if err := rows.Scan(&r.ID, &r.Host, &r.HostName, &r.User, &r.PrivateKey, &r.PublicKey,
+			&r.GitName, &r.GitEmail, &r.GitHubUser, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) UpsertSSHIdentity(r SSHIdentityRow) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if r.CreatedAt == "" {
+		r.CreatedAt = now()
+	}
+	_, err := s.db.Exec(`INSERT INTO ssh_identities(id,host,host_name,user_name,private_key,public_key,git_name,git_email,github_user,created_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(id) DO UPDATE SET
+			host=excluded.host, host_name=excluded.host_name, user_name=excluded.user_name,
+			private_key=excluded.private_key, public_key=excluded.public_key,
+			git_name=excluded.git_name, git_email=excluded.git_email,
+			github_user=excluded.github_user`,
+		r.ID, r.Host, r.HostName, r.User, r.PrivateKey, r.PublicKey, r.GitName, r.GitEmail, r.GitHubUser, r.CreatedAt,
+	)
+	if err != nil {
+		return err
+	}
+	s.touch()
+	return nil
+}
+
+func (s *Store) DeleteSSHIdentity(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.db.Exec(`DELETE FROM ssh_identities WHERE id=? OR host=?`, id, id)
+	if err != nil {
+		return err
+	}
+	s.touch()
+	return nil
+}
+

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gemechischala/awaki/internal/sshcreds"
 	"github.com/gemechischala/awaki/internal/tools/types"
 	"github.com/gemechischala/awaki/internal/workspace"
 )
@@ -807,16 +808,25 @@ func GitTools() []types.Tool {
 			Name:  "git_clone",
 			Label: "Git clone",
 			Description: "Clone a repository (https, ssh or git:// URL) into dest (default: ./<repo name> in the workspace). depth for a shallow clone; branch to check out. " +
-				"Local paths, file:// and private/loopback hosts are refused.",
+				"Local paths, file:// and private/loopback hosts are refused.
+
+" +
+				"Multi-account GitHub: pass ssh_host (e.g. github.com-username) to force the matching SSH identity. " +
+				"URL is rewritten to git@ssh_host:owner/repo.git. Prefer this over plain git@github.com: when multiple keys exist. " +
+				"Call ssh_list first if unsure which Host aliases are configured.",
 			Parameters: map[string]any{
-				"url":    prop("string", "Repository URL"),
-				"dest":   prop("string", "Target directory (default: repo name under the workspace root)"),
-				"depth":  prop("integer", "Shallow clone depth"),
-				"branch": prop("string", "Branch or tag to check out"),
+				"url":      prop("string", "Repository URL (https or ssh). With ssh_host, https GitHub URLs are rewritten to the Host alias."),
+				"dest":     prop("string", "Target directory (default: repo name under the workspace root)"),
+				"depth":    prop("integer", "Shallow clone depth"),
+				"branch":   prop("string", "Branch or tag to check out"),
+				"ssh_host": prop("string", "Optional SSH Host alias from /ssh (e.g. github.com-gemechisdev). Rewrites the URL to use that identity."),
 			},
 			Required: []string{"url"},
 			Handler: func(ctx context.Context, input map[string]any) types.Result {
 				raw := strings.TrimSpace(types.GetStringOpt(input, "url"))
+				if host := strings.TrimSpace(types.GetStringOpt(input, "ssh_host")); host != "" {
+					raw = sshcreds.RewriteGitSSHURL(raw, host)
+				}
 				if err := validateCloneURL(raw); err != nil {
 					return types.ErrResult(err)
 				}
