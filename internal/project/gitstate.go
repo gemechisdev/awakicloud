@@ -82,3 +82,8 @@ func GitHead(dir string) string {
 	}
 	return sha
 }
+
+// gitObjectRel reports whether rel is a path inside the git object database.
+func gitObjectRel(rel string) bool {
+	return strings.HasPrefix(filepath.ToSlash(rel), ".git/objects/")
+}

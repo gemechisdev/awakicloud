@@ -20,6 +20,10 @@ import (
 const (
 	ModeChat    = "chat"
 	ModeProject = "project"
+
+	// maxArchiveBytes is the largest archive we will upload. Telegram rejects
+	// documents above 50MB, so stop short of that.
+	maxArchiveBytes = 45 << 20
 )
 
 // Meta is persisted next to the working tree and in archive captions.
@@ -356,9 +360,24 @@ func (m *Manager) Sync(ctx context.Context, slug string, lastEditor ...string) (
 			}
 		}
 	}
-	// size guard ~45MB
-	if len(data) > 45<<20 {
-		return meta, fmt.Errorf("project archive too large (%d bytes); add ignores or split the project", len(data))
+	// Size guard. History is worth keeping, but Telegram's document limit is
+	// 50MB, so an oversized archive is re-taken without the object database
+	// (refs, HEAD and packed-refs still ship, which keeps the present state) and
+	// the degradation is recorded instead of failing the sync outright.
+	if len(data) > maxArchiveBytes {
+		log.Warn().Str("slug", slug).Int("bytes", len(data)).
+			Msg("project archive over size limit; retrying without .git/objects")
+		trimmed, tHash, tCount, tSize, tErr := ZipTreeExceptGitObjects(m.ProjectDir(slug))
+		if tErr != nil {
+			return meta, fmt.Errorf("project archive too large (%d bytes) and the fallback failed: %w", len(data), tErr)
+		}
+		if len(trimmed) > maxArchiveBytes {
+			return meta, fmt.Errorf("project archive too large (%d bytes) even without .git/objects; add ignores or split the project", len(trimmed))
+		}
+		data, contentHash, fileCount, totalSize = trimmed, tHash, tCount, tSize
+		meta.GitOmitted = true
+	} else {
+		meta.GitOmitted = false
 	}
 	// Keep legacy zip-byte hash for backward compatibility.
 	meta.Hash = LegacyZipHash(data)

@@ -228,7 +228,13 @@ func (e *Engine) cmdSyncProject(ctx context.Context, msg channel.Message) {
 	}
 	ch.ProjectHash = meta.Hash
 	_ = ch.Save()
-	_ = msg.Reply.SendText(ctx, fmt.Sprintf("☁ Synced «%s»\nHash: %s", meta.Name, meta.Hash))
+	note := ""
+	if meta.GitOmitted {
+		note = "\n⚠️ Archive was over the size limit, so git history objects were omitted.\n" +
+			"Refs still ship, but old commits cannot be checked out. Add ignores, or\n" +
+			"commit to a remote, to keep history durable."
+	}
+	_ = msg.Reply.SendText(ctx, fmt.Sprintf("☁ Synced «%s»\nHash: %s%s", meta.Name, meta.Hash, note))
 }
 
 // humanBytes formats bytes into a human-readable string.

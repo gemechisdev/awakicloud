@@ -98,9 +98,30 @@ func hashPaths(root string, pred func(rel string) bool) (string, bool, error) {
 // housekeeping (gc, repack) shifts the hash and costs one re-upload; see
 // gitstate.go for why that is preferred over a git-aware heuristic.
 func ZipTree(root string) (data []byte, contentHash string, fileCount int, totalSize int64, err error) {
+	return zipTree(root, true)
+}
+
+// ZipTreeExceptGitObjects archives everything except the object database. Only
+// used as the oversize fallback (see Manager.Sync): refs, HEAD and packed-refs
+// still ship, so the branch tip is known, but the blobs of past commits are not
+// and the project cannot be checked out at an old revision.
+func ZipTreeExceptGitObjects(root string) (data []byte, contentHash string, fileCount int, totalSize int64, err error) {
+	return zipTree(root, false)
+}
+
+func zipTree(root string, includeGitObjects bool) (data []byte, contentHash string, fileCount int, totalSize int64, err error) {
 	zipFiles, err := archivedPaths(root)
 	if err != nil {
 		return nil, "", 0, 0, err
+	}
+	if !includeGitObjects {
+		kept := zipFiles[:0]
+		for _, p := range zipFiles {
+			if !gitObjectRel(p) {
+				kept = append(kept, p)
+			}
+		}
+		zipFiles = kept
 	}
 
 	h := sha256.New()
