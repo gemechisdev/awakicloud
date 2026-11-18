@@ -49,6 +49,10 @@ type Config struct {
 	WorkDir   string
 	LogLevel  string
 
+	// StorageBackend is an explicit acknowledgement of a backend that cannot
+	// offer durable state. Empty means "not acknowledged" — see buildStore.
+	StorageBackend string
+
 	Telegram  TelegramConfig
 	LLM       LLMConfig
 	Scheduler SchedulerConfig
@@ -74,6 +78,8 @@ func Load() (*Config, error) {
 		DataDir:   env("AWAKI_DATA_DIR"),
 		WorkDir:   env("AWAKI_WORK_DIR"),
 		LogLevel:  envDefault("LOG_LEVEL", "info"),
+
+		StorageBackend: env("AWAKI_STORAGE_BACKEND"),
 
 		Telegram: TelegramConfig{
 			Token:        env("TELEGRAM_BOT_TOKEN"),

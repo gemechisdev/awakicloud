@@ -423,9 +423,38 @@ func resolveProvider(cfg *config.Config) (*llm.Provider, error) {
 	return llm.ResolveProvider(cfg.LLM.Model, cfg.LLM.Provider)
 }
 
+// buildStore picks the storage backend.
+//
+// Two backends exist, and they are not interchangeable. *sqlstore.Store is
+// backed by awaki.db and implements the Config/Blob/MCP cloud interfaces, so
+// providers, schedules, project archives and MCP servers inherit the durability
+// of the versioned Telegram snapshots. *tgstore.UserStore is a Telegrive-style
+// MTProto cache: it satisfies store.Store for chats, memory and skills, but it
+// implements none of those cloud interfaces and no syncer is wired to it.
+//
+// Because the selection used to be silent, that difference was invisible. Under
+// MTProto every cloud branch below the call was skipped, which meant providers,
+// schedules, project archives and MCP servers lived only on local disk — and
+// /data is not a persistent volume, so each restart discarded all of them while
+// the agent reported success at every step. The only evidence was four missing
+// "backed by sqlite cloud" log lines.
+//
+// So: fail loudly rather than run in a configuration that silently drops durable
+// state. The error names the way out.
 func buildStore(ctx context.Context, cfg *config.Config) (store.Store, error) {
-	// Preferred: Telegrive-style user account (MTProto) when API credentials present.
+	// Telegrive-style user account (MTProto), kept for deployments that have no
+	// bot token and accept that only chats/memory/skills persist to the channel.
 	if cfg.Telegram.APIID != 0 && cfg.Telegram.APIHash != "" && cfg.Telegram.Phone != "" {
+		if cfg.Telegram.Token == "" || cfg.Telegram.StorageID == 0 {
+			return nil, fmt.Errorf(
+				"refusing to start with Telegrive-style MTProto storage alone: it has no durable home for " +
+					"providers, schedules, project archives or MCP servers, and /data is not persistent, so a " +
+					"restart would discard them.\n" +
+					"  To keep them: set AWAKI_TELEGRAM_TOKEN and AWAKI_TELEGRAM_STORAGE_ID as well, and the bot " +
+					"path below takes over (recommended).\n" +
+					"  To proceed anyway with local-only config, unset AWAKI_TELEGRAM_API_ID / AWAKI_TELEGRAM_API_HASH " +
+					"/ AWAKI_TELEGRAM_PHONE and set AWAKI_STORAGE_BACKEND=local to acknowledge the loss.")
+		}
 		session := cfg.Telegram.SessionPath
 		if session == "" {
 			session = filepath.Join(cfg.DataDir, "telegram.session")
@@ -447,6 +476,9 @@ func buildStore(ctx context.Context, cfg *config.Config) (store.Store, error) {
 		})
 	}
 
+	if cfg.StorageBackend == "local" {
+		log.Warn().Msg("AWAKI_STORAGE_BACKEND=local: providers, schedules, project archives and MCP servers are local-only and will be lost on restart")
+	}
 	dbPath := filepath.Join(cfg.DataDir, "awaki.db")
 
 	// Bot storage chat: SQLite is source of truth; Telegram holds versioned DB snapshots.
@@ -561,4 +593,3 @@ func (a sshDBAdapter) UpsertSSHIdentity(r sshcreds.DurableRow) error {
 func (a sshDBAdapter) DeleteSSHIdentity(id string) error {
 	return a.s.DeleteSSHIdentity(id)
 }
-

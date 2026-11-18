@@ -27,7 +27,7 @@ jobs:
           # This repo has pre-existing formatting drift in a fixed set of files.
           # Do not fail on those — fix only what a change actually touches, so
           # this gate stays credible instead of becoming noise nobody reads.
-          allowed='^(cmd/awaki/main\.go|internal/core/ui_state\.go|internal/exim/(export|types)\.go|internal/providers/(store|types)\.go|internal/store/sqlite/store\.go|internal/sshcreds/store_test\.go)$'
+          allowed='^(internal/core/ui_state\.go|internal/exim/(export|types)\.go|internal/providers/(store|types)\.go|internal/store/sqlite/store\.go|internal/sshcreds/store_test\.go)$'
           drift=$(gofmt -l . | grep -vE "$allowed" || true)
           if [ -n "$drift" ]; then
             echo "::error::these files are not gofmt-clean:"

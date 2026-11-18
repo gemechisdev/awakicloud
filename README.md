@@ -151,9 +151,34 @@ Time to call your team.
 |-------|------|
 | **SQLite** (`awaki.db`) | Chats, memory, skills, providers, schedules, tasks, MCP config |
 | **Telegram channel** | Optional durable cloud: versioned DB snapshots + project ZIPs |
-| **MTProto user session** | Optional Telegrive-style storage (`AWAKI_TG_*`) |
+| **MTProto user session** | Optional Telegrive-style storage (`AWAKI_TG_*`) — see the warning below |
 
 On cold start, configuration rehydrates from SQLite (and TG snapshots when configured).
+
+### Why `AWAKI_TG_*` alone is refused at startup
+
+There are two storage backends and they are **not** interchangeable. The bot
+path (`TELEGRAM_BOT_TOKEN` + `AWAKI_STORAGE_CHAT_ID`) is SQLite-backed, and that
+store is what makes providers, schedules, project archives and MCP servers
+durable: it implements the cloud interfaces those subsystems sync through, and a
+syncer uploads versioned snapshots to the channel.
+
+The MTProto user path (`AWAKI_TG_*`) is a Telegrive-style channel cache. It
+serves chats, memory and skills, but it implements none of those cloud
+interfaces and nothing syncs it. If it is the only backend, providers,
+schedules, project archives and MCP servers are written to local disk only —
+and since the data directory is not a persistent volume, every restart discards
+them. That used to happen silently, with the agent reporting success throughout.
+
+So the process now refuses to start in that configuration and prints both ways
+out: add the bot settings (recommended — they take over), or set
+`AWAKI_STORAGE_BACKEND=local` to acknowledge the loss deliberately.
+
+DB snapshots are the only durable copy of everything the agent knows. On restore
+the pinned manifest is read first and its payload is verified against the hash
+recorded at upload; if the newest snapshot is missing or corrupt, the manifest's
+history is walked newest-first to the first intact version, so one bad upload
+cannot turn a restart into permanent data loss.
 
 ### Selective export / import
 
@@ -261,7 +286,8 @@ Agent `mode`: `auto` | `queue` | `interrupt`.
 | `AWAKI_PERMISSION_MODE` | Default mode: `auto` \| `ask` \| `plan` |
 | `AWAKI_PROVIDER` / `AWAKI_MODEL` / `AWAKI_BASE_URL` / `AWAKI_API_KEY` | Optional LLM bootstrap (prefer Telegram CRUD) |
 | `AWAKI_STORAGE_CHAT_ID` | Bot-mode storage channel id |
-| `AWAKI_TG_API_ID` / `AWAKI_TG_API_HASH` / `AWAKI_TG_PHONE` / … | Optional MTProto user storage |
+| `AWAKI_TG_API_ID` / `AWAKI_TG_API_HASH` / `AWAKI_TG_PHONE` / … | Optional MTProto user storage (requires the bot settings too, or `AWAKI_STORAGE_BACKEND=local`) |
+| `AWAKI_STORAGE_BACKEND` | `local` acknowledges a backend with no durable cloud state |
 | `AWAKI_TG_CHANNEL` | Storage channel title (default `Awaki`) |
 | `AWAKI_SCHEDULER_TASK_TIMEOUT` | Per scheduled run timeout |
 | `AWAKI_SCHEDULER_MAX_CONCURRENT` | Scheduler concurrency |
