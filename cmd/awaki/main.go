@@ -25,6 +25,7 @@ import (
 	"github.com/gemechischala/awaki/internal/project"
 	"github.com/gemechischala/awaki/internal/providers"
 	"github.com/gemechischala/awaki/internal/scheduler"
+	"github.com/gemechischala/awaki/internal/sshcreds"
 	"github.com/gemechischala/awaki/internal/store"
 	"github.com/gemechischala/awaki/internal/store/local"
 	sqlstore "github.com/gemechischala/awaki/internal/store/sqlite"
@@ -45,6 +46,10 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
+	}
+	// So git tools can locate managed SSH config ({DataDir}/ssh/config).
+	if os.Getenv("AWAKI_DATA_DIR") == "" {
+		_ = os.Setenv("AWAKI_DATA_DIR", cfg.DataDir)
 	}
 
 	logger.Init(cfg.LogLevel)
@@ -354,6 +359,8 @@ func buildEngine(ctx context.Context, cfg *config.Config, ch channel.Channel) (*
 	}
 
 	permStore := permission.NewStore(cfg.DataDir)
+	sshStore := sshcreds.New(cfg.DataDir)
+	_ = sshStore.RebuildConfig() // ensure managed ~/.ssh/config section is present
 
 	return core.New(core.Params{
 		Channel:             ch,
@@ -367,6 +374,7 @@ func buildEngine(ctx context.Context, cfg *config.Config, ch channel.Channel) (*
 		MCP:                 mcpMgr,
 		Tasks:               taskMgr,
 		PermStore:           permStore,
+		SSH:                 sshStore,
 		ProjectSyncInterval: cfg.Project.SyncInterval,
 		RebuildAgent:        rebuild,
 	}), nil

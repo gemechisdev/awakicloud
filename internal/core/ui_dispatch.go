@@ -518,6 +518,10 @@ func (e *Engine) handleWizardInput(ctx context.Context, msg channel.Message, w *
 			}
 			return true // still waiting for the file; ignore empty pings
 		}
+		// SSH add: allow document-only uploads for key steps.
+		if w.Kind == "ssh_add" && (w.Step == "private_key" || w.Step == "public_key") && len(msg.Attachments) > 0 {
+			return e.wizardAddSSH(ctx, msg, w, "")
+		}
 		return true
 	}
 	switch w.Kind {
@@ -553,6 +557,8 @@ func (e *Engine) handleWizardInput(ctx context.Context, msg channel.Message, w *
 		return e.wizardAddSkill(ctx, msg, w, text)
 	case "mcp_key":
 		return e.wizardMCPUpdateKey(ctx, msg, w, text)
+	case "ssh_add":
+		return e.wizardAddSSH(ctx, msg, w, text)
 	case "import":
 		// Caption on a document, or a stray message while waiting for the ZIP.
 		if w.Step == "wait_file" && len(msg.Attachments) > 0 {

@@ -31,6 +31,7 @@ const (
 	CmdTasks          = "tasks"
 	CmdTaskAdd        = "task"
 	CmdSchedules      = "schedules"
+	CmdSSH            = "ssh"
 	CmdMCP            = "mcp"
 	CmdMCPAdd         = "mcp_add"
 	CmdSkills         = "skills"

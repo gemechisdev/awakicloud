@@ -103,7 +103,22 @@ func gitEnv(dir string) []string {
 		"GCM_INTERACTIVE=never", "LC_ALL=C",
 	)
 	if os.Getenv("GIT_SSH_COMMAND") == "" {
-		env = append(env, "GIT_SSH_COMMAND=ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new")
+		// Prefer Awaki-managed SSH config (multi-account identities from /ssh)
+		// when present; otherwise plain BatchMode ssh.
+		sshCmd := "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
+		if dataDir := os.Getenv("AWAKI_DATA_DIR"); dataDir != "" {
+			cfg := filepath.Join(dataDir, "ssh", "config")
+			if st, err := os.Stat(cfg); err == nil && st.Size() > 0 {
+				sshCmd = "ssh -F " + cfg + " -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
+			}
+		} else if home, err := os.UserHomeDir(); err == nil {
+			// Fallback: default data dir ~/.awaki/ssh/config
+			cfg := filepath.Join(home, ".awaki", "ssh", "config")
+			if st, err := os.Stat(cfg); err == nil && st.Size() > 0 {
+				sshCmd = "ssh -F " + cfg + " -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
+			}
+		}
+		env = append(env, "GIT_SSH_COMMAND="+sshCmd)
 	}
 	return env
 }

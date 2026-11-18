@@ -17,6 +17,7 @@ import (
 	"github.com/gemechischala/awaki/internal/project"
 	"github.com/gemechischala/awaki/internal/providers"
 	"github.com/gemechischala/awaki/internal/scheduler"
+	"github.com/gemechischala/awaki/internal/sshcreds"
 	"github.com/gemechischala/awaki/internal/store"
 	"github.com/gemechischala/awaki/internal/tasks"
 	"github.com/gemechischala/awaki/internal/tools"
@@ -44,6 +45,7 @@ type Engine struct {
 	mcp       *mcp.Manager
 	tasksMgr  *tasks.Manager
 	permStore *permission.Store
+	ssh       *sshcreds.Store
 	ui        uiState
 	steer     steerState
 	// rebuildAgent recreates the LLM client from the active provider/model pair.
@@ -72,6 +74,7 @@ type Params struct {
 	MCP                 *mcp.Manager
 	Tasks               *tasks.Manager
 	PermStore           *permission.Store
+	SSH                 *sshcreds.Store
 	ProjectSyncInterval time.Duration
 	RebuildAgent        func() error
 }
@@ -87,6 +90,7 @@ func New(p Params) *Engine {
 		providers:           p.Providers,
 		projects:            p.Projects,
 		mcp:                 p.MCP,
+		ssh:                 p.SSH,
 		tasksMgr:            p.Tasks,
 		permStore:           p.PermStore,
 		rebuildAgent:        p.RebuildAgent,
@@ -257,6 +261,9 @@ func (e *Engine) handleCommand(ctx context.Context, msg channel.Message) {
 		return
 	case channel.CmdSchedules:
 		e.uiSchedulesBoard(ctx, msg)
+		return
+	case channel.CmdSSH:
+		e.uiSSHBoard(ctx, msg)
 		return
 	case channel.CmdMode:
 		raw := ""

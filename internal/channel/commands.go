@@ -39,6 +39,7 @@ var Commands = []CommandSpec{
 	{Slash: "tasks", Cmd: CmdTasks, Description: "Background task board", Help: "background task board", Menu: true},
 	{Slash: "task", Cmd: CmdTaskAdd, Description: "Queue a background task", Help: "<work> — queue background task", Menu: true},
 	{Slash: "schedules", Cmd: CmdSchedules, Description: "View & manage reminders", Help: "list / pause / remove scheduled reminders & cron jobs", Menu: true},
+	{Slash: "ssh", Cmd: CmdSSH, Description: "SSH / Git credentials", Help: "manage SSH identities for multi-account GitHub (keys + ~/.ssh/config)", Menu: true},
 
 	{Slash: "history", Cmd: CmdHistory, Description: "Past conversations", Help: "alias of /chats", Menu: false, HideHelp: true},
 	{Slash: "memory", Cmd: CmdMemory, Description: "List memory files", Help: "list memory files", Menu: true},
