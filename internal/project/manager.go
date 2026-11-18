@@ -30,6 +30,7 @@ type Meta struct {
 	ChatID      string    `json:"chat_id,omitempty"`
 	Hash        string    `json:"hash,omitempty"`         // legacy: zip-byte hash (backward compat)
 	ContentHash string    `json:"content_hash,omitempty"` // content-based hash (file paths + contents)
+	GitHead     string    `json:"git_head,omitempty"`     // short HEAD sha captured at sync time (diagnostics)
 	FileCount   int       `json:"file_count,omitempty"`   // number of non-ignored files
 	TotalSize   int64     `json:"total_size,omitempty"`   // total bytes of non-ignored files
 	LastEditor  string    `json:"last_editor,omitempty"`  // last chat_id that edited
@@ -362,6 +363,7 @@ func (m *Manager) Sync(ctx context.Context, slug string, lastEditor ...string) (
 	// Keep legacy zip-byte hash for backward compatibility.
 	meta.Hash = LegacyZipHash(data)
 	meta.ContentHash = contentHash
+	meta.GitHead = GitHead(m.ProjectDir(slug))
 	meta.FileCount = fileCount
 	meta.TotalSize = totalSize
 	if len(lastEditor) > 0 && lastEditor[0] != "" {
@@ -420,10 +422,17 @@ func (m *Manager) SyncIfTreeChanged(ctx context.Context, slug string, lastEditor
 	if err != nil {
 		meta = Meta{Name: slug, Slug: slug}
 	}
-	hash, err := ContentHash(m.ProjectDir(slug))
+	dir := m.ProjectDir(slug)
+	hash, err := ContentHash(dir)
 	if err != nil {
 		return false, meta, err
 	}
+	// Change detection is the content hash alone: it covers every archived byte,
+	// the git object database included. That means a repack (git gc, an occasional
+	// `git repack`) re-uploads once — accepted deliberately. A second, git-aware
+	// signal cannot tell "objects pruned" from "objects added", because both move
+	// the object paths, so it would suppress real changes in order to hide a rare
+	// redundant upload. Re-uploading is the safe failure mode.
 	if meta.ContentHash != "" && meta.ContentHash == hash {
 		return false, meta, nil // no real change — nothing to upload
 	}
@@ -431,6 +440,7 @@ func (m *Manager) SyncIfTreeChanged(ctx context.Context, slug string, lastEditor
 	if err != nil {
 		return false, meta, err
 	}
+	_ = m.writeMeta(meta)
 	stateFor(slug).setLastSync(meta.UpdatedAt)
 	return true, meta, nil
 }
@@ -475,7 +485,7 @@ func (m *Manager) ListCloud(ctx context.Context) ([]Meta, error) {
 	return m.blobs.ListArchives(ctx)
 }
 
-// CopyTreeIgnoring copies files from src into dest, applying DefaultIgnore rules.
+// CopyTreeIgnoring copies files from src into dest, applying archive rules.
 // Existing files in dest are overwritten. Directories are created as needed.
 // Returns the number of files copied.
 func CopyTreeIgnoring(src, dest string) (int, error) {
@@ -513,7 +523,7 @@ func CopyTreeIgnoring(src, dest string) (int, error) {
 			return nil
 		}
 		relSlash := filepath.ToSlash(rel)
-		if shouldIgnore(relSlash) {
+		if shouldExcludeFromArchive(relSlash) {
 			if info.IsDir() {
 				return filepath.SkipDir
 			}
@@ -616,7 +626,13 @@ func (m *Manager) Rename(ctx context.Context, slug, name string) (Meta, error) {
 	if m.blobs != nil {
 		// Re-save the archive so the new caption reaches the cloud, but never
 		// push an empty tree (Sync's safety rule).
-		if data, _, fileCount, _, zerr := ZipTree(m.ProjectDir(slug)); zerr == nil && fileCount > 0 {
+		if data, contentHash, fileCount, size, zerr := ZipTree(m.ProjectDir(slug)); zerr == nil && fileCount > 0 {
+			meta.ContentHash = contentHash
+			meta.GitHead = GitHead(m.ProjectDir(slug))
+			meta.FileCount = fileCount
+			meta.TotalSize = size
+			meta.Hash = LegacyZipHash(data)
+			_ = m.writeMeta(meta)
 			if err := m.blobs.SaveArchive(ctx, meta, data); err != nil {
 				log.Warn().Err(err).Str("slug", slug).Msg("project rename: cloud caption update failed")
 			}

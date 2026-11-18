@@ -17,13 +17,30 @@ func TestSecretFilesAreIgnored(t *testing.T) {
 			t.Errorf("shouldIgnore(%q) = false, want true (secret must not be archived)", p)
 		}
 	}
+	// .git ships (history is the point) but its index cache does not.
+	mustGitInternal := []string{".git/index", ".git/index.lock"}
+	for _, p := range mustGitInternal {
+		if !shouldExcludeFromArchive(p) {
+			t.Errorf("shouldExcludeFromArchive(%q) = false, want true (cache must not be archived)", p)
+		}
+	}
 	keep := []string{
 		"internal/sshcreds/store.go", "cmd/awaki/main.go", "go.mod",
 		"README.md", ".github/workflows/secret-scan.yml",
+		// git history is deliberately archived
+		".git/HEAD", ".git/config", ".git/refs/heads/main",
+		".git/objects/ab/cdef0123456789", ".git/packed-refs",
+		".env.example",
 	}
 	for _, p := range keep {
-		if shouldIgnore(p) {
-			t.Errorf("shouldIgnore(%q) = true, want false (source must be archived)", p)
+		if shouldExcludeFromArchive(p) {
+			t.Errorf("shouldExcludeFromArchive(%q) = true, want false (must be archived)", p)
+		}
+	}
+	// Regression: the archive rule and the ignore rule must agree on secrets.
+	for _, p := range must {
+		if !shouldIgnore(p) && !isGitInternal(p) {
+			t.Errorf("shouldIgnore(%q) = false, want true (secret must not be archived)", p)
 		}
 	}
 }

@@ -13,21 +13,13 @@ import (
 	"strings"
 )
 
-// ZipTree archives root into a zip, applying ignore rules. Returns zip data + content hash
-// plus file stats (count, total size). The content hash is computed from file contents
-// (not zip bytes), so identical file trees always produce the same hash.
-func ZipTree(root string) (data []byte, contentHash string, fileCount int, totalSize int64, err error) {
-	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
-
-	type fileEntry struct {
-		rel  string
-		path string
-		info os.FileInfo
-	}
-	var entries []fileEntry
-
-	err = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+// archivedPaths walks root and returns the relative (slash-separated) paths that
+// belong in an archive, sorted for deterministic output. Archive rules are
+// applied here, so the zip builder, the content hash and CopyTreeIgnoring all
+// see exactly the same file set.
+func archivedPaths(root string) ([]string, error) {
+	var files []string
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -39,78 +31,120 @@ func ZipTree(root string) (data []byte, contentHash string, fileCount int, total
 			return nil
 		}
 		relSlash := filepath.ToSlash(rel)
-		if shouldIgnore(relSlash) {
+		if shouldExcludeFromArchive(relSlash) {
 			if info.IsDir() {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		entries = append(entries, fileEntry{rel: relSlash, path: path, info: info})
+		if info.IsDir() {
+			return nil
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		files = append(files, relSlash)
 		return nil
 	})
 	if err != nil {
-		_ = zw.Close()
-		return nil, "", 0, 0, err
+		return nil, err
 	}
+	sort.Strings(files)
+	return files, nil
+}
 
-	// Sort entries for deterministic zip output.
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].rel < entries[j].rel
-	})
-
-	// Compute content hash from sorted (path, content) pairs.
+// hashPaths hashes a filtered, sorted path list: relative path, NUL, content,
+// NUL — the same scheme the content hash has always used. pred selects the
+// paths that take part. Returns ok=false when nothing matched, so callers can
+// distinguish "no git state" from a real (empty) hash.
+func hashPaths(root string, pred func(rel string) bool) (string, bool, error) {
+	all, err := archivedPaths(root)
+	if err != nil {
+		return "", false, err
+	}
+	var files []string
+	for _, p := range all {
+		if pred(p) {
+			files = append(files, p)
+		}
+	}
+	if len(files) == 0 {
+		return "", false, nil
+	}
 	h := sha256.New()
-	for _, e := range entries {
-		if e.info.IsDir() {
-			_, err := zw.Create(e.rel + "/")
-			if err != nil {
-				_ = zw.Close()
-				return nil, "", 0, 0, err
-			}
-			continue
-		}
-		if !e.info.Mode().IsRegular() {
-			continue
-		}
-		// Hash the relative path + file content.
-		h.Write([]byte(e.rel))
+	for _, rel := range files {
+		h.Write([]byte(rel))
 		h.Write([]byte("\x00"))
-		f, err := os.Open(e.path)
+		f, err := os.Open(filepath.Join(root, filepath.FromSlash(rel)))
 		if err != nil {
-			_ = zw.Close()
-			return nil, "", 0, 0, err
+			return "", false, err
 		}
 		if _, err := io.Copy(h, f); err != nil {
 			f.Close()
-			_ = zw.Close()
-			return nil, "", 0, 0, err
+			return "", false, err
 		}
 		f.Close()
 		h.Write([]byte("\x00"))
+	}
+	return "sha256:" + hex.EncodeToString(h.Sum(nil)), true, nil
+}
 
-		// Track stats.
-		fileCount++
-		totalSize += e.info.Size()
-
-		// Write to zip.
-		w, err := zw.Create(e.rel)
-		if err != nil {
-			_ = zw.Close()
-			return nil, "", 0, 0, err
-		}
-		f, err = os.Open(e.path)
-		if err != nil {
-			_ = zw.Close()
-			return nil, "", 0, 0, err
-		}
-		_, err = io.Copy(w, f)
-		f.Close()
-		if err != nil {
-			_ = zw.Close()
-			return nil, "", 0, 0, err
-		}
+// ZipTree archives root into a zip, applying archive rules. Returns zip data +
+// content hash plus file stats (count, total size). The content hash is computed
+// from file contents (not zip bytes), so identical file trees always produce the
+// same hash.
+//
+// The hash covers every archived file, .git/objects included. That means git
+// housekeeping (gc, repack) shifts the hash and costs one re-upload; see
+// gitstate.go for why that is preferred over a git-aware heuristic.
+func ZipTree(root string) (data []byte, contentHash string, fileCount int, totalSize int64, err error) {
+	zipFiles, err := archivedPaths(root)
+	if err != nil {
+		return nil, "", 0, 0, err
 	}
 
+	h := sha256.New()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for _, rel := range zipFiles {
+		full := filepath.Join(root, filepath.FromSlash(rel))
+		info, statErr := os.Stat(full)
+		if statErr != nil || !info.Mode().IsRegular() {
+			continue // tree changed under us — skip, don't abort the snapshot
+		}
+		f, openErr := os.Open(full)
+		if openErr != nil {
+			continue
+		}
+		// Content hash: path + NUL + content + NUL.
+		h.Write([]byte(rel))
+		h.Write([]byte("\x00"))
+		if _, copyErr := io.Copy(h, f); copyErr != nil {
+			f.Close()
+			_ = zw.Close()
+			return nil, "", 0, 0, copyErr
+		}
+		h.Write([]byte("\x00"))
+		if _, seekErr := f.Seek(0, io.SeekStart); seekErr != nil {
+			f.Close()
+			_ = zw.Close()
+			return nil, "", 0, 0, seekErr
+		}
+		w, createErr := zw.CreateHeader(&zip.FileHeader{Name: rel, Method: zip.Deflate, Modified: info.ModTime()})
+		if createErr != nil {
+			f.Close()
+			_ = zw.Close()
+			return nil, "", 0, 0, createErr
+		}
+		if _, copyErr := io.Copy(w, f); copyErr != nil {
+			f.Close()
+			_ = zw.Close()
+			return nil, "", 0, 0, copyErr
+		}
+		f.Close()
+		fileCount++
+		totalSize += info.Size()
+	}
 	if err := zw.Close(); err != nil {
 		return nil, "", 0, 0, err
 	}
@@ -128,63 +162,33 @@ func LegacyZipHash(data []byte) string {
 }
 
 // ContentHash computes the same content hash ZipTree produces (relative paths +
-// file contents, honouring the ignore rules) without building a zip. Auto-sync
+// file contents, honouring the archive rules) without building a zip. Auto-sync
 // uses it to detect real changes in the tree, so it stays correct no matter
 // which tool (edit_file, write_file, bash, a build script, …) changed a file.
 func ContentHash(root string) (string, error) {
-	var files []string
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		if rel == "." {
-			return nil
-		}
-		relSlash := filepath.ToSlash(rel)
-		if shouldIgnore(relSlash) {
-			if info.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if info.IsDir() {
-			// directories contribute no content
-			return nil
-		}
-		if !info.Mode().IsRegular() {
-			return nil
-		}
-		files = append(files, relSlash)
-		return nil
-	})
+	hash, ok, err := hashPaths(root, func(string) bool { return true })
 	if err != nil {
 		return "", err
 	}
-	sort.Strings(files)
-	h := sha256.New()
-	for _, rel := range files {
-		h.Write([]byte(rel))
-		h.Write([]byte("\x00"))
-		f, err := os.Open(filepath.Join(root, filepath.FromSlash(rel)))
-		if err != nil {
-			return "", err
-		}
-		if _, err := io.Copy(h, f); err != nil {
-			f.Close()
-			return "", err
-		}
-		f.Close()
-		h.Write([]byte("\x00"))
+	if !ok {
+		// Empty tree — keep the historical sha256-of-nothing value.
+		return "sha256:" + hex.EncodeToString(sha256.New().Sum(nil)), nil
 	}
-	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+	return hash, nil
 }
 
-// ExtractZip writes zip data into dest (created if needed). Existing files may be overwritten.
+// ExtractZip writes zip data into dest (created if needed) and then repairs the
+// git working state. Existing files may be overwritten.
 func ExtractZip(data []byte, dest string) error {
+	if err := extractZip(data, dest); err != nil {
+		return err
+	}
+	// .git/index is not shipped (it is a cache); rebuild it from HEAD so a
+	// restored repository reports a clean tree instead of "every file deleted".
+	return EnsureGitIndex(dest)
+}
+
+func extractZip(data []byte, dest string) error {
 	r, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		return err
