@@ -127,6 +127,62 @@ func LegacyZipHash(data []byte) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
+// ContentHash computes the same content hash ZipTree produces (relative paths +
+// file contents, honouring the ignore rules) without building a zip. Auto-sync
+// uses it to detect real changes in the tree, so it stays correct no matter
+// which tool (edit_file, write_file, bash, a build script, …) changed a file.
+func ContentHash(root string) (string, error) {
+	var files []string
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		relSlash := filepath.ToSlash(rel)
+		if shouldIgnore(relSlash) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if info.IsDir() {
+			// directories contribute no content
+			return nil
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		files = append(files, relSlash)
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	sort.Strings(files)
+	h := sha256.New()
+	for _, rel := range files {
+		h.Write([]byte(rel))
+		h.Write([]byte("\x00"))
+		f, err := os.Open(filepath.Join(root, filepath.FromSlash(rel)))
+		if err != nil {
+			return "", err
+		}
+		if _, err := io.Copy(h, f); err != nil {
+			f.Close()
+			return "", err
+		}
+		f.Close()
+		h.Write([]byte("\x00"))
+	}
+	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+}
+
 // ExtractZip writes zip data into dest (created if needed). Existing files may be overwritten.
 func ExtractZip(data []byte, dest string) error {
 	r, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))

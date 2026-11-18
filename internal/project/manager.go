@@ -409,6 +409,32 @@ func (m *Manager) SyncIfDirty(ctx context.Context, slug string, lastEditor ...st
 	return true, meta, nil
 }
 
+// SyncIfTreeChanged uploads the project archive when the CONTENT HASH of the
+// local tree differs from the last synced hash. Unlike SyncIfDirty it does not
+// depend on a tool having called MarkDirty, so changes made through bash, a
+// build script, or any other path are still picked up. It also never clears the
+// dirty flag, so a change can never be stranded (the hash is the source of
+// truth). Returns (synced, meta, err).
+func (m *Manager) SyncIfTreeChanged(ctx context.Context, slug string, lastEditor ...string) (bool, Meta, error) {
+	meta, err := m.ReadMeta(slug)
+	if err != nil {
+		meta = Meta{Name: slug, Slug: slug}
+	}
+	hash, err := ContentHash(m.ProjectDir(slug))
+	if err != nil {
+		return false, meta, err
+	}
+	if meta.ContentHash != "" && meta.ContentHash == hash {
+		return false, meta, nil // no real change — nothing to upload
+	}
+	meta, err = m.Sync(ctx, slug, lastEditor...)
+	if err != nil {
+		return false, meta, err
+	}
+	stateFor(slug).setLastSync(meta.UpdatedAt)
+	return true, meta, nil
+}
+
 // ListLocal returns projects present on disk.
 func (m *Manager) ListLocal() ([]Meta, error) {
 	entries, err := os.ReadDir(m.projectsRoot())

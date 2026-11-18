@@ -307,6 +307,10 @@ func runBash(ctx context.Context, input map[string]any, command string) types.Re
 	if strings.TrimSpace(body) == "" {
 		body = "(no output)"
 	}
+	// A shell command may have written into the project tree; mark it dirty so
+	// the auto-syncer picks the change up on its next tick (the content hash
+	// decides whether anything actually needs uploading).
+	markProjectDirty(workdir)
 	return types.Result{Output: body + took}
 }
 

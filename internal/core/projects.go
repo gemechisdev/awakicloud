@@ -31,8 +31,10 @@ func (e *Engine) SyncActiveProject(ctx context.Context) {
 	e.syncActiveProjectIfDirty(ctx)
 }
 
-// syncActiveProjectIfDirty uploads the project zip only if it has been marked
-// dirty since the last sync AND the content hash actually changed.
+// syncActiveProjectIfDirty uploads the project zip when the local tree has
+// actually changed since the last sync. Change detection is content-based (not
+// a dirty flag), so edits made through bash or any other tool are picked up
+// too — file tools no longer have to remember to MarkDirty.
 func (e *Engine) syncActiveProjectIfDirty(ctx context.Context) {
 	if e.projects == nil {
 		return
@@ -44,21 +46,21 @@ func (e *Engine) syncActiveProjectIfDirty(ctx context.Context) {
 	if ch.Mode != project.ModeProject || ch.ProjectSlug == "" {
 		return
 	}
-	synced, meta, err := e.projects.SyncIfDirty(ctx, ch.ProjectSlug, ch.ID)
+	synced, meta, err := e.projects.SyncIfTreeChanged(ctx, ch.ProjectSlug, ch.ID)
 	if err != nil {
-		log.Warn().Err(err).Str("slug", ch.ProjectSlug).Msg("project sync-if-dirty failed")
+		log.Warn().Err(err).Str("slug", ch.ProjectSlug).Msg("project auto-sync failed")
 		return
 	}
 	if synced {
 		ch.ProjectHash = meta.Hash
 		_ = ch.Save()
-		log.Debug().Str("slug", ch.ProjectSlug).Str("hash", meta.Hash).Msg("project auto-synced (dirty)")
+		log.Debug().Str("slug", ch.ProjectSlug).Str("hash", meta.Hash).Msg("project auto-synced (tree changed)")
 	}
 }
 
 // startProjectAutoSync launches a background ticker that auto-syncs the active
-// project whenever the project manager reports dirty (file changes, DB updates,
-// etc.). Interval is configurable (default 30s).
+// project whenever its content hash differs from the last synced hash (file
+// changes from any tool, bash included). Interval is configurable (default 30s).
 func (e *Engine) startProjectAutoSync(ctx context.Context) {
 	if e.projects == nil {
 		return

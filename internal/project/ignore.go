@@ -11,6 +11,7 @@ var DefaultIgnore = []string{
 	"node_modules", "node_modules/**",
 	"vendor", "vendor/**",
 	".awaki", ".awaki/**",
+	".awaki-project.json",
 	"dist", "dist/**",
 	"build", "build/**",
 	"target", "target/**",
