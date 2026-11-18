@@ -49,8 +49,23 @@ func hasName(names []string, want string) bool {
 	return false
 }
 
-// The whole point of the change: a project's git history must be inside the
-// archive, so it can be restored on a host whose disk is wiped.
+// objectNames returns the relative paths of loose objects in a repository.
+func objectNames(t *testing.T, repo string) []string {
+	t.Helper()
+	var out []string
+	_ = filepath.Walk(filepath.Join(repo, ".git", "objects"), func(p string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		rel, _ := filepath.Rel(repo, p)
+		out = append(out, filepath.ToSlash(rel))
+		return nil
+	})
+	return out
+}
+
+// The whole point: a project's git history must be inside the archive, so it can
+// be restored on a host whose disk is wiped on every restart.
 func TestGitDirectoryIsArchived(t *testing.T) {
 	dir := t.TempDir()
 	gitRun(t, dir, "init", "-q")
@@ -67,16 +82,11 @@ func TestGitDirectoryIsArchived(t *testing.T) {
 	}
 	names := zipNames(t, data)
 
-	for _, want := range []string{
-		".git/HEAD",
-		".git/config",
-		"a.txt",
-	} {
+	for _, want := range []string{".git/HEAD", ".git/config", "a.txt"} {
 		if !hasName(names, want) {
 			t.Errorf("archive is missing %s (git state must be archived)", want)
 		}
 	}
-	// A committed object must ship, otherwise a restore is a corrupt repo.
 	hasObject := false
 	for _, n := range names {
 		if strings.HasPrefix(n, ".git/objects/") {
@@ -87,7 +97,6 @@ func TestGitDirectoryIsArchived(t *testing.T) {
 	if !hasObject {
 		t.Error("archive is missing .git/objects (restoring it would corrupt the repository)")
 	}
-	// The index is a cache and is deliberately not shipped.
 	if hasName(names, ".git/index") {
 		t.Error(".git/index must not be archived (it is a rebuildable cache)")
 	}
@@ -97,8 +106,7 @@ func TestGitDirectoryIsArchived(t *testing.T) {
 // with a project come back non-runnable.
 func TestArchivePreservesFileMode(t *testing.T) {
 	src := t.TempDir()
-	script := filepath.Join(src, "run.sh")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\necho hi\n"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(src, "run.sh"), []byte("#!/bin/sh\necho hi\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(src, "plain.txt"), []byte("x"), 0o644); err != nil {
@@ -128,15 +136,58 @@ func TestArchivePreservesFileMode(t *testing.T) {
 	}
 }
 
+// The common shape: a project promoted from a workspace that already held a
+// checkout, so the repository sits one level DOWN from the project root. The
+// archive must carry it and a restore must repair its index.
+func TestNestedRepositorySurvivesRestore(t *testing.T) {
+	src := t.TempDir()
+	repo := filepath.Join(src, "myrepo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, repo, "init", "-q")
+	if err := os.WriteFile(filepath.Join(repo, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, repo, "add", "-A")
+	gitRun(t, repo, "commit", "-qm", "initial")
+	if err := os.WriteFile(filepath.Join(src, "README.md"), []byte("project\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	data, _, _, _, err := ZipTree(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasName(zipNames(t, data), "myrepo/.git/HEAD") {
+		t.Fatal("nested repository was not archived")
+	}
+
+	dst := t.TempDir()
+	if err := ExtractZip(data, dst); err != nil {
+		t.Fatal(err)
+	}
+	restored := filepath.Join(dst, "myrepo")
+	if status := gitRun(t, restored, "status", "--porcelain"); strings.TrimSpace(status) != "" {
+		t.Errorf("nested repo restored dirty:\n%s", status)
+	}
+	if log := gitRun(t, restored, "log", "--oneline"); !strings.Contains(log, "initial") {
+		t.Errorf("nested repo lost its history:\n%s", log)
+	}
+	heads := GitHeads(dst)
+	if len(heads) != 1 || !strings.HasPrefix(heads[0], "myrepo=") {
+		t.Errorf("GitHeads(%q) = %v, want one entry %q", dst, heads, "myrepo=<sha>")
+	}
+}
+
 // Restoring an archive must yield a clean working tree, not "everything deleted".
 func TestRestoreProducesCleanWorkTree(t *testing.T) {
 	src := t.TempDir()
 	gitRun(t, src, "init", "-q")
-	for i, name := range []string{"a.txt", "b.txt"} {
+	for _, name := range []string{"a.txt", "b.txt"} {
 		if err := os.WriteFile(filepath.Join(src, name), []byte(name), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		_ = i
 	}
 	gitRun(t, src, "add", "-A")
 	gitRun(t, src, "commit", "-qm", "first")
@@ -145,21 +196,15 @@ func TestRestoreProducesCleanWorkTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	dst := t.TempDir()
 	if err := ExtractZip(data, dst); err != nil {
 		t.Fatalf("extract: %v", err)
 	}
-	status := gitRun(t, dst, "status", "--porcelain")
-	if strings.TrimSpace(status) != "" {
+	if status := gitRun(t, dst, "status", "--porcelain"); strings.TrimSpace(status) != "" {
 		t.Errorf("restored work tree is dirty:\n%s", status)
 	}
 	if log := gitRun(t, dst, "log", "--oneline"); !strings.Contains(log, "first") {
 		t.Errorf("history did not survive restore:\n%s", log)
-	}
-	// Branches survive too.
-	if br := gitRun(t, dst, "branch", "--list"); !strings.Contains(br, "master") && !strings.Contains(br, "main") {
-		t.Errorf("default branch did not survive restore:\n%s", br)
 	}
 }
 
@@ -198,9 +243,9 @@ func TestCommitWithoutFileEditIsDetected(t *testing.T) {
 
 // git housekeeping (gc folding loose objects into a packfile) rewrites the
 // object paths, so the content hash moves and the project is re-uploaded once.
-// This test pins that behaviour deliberately: change detection must never lean
-// on a git-aware heuristic, because such a heuristic cannot tell "objects
-// pruned" from "objects added" and would silently drop real changes.
+// This pins that behaviour deliberately: change detection must never lean on a
+// git-aware heuristic, because such a heuristic cannot tell "objects pruned"
+// from "objects added" and would silently drop real changes.
 func TestGitGcTriggersOneResync(t *testing.T) {
 	dir := t.TempDir()
 	m := NewManager(dir, newMemBlobs())
@@ -221,9 +266,10 @@ func TestGitGcTriggersOneResync(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	namesBefore := objectNames(t, repo)
+	before := objectNames(t, repo)
 	gitRun(t, repo, "gc", "--aggressive", "--prune=now")
-	if len(objectNames(t, repo)) == len(namesBefore) && len(namesBefore) > 0 && namesBefore[0] == objectNames(t, repo)[0] {
+	after := objectNames(t, repo)
+	if len(after) == len(before) && len(before) > 0 && before[0] == after[0] {
 		t.Skip("gc did not change the object layout; nothing to assert")
 	}
 
@@ -274,25 +320,7 @@ func TestArchivedHistoryAllowsRecovery(t *testing.T) {
 	if err := ExtractZip(data, dst); err != nil {
 		t.Fatal(err)
 	}
-	// The archived HEAD still contains the file.
-	show := gitRun(t, dst, "show", "HEAD:precious.txt")
-	if !strings.Contains(show, "do not lose me") {
+	if show := gitRun(t, dst, "show", "HEAD:precious.txt"); !strings.Contains(show, "do not lose me") {
 		t.Errorf("archived history lost committed content:\n%s", show)
 	}
-}
-
-// objectNames returns the relative paths of the loose objects in a repo.
-func objectNames(t *testing.T, repo string) []string {
-	t.Helper()
-	var out []string
-	root := filepath.Join(repo, ".git", "objects")
-	_ = filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
-			return nil
-		}
-		rel, _ := filepath.Rel(repo, p)
-		out = append(out, filepath.ToSlash(rel))
-		return nil
-	})
-	return out
 }

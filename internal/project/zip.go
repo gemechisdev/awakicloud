@@ -210,7 +210,8 @@ func ExtractZip(data []byte, dest string) error {
 	}
 	// .git/index is not shipped (it is a cache); rebuild it from HEAD so a
 	// restored repository reports a clean tree instead of "every file deleted".
-	return EnsureGitIndex(dest)
+	// Projects often contain a checkout one level down, so repair every repo.
+	return EnsureGitIndexes(dest)
 }
 
 func extractZip(data []byte, dest string) error {

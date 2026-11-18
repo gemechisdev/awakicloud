@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/rs/zerolog/log"
@@ -31,10 +32,21 @@ import (
 // changes. Re-uploading is the safe failure mode; silently dropping a change is
 // not.
 
-// HasGitRepo reports whether dir contains a usable git repository.
+// HasGitRepo reports whether dir is a git repository root. .git may be a
+// directory (normal clone) or a file (linked worktree / submodule).
 func HasGitRepo(dir string) bool {
-	st, err := os.Stat(filepath.Join(dir, ".git", "HEAD"))
-	return err == nil && st.Mode().IsRegular()
+	st, err := os.Stat(filepath.Join(dir, ".git"))
+	if err != nil {
+		return false
+	}
+	if st.Mode().IsRegular() {
+		return true // .git file → worktree or submodule
+	}
+	if !st.IsDir() {
+		return false
+	}
+	head, err := os.Stat(filepath.Join(dir, ".git", "HEAD"))
+	return err == nil && head.Mode().IsRegular()
 }
 
 // EnsureGitIndex rebuilds .git/index from HEAD when it is missing.
@@ -86,4 +98,81 @@ func GitHead(dir string) string {
 // gitObjectRel reports whether rel is a path inside the git object database.
 func gitObjectRel(rel string) bool {
 	return strings.HasPrefix(filepath.ToSlash(rel), ".git/objects/")
+}
+
+// gitRepoRoots returns the directories inside root that hold a .git entry —
+// either a repository itself (a .git directory) or a linked worktree/submodule
+// (a .git file). Projects are frequently promoted from a scratch workspace that
+// already contained a checkout, so the repository is usually one level DOWN
+// from the project root (…/projects/<slug>/<repo>/.git) rather than at it.
+// Bounded depth keeps the walk cheap on large trees.
+func gitRepoRoots(dir string) []string {
+	const maxDepth = 3
+	var out []string
+	root := filepath.Clean(dir)
+	_ = filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		rel, rerr := filepath.Rel(root, p)
+		if rerr != nil {
+			return nil
+		}
+		depth := 0
+		if rel != "." {
+			depth = strings.Count(filepath.ToSlash(rel), "/") + 1
+		}
+		if depth > maxDepth {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if info.IsDir() {
+			// Do not descend into a repository looking for more repositories.
+			if _, serr := os.Stat(filepath.Join(p, ".git")); serr == nil {
+				out = append(out, p)
+				return filepath.SkipDir
+			}
+			switch info.Name() {
+			case "node_modules", "vendor", ".venv", "venv", "__pycache__":
+				return filepath.SkipDir
+			}
+		}
+		return nil
+	})
+	sort.Strings(out)
+	return out
+}
+
+// GitHeads returns "relpath=head" for every repository inside root, so a project
+// that merely contains a checkout still gets its revision recorded. Returns nil
+// when there is no repository at all.
+func GitHeads(dir string) []string {
+	roots := gitRepoRoots(dir)
+	if len(roots) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(roots))
+	for _, r := range roots {
+		head := GitHead(r)
+		if head == "" {
+			continue
+		}
+		rel, err := filepath.Rel(dir, r)
+		if err != nil {
+			rel = r
+		}
+		out = append(out, filepath.ToSlash(rel)+"="+head)
+	}
+	return out
+}
+
+// EnsureGitIndexes repairs every repository inside root that is missing its
+// index (project archives deliberately omit .git/index). Called after a restore.
+func EnsureGitIndexes(root string) error {
+	for _, r := range gitRepoRoots(root) {
+		_ = EnsureGitIndex(r)
+	}
+	return nil
 }

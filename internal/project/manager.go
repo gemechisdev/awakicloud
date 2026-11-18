@@ -34,7 +34,8 @@ type Meta struct {
 	ChatID      string    `json:"chat_id,omitempty"`
 	Hash        string    `json:"hash,omitempty"`         // legacy: zip-byte hash (backward compat)
 	ContentHash string    `json:"content_hash,omitempty"` // content-based hash (file paths + contents)
-	GitHead     string    `json:"git_head,omitempty"`     // short HEAD sha captured at sync time (diagnostics)
+	GitHead     string    `json:"git_head,omitempty"`     // "relpath=sha" per repository found in the tree at sync time (diagnostics)
+	GitOmitted  bool      `json:"git_omitted,omitempty"`  // archive exceeded the size limit and was re-taken without .git/objects
 	FileCount   int       `json:"file_count,omitempty"`   // number of non-ignored files
 	TotalSize   int64     `json:"total_size,omitempty"`   // total bytes of non-ignored files
 	LastEditor  string    `json:"last_editor,omitempty"`  // last chat_id that edited
@@ -382,7 +383,7 @@ func (m *Manager) Sync(ctx context.Context, slug string, lastEditor ...string) (
 	// Keep legacy zip-byte hash for backward compatibility.
 	meta.Hash = LegacyZipHash(data)
 	meta.ContentHash = contentHash
-	meta.GitHead = GitHead(m.ProjectDir(slug))
+	meta.GitHead = strings.Join(GitHeads(m.ProjectDir(slug)), ",")
 	meta.FileCount = fileCount
 	meta.TotalSize = totalSize
 	if len(lastEditor) > 0 && lastEditor[0] != "" {
@@ -647,7 +648,7 @@ func (m *Manager) Rename(ctx context.Context, slug, name string) (Meta, error) {
 		// push an empty tree (Sync's safety rule).
 		if data, contentHash, fileCount, size, zerr := ZipTree(m.ProjectDir(slug)); zerr == nil && fileCount > 0 {
 			meta.ContentHash = contentHash
-			meta.GitHead = GitHead(m.ProjectDir(slug))
+			meta.GitHead = strings.Join(GitHeads(m.ProjectDir(slug)), ",")
 			meta.FileCount = fileCount
 			meta.TotalSize = size
 			meta.Hash = LegacyZipHash(data)
