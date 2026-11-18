@@ -53,7 +53,11 @@ func (e *Engine) syncActiveProjectIfDirty(ctx context.Context) {
 	}
 	if synced {
 		ch.ProjectHash = meta.Hash
-		_ = ch.Save()
+		if err := ch.Save(); err != nil {
+			// Non-fatal: the archive is already uploaded, only the cached hash is
+			// behind. Log it and carry on rather than failing a background tick.
+			log.Warn().Err(err).Str("slug", ch.ProjectSlug).Msg("project auto-synced but chat hash not persisted")
+		}
 		log.Debug().Str("slug", ch.ProjectSlug).Str("hash", meta.Hash).Msg("project auto-synced (tree changed)")
 	}
 }
@@ -122,7 +126,16 @@ func (e *Engine) cmdOpenOrCreateProject(ctx context.Context, msg channel.Message
 	if ch.Title == "" {
 		ch.Title = meta.Name
 	}
-	_ = ch.Save()
+	// This is the binding that makes the project stick to the chat. If it does
+	// not persist, a restart drops the chat back to scratch and the work looks
+	// lost — so say so instead of discarding the error.
+	if err := ch.Save(); err != nil {
+		_ = msg.Reply.SendText(ctx, fmt.Sprintf(
+			"⚠️ Project «%s» was created and its files synced, but the chat binding could not be saved (%v).\n"+
+				"After a restart this chat may fall back to a scratch workspace; re-open the project with /project %s.",
+			meta.Name, err, meta.Slug))
+		return
+	}
 	synced, err := e.projects.Sync(ctx, meta.Slug, ch.ID)
 	if err != nil {
 		_ = msg.Reply.SendText(ctx, fmt.Sprintf(
@@ -132,7 +145,9 @@ func (e *Engine) cmdOpenOrCreateProject(ctx context.Context, msg channel.Message
 		return
 	}
 	ch.ProjectHash = synced.Hash
-	_ = ch.Save()
+	if err := ch.Save(); err != nil {
+		log.Warn().Err(err).Str("slug", meta.Slug).Msg("project created but chat hash not persisted")
+	}
 	_ = msg.Reply.SendText(ctx, fmt.Sprintf(
 		"🟢 Created «%s» (%s)\nCopied %d files from current workspace.\nChat bound + synced (hash %s).",
 		meta.Name, meta.Slug, n, synced.Hash,
@@ -189,7 +204,14 @@ func (e *Engine) cmdUpgradeProject(ctx context.Context, msg channel.Message, nam
 	if ch.Title == "" {
 		ch.Title = meta.Name
 	}
-	_ = ch.Save() // persists mode/slug into chat DB
+	// Persists mode/slug into the chat DB — the binding that survives a restart.
+	if err := ch.Save(); err != nil {
+		_ = msg.Reply.SendText(ctx, fmt.Sprintf(
+			"⚠️ Promoted to project «%s» and files were copied, but the chat binding could not be saved (%v).\n"+
+				"After a restart this chat may fall back to a scratch workspace; re-open the project with /project %s.",
+			meta.Name, err, meta.Slug))
+		return
+	}
 
 	synced, err := e.projects.Sync(ctx, meta.Slug)
 	if err != nil {
@@ -201,7 +223,9 @@ func (e *Engine) cmdUpgradeProject(ctx context.Context, msg channel.Message, nam
 		return
 	}
 	ch.ProjectHash = synced.Hash
-	_ = ch.Save()
+	if err := ch.Save(); err != nil {
+		log.Warn().Err(err).Str("slug", meta.Slug).Msg("project promoted but chat hash not persisted")
+	}
 
 	_ = msg.Reply.SendText(ctx, fmt.Sprintf(
 		"🟢 Promoted to project «%s» (%s)\n"+
@@ -227,7 +251,9 @@ func (e *Engine) cmdSyncProject(ctx context.Context, msg channel.Message) {
 		return
 	}
 	ch.ProjectHash = meta.Hash
-	_ = ch.Save()
+	if err := ch.Save(); err != nil {
+		log.Warn().Err(err).Str("slug", ch.ProjectSlug).Msg("project synced but chat hash not persisted")
+	}
 	note := ""
 	if meta.GitOmitted {
 		note = "\n⚠️ Archive was over the size limit, so git history objects were omitted.\n" +

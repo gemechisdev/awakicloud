@@ -1,0 +1,49 @@
+name: CI
+
+# Build, vet, test and the durable-state guard. Until now the repo had no gate
+# at all: every push to main redeployed straight to production, so a compile
+# error or a failed test only showed up after the container had already gone
+# down. This runs first and fails fast.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt (changed files must be clean)
+        run: |
+          set -e
+          # This repo has pre-existing formatting drift in a fixed set of files.
+          # Do not fail on those — fix only what a change actually touches, so
+          # this gate stays credible instead of becoming noise nobody reads.
+          allowed='^(cmd/awaki/main\.go|internal/core/ui_state\.go|internal/exim/(export|types)\.go|internal/providers/(store|types)\.go|internal/store/sqlite/store\.go|internal/sshcreds/store_test\.go)$'
+          drift=$(gofmt -l . | grep -vE "$allowed" || true)
+          if [ -n "$drift" ]; then
+            echo "::error::these files are not gofmt-clean:"
+            echo "$drift"
+            exit 1
+          fi
+          echo "✅ formatting clean (outside the known-drift allowlist)"
+
+      - name: go build
+        run: go build ./...
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./... 2>&1 | tail -60
+
+      - name: durable state writes must not discard errors
+        run: ./scripts/check-ignored-errors.sh

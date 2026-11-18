@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rs/zerolog/log"
+
 	"github.com/gemechischala/awaki/internal/channel"
 	"github.com/gemechischala/awaki/internal/project"
 	"github.com/gemechischala/awaki/internal/store"
@@ -416,8 +418,21 @@ func (e *Engine) createProject(ctx context.Context, msg channel.Message, name, t
 	// Create() points the global workspace at the new project; restore the
 	// active chat's workspace unless a follow-up action rebinds explicitly.
 	e.rebindActiveWorkspace(ctx)
-	_, _ = e.projects.Sync(ctx, meta.Slug)
+	// The archive upload is what makes the new project durable. Previously this
+	// error was discarded AND the UI reported "✅ Project created", so a failed
+	// upload looked identical to a successful one.
+	synced := true
+	if _, err := e.projects.Sync(ctx, meta.Slug); err != nil {
+		synced = false
+		log.Warn().Err(err).Str("slug", meta.Slug).Msg("project created but initial sync failed")
+	}
 	e.invalidateProjects()
+
+	// Prefix the follow-up banner so the outcome is never overstated.
+	banner := "✅ Project created"
+	if !synced {
+		banner = "⚠️ Project created, but the first cloud sync failed — the archive was not uploaded.\nUse /sync to retry."
+	}
 
 	switch then {
 	case "chat":
@@ -425,7 +440,7 @@ func (e *Engine) createProject(ctx context.Context, msg channel.Message, name, t
 	case "move":
 		e.moveChatLocked(ctx, msg, ref, meta.Slug)
 	default:
-		e.uiProjectDetail(ctx, msg, meta.Slug, "✅ Project created")
+		e.uiProjectDetail(ctx, msg, meta.Slug, banner)
 	}
 }
 

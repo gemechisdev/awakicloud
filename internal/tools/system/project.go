@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/rs/zerolog/log"
+
 	"github.com/gemechischala/awaki/internal/project"
 	"github.com/gemechischala/awaki/internal/store"
 	"github.com/gemechischala/awaki/internal/tools/types"
@@ -68,6 +70,7 @@ func promoteProjectTool(m *project.Manager, resolveChat func() (*store.Chat, err
 				ch.Title = meta.Name
 			}
 			if err := ch.Save(); err != nil {
+				log.Error().Err(err).Str("slug", meta.Slug).Msg("project promoted but the chat binding was not persisted")
 				return types.Errf("saved project files but failed to persist chat: %v", err)
 			}
 
@@ -82,7 +85,17 @@ func promoteProjectTool(m *project.Manager, resolveChat func() (*store.Chat, err
 				}
 			}
 			ch.ProjectHash = synced.Hash
-			_ = ch.Save()
+			if err := ch.Save(); err != nil {
+				// The project exists and is synced; only the cached hash is behind.
+				// Log it too: the returned text is easy to miss in a long run.
+				log.Warn().Err(err).Str("slug", meta.Slug).Msg("project synced but the chat hash was not persisted; this chat will need /project to rebind after a restart")
+				return types.Result{Output: fmt.Sprintf(
+					"Promoted to project «%s» (slug %s).\nCopied %d files into /data/projects/%s/.\n"+
+						"Synced (hash %s), but the chat hash could not be persisted (%v).\n"+
+						"After a restart this chat may need /project %s to rebind.",
+					meta.Name, meta.Slug, n, meta.Slug, synced.Hash, err, meta.Slug,
+				)}
+			}
 
 			return types.Result{Output: fmt.Sprintf(
 				"Promoted to project «%s» (slug %s).\n"+

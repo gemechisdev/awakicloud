@@ -24,6 +24,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/rs/zerolog/log"
 )
 
 const (
@@ -72,6 +74,31 @@ type Store struct {
 	dataDir string
 	sshDir  string
 	db      Persister // optional
+
+	// diskOnly holds identities found on disk that the database does not know
+	// about. The database wins on hydrate (deliberately — see HydrateFromDB), so
+	// these are discarded on the next restart. Recorded so the UI can say so
+	// instead of dropping the user's work silently.
+	diskOnly []DiskOnlyIdentity
+}
+
+// DiskOnlyIdentity is an identity that exists on disk only. Key material is
+// never included — this is safe to log and to render.
+type DiskOnlyIdentity struct {
+	ID   string
+	Host string
+}
+
+// DiskOnlyIdentities returns identities that exist on disk but not in the
+// durable store, as of the last hydrate. Empty when a DB backend is attached and
+// complete, or when the store is disk-only (in which case disk *is* the truth
+// and nothing is at risk).
+func (s *Store) DiskOnlyIdentities() []DiskOnlyIdentity {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]DiskOnlyIdentity, len(s.diskOnly))
+	copy(out, s.diskOnly)
+	return out
 }
 
 func New(dataDir string) *Store {
@@ -394,8 +421,16 @@ func (s *Store) HydrateFromDB() error {
 		return err
 	}
 	if len(rows) == 0 {
+		s.diskOnly = nil
 		return s.backfillDBLocked()
 	}
+
+	// The database wins: disk is rebuilt from it below. Remember anything that
+	// exists on disk but not in the DB, because it is about to be discarded, and
+	// say so rather than losing the user's work silently. This is the one
+	// direction that is safe — see the note in the doc comment.
+	s.recordDiskOnlyLocked(rows)
+
 	if err := s.ensure(); err != nil {
 		return err
 	}
@@ -436,6 +471,63 @@ func (s *Store) HydrateFromDB() error {
 
 // backfillDBLocked pushes identities that exist only on disk into the durable
 // store. Caller holds s.mu. Best-effort: one bad row must not stop the rest.
+// recordDiskOnlyLocked records identities present on disk but absent from the
+// DB rows. Caller must hold s.mu.
+//
+// Disk identity can come from three places and they are not kept in sync, so all
+// three are checked:
+//   - ssh/identities.json  — the identity list
+//   - ssh/keys/<id>        — key files, which can outlive their json entry
+//     (backfillDBLocked persists from here, so an id found only here is
+//     genuinely unknown to the DB)
+//   - ssh/config           — Host aliases written by writeConfigsLocked
+func (s *Store) recordDiskOnlyLocked(rows []DurableRow) {
+	inDB := make(map[string]bool, len(rows))
+	for _, r := range rows {
+		inDB[r.ID] = true
+	}
+
+	seen := map[string]bool{}
+	var out []DiskOnlyIdentity
+	add := func(id, host string) {
+		if id == "" || inDB[id] || seen[id] {
+			return
+		}
+		seen[id] = true
+		if host == "" {
+			host = id
+		}
+		out = append(out, DiskOnlyIdentity{ID: id, Host: host})
+	}
+
+	if list, err := s.loadLocked(); err == nil {
+		for _, id := range list {
+			add(id.ID, id.Host)
+		}
+	}
+	if entries, err := os.ReadDir(filepath.Join(s.sshDir, "keys")); err == nil {
+		for _, e := range entries {
+			name := e.Name()
+			if e.IsDir() || strings.HasSuffix(name, ".pub") {
+				continue
+			}
+			add(name, "")
+		}
+	}
+
+	s.diskOnly = out
+	if len(out) > 0 {
+		ids := make([]string, 0, len(out))
+		for _, d := range out {
+			ids = append(ids, d.Host)
+		}
+		// Host aliases only — never key material.
+		log.Warn().
+			Strs("hosts", ids).
+			Msg("ssh: identities exist on disk but not in the database; the database wins, so these will be discarded on restart — re-add them to make them durable")
+	}
+}
+
 func (s *Store) backfillDBLocked() error {
 	list, err := s.loadLocked()
 	if err != nil || len(list) == 0 {

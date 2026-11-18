@@ -192,3 +192,81 @@ func TestHydrateRestoresKeysFromDB(t *testing.T) {
 		t.Fatalf("config not regenerated:\n%s", cfg)
 	}
 }
+
+// TestHydrateReportsDiskOnlyIdentities proves the deliberate "database wins"
+// direction does not lose data SILENTLY: an identity that exists on disk but not
+// in the DB is recorded so the UI can warn, rather than vanishing on restart.
+func TestHydrateReportsDiskOnlyIdentities(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "data")
+	t.Setenv("HOME", t.TempDir())
+
+	// Phase 1: create two identities with no DB at all.
+	disk := New(dataDir)
+	for _, host := range []string{"github.com-kept", "github.com-doomed"} {
+		if _, err := disk.Add(AddInput{
+			Host: host, HostName: "github.com", User: "git",
+			PrivateKey: samplePriv, PublicKey: samplePub,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Phase 2: a DB that knows about only ONE of them.
+	fp := newFakePersister()
+	fp.rows["github.com-kept"] = DurableRow{
+		ID: "github.com-kept", Host: "github.com-kept", HostName: "github.com",
+		User: "git", PrivateKey: []byte(samplePriv), PublicKey: samplePub,
+	}
+
+	live := New(dataDir)
+	if err := live.SetPersister(fp); err != nil {
+		t.Fatal(err)
+	}
+
+	// The DB wins, so only the known identity survives on disk…
+	list, err := live.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].ID != "github.com-kept" {
+		t.Fatalf("expected disk rebuilt from DB with 1 identity, got %+v", list)
+	}
+	// …but the dropped one must be reported, not silently forgotten.
+	only := live.DiskOnlyIdentities()
+	if len(only) != 1 {
+		t.Fatalf("expected 1 disk-only identity reported, got %d (%+v)", len(only), only)
+	}
+	if only[0].ID != "github.com-doomed" {
+		t.Fatalf("wrong identity reported as disk-only: %+v", only[0])
+	}
+	// The report must never carry key material.
+	if strings.Contains(only[0].Host, "PRIVATE") {
+		t.Fatal("disk-only report leaked key material")
+	}
+}
+
+// TestDiskOnlyIsEmptyWhenConsistent guards the common case: a healthy store must
+// not nag the user on every /ssh render.
+func TestDiskOnlyIsEmptyWhenConsistent(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "data")
+	t.Setenv("HOME", t.TempDir())
+
+	fp := newFakePersister()
+	st := New(dataDir)
+	if err := st.SetPersister(fp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Add(AddInput{
+		Host: "github.com-ok", HostName: "github.com", User: "git",
+		PrivateKey: samplePriv, PublicKey: samplePub,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Re-hydrate (a restart) with a consistent DB+disk pair.
+	if err := st.HydrateFromDB(); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.DiskOnlyIdentities(); len(got) != 0 {
+		t.Fatalf("consistent store reported disk-only identities: %+v", got)
+	}
+}
