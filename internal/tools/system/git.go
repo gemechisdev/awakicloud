@@ -808,9 +808,7 @@ func GitTools() []types.Tool {
 			Name:  "git_clone",
 			Label: "Git clone",
 			Description: "Clone a repository (https, ssh or git:// URL) into dest (default: ./<repo name> in the workspace). depth for a shallow clone; branch to check out. " +
-				"Local paths, file:// and private/loopback hosts are refused.
-
-" +
+				"Local paths, file:// and private/loopback hosts are refused. " +
 				"Multi-account GitHub: pass ssh_host (e.g. github.com-username) to force the matching SSH identity. " +
 				"URL is rewritten to git@ssh_host:owner/repo.git. Prefer this over plain git@github.com: when multiple keys exist. " +
 				"Call ssh_list first if unsure which Host aliases are configured.",
