@@ -8,7 +8,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
+	domain "github.com/gemechischala/awaki/internal/domain"
 	"github.com/gemechischala/awaki/internal/store"
 )
 
@@ -124,12 +126,12 @@ func TestChatBindingSurvivesReopen(t *testing.T) {
 	}
 	ch.AppendMessage(store.Turn{
 		Role:      "user",
-		Content:   []store.ContentBlock{{Type: "text", Text: "hello"}},
+		Content:   []domain.ContentBlock{{Type: "text", Text: "hello"}},
 		Timestamp: time.Now(),
 	})
 	ch.AppendMessage(store.Turn{
 		Role:      "assistant",
-		Content:   []store.ContentBlock{{Type: "text", Text: "hi"}},
+		Content:   []domain.ContentBlock{{Type: "text", Text: "hi"}},
 		Timestamp: time.Now(),
 	})
 	if err := s.SetActiveChatID(ch.ID); err != nil {
@@ -177,11 +179,11 @@ func TestChatBindingSurvivesReopen(t *testing.T) {
 func TestReplaceMessagesRewritesHistory(t *testing.T) {
 	s := openTestStore(t)
 	ch := s.NewChat()
-	ch.AppendMessage(store.Turn{Role: "user", Content: []store.ContentBlock{{Type: "text", Text: "one"}}})
-	ch.AppendMessage(store.Turn{Role: "assistant", Content: []store.ContentBlock{{Type: "text", Text: "two"}}})
+	ch.AppendMessage(store.Turn{Role: "user", Content: []domain.ContentBlock{{Type: "text", Text: "one"}}})
+	ch.AppendMessage(store.Turn{Role: "assistant", Content: []domain.ContentBlock{{Type: "text", Text: "two"}}})
 
 	if err := ch.ReplaceMessages([]store.Turn{
-		{Role: "user", Content: []store.ContentBlock{{Type: "text", Text: "rewritten"}}},
+		{Role: "user", Content: []domain.ContentBlock{{Type: "text", Text: "rewritten"}}},
 	}); err != nil {
 		t.Fatalf("ReplaceMessages: %v", err)
 	}
@@ -383,24 +385,61 @@ func TestSSHIdentityDeleteMatchesIDOrHost(t *testing.T) {
 	if err != nil || len(list) != 1 {
 		t.Fatalf("ListSSHIdentities = %+v, %v", list, err)
 	}
-	if list[0].CreatedAt == "" {
-		t.Error("CreatedAt should default to now when empty")
+	first := list[0].CreatedAt
+	if first == "" {
+		t.Fatal("CreatedAt should default to now when empty")
 	}
-	// Upsert with an explicit CreatedAt must preserve it.
+	// created_at is deliberately absent from the ON CONFLICT update list, so an
+	// upsert refreshes the key material without rewriting when the identity was
+	// first added. Pin that: a silent reset would make "added when" unreliable.
 	row.CreatedAt = "2020-01-01T00:00:00Z"
+	row.PrivateKey = []byte("ROTATED KEY MATERIAL")
 	if err := s.UpsertSSHIdentity(row); err != nil {
 		t.Fatalf("UpsertSSHIdentity 2: %v", err)
 	}
 	list, _ = s.ListSSHIdentities()
-	if list[0].CreatedAt != "2020-01-01T00:00:00Z" {
-		t.Errorf("CreatedAt = %q", list[0].CreatedAt)
+	if list[0].CreatedAt != first {
+		t.Errorf("CreatedAt was rewritten by an upsert: %q -> %q", first, list[0].CreatedAt)
 	}
-	// Delete accepts either the id or the host.
+	if string(list[0].PrivateKey) != "ROTATED KEY MATERIAL" {
+		t.Errorf("key rotation did not persist: %q", list[0].PrivateKey)
+	}
+	// A fresh identity does honour an explicit CreatedAt.
+	if err := s.UpsertSSHIdentity(SSHIdentityRow{
+		ID: "other", Host: "other", PrivateKey: []byte("k"), CreatedAt: "2020-01-01T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range mustList(t, s) {
+		if r.ID == "other" && r.CreatedAt != "2020-01-01T00:00:00Z" {
+			t.Errorf("explicit CreatedAt ignored on insert: %q", r.CreatedAt)
+		}
+	}
+	// Delete accepts either the id or the host, and must not take anything else
+	// with it.
 	if err := s.DeleteSSHIdentity("github.com-gemechisdev"); err != nil {
 		t.Fatalf("DeleteSSHIdentity: %v", err)
 	}
-	if list, _ := s.ListSSHIdentities(); len(list) != 0 {
-		t.Errorf("identity not deleted: %+v", list)
+	remaining := mustList(t, s)
+	for _, r := range remaining {
+		if r.ID == "github.com-gemechisdev" {
+			t.Errorf("identity not deleted: %+v", remaining)
+		}
+	}
+	if len(remaining) != 1 || remaining[0].ID != "other" {
+		t.Errorf("delete removed more than the target: %+v", remaining)
+	}
+	// The host form must work too.
+	if err := s.UpsertSSHIdentity(SSHIdentityRow{ID: "by-host", Host: "github.com-byhost", PrivateKey: []byte("k")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteSSHIdentity("github.com-byhost"); err != nil {
+		t.Fatalf("DeleteSSHIdentity by host: %v", err)
+	}
+	for _, r := range mustList(t, s) {
+		if r.Host == "github.com-byhost" {
+			t.Error("delete by host did not remove the identity")
+		}
 	}
 }
 
@@ -430,7 +469,7 @@ func seedStore(t *testing.T, s *Store) string {
 	if err := s.SaveChat(ch); err != nil {
 		t.Fatal(err)
 	}
-	ch.AppendMessage(store.Turn{Role: "user", Content: []store.ContentBlock{{Type: "text", Text: "remember me"}}})
+	ch.AppendMessage(store.Turn{Role: "user", Content: []domain.ContentBlock{{Type: "text", Text: "remember me"}}})
 	if err := s.SetActiveChatID(ch.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -953,7 +992,7 @@ func TestMutationsFireOnChange(t *testing.T) {
 		t.Error("SaveChat did not fire OnChange")
 	}
 	before = n
-	ch.AppendMessage(store.Turn{Role: "user", Content: []store.ContentBlock{{Type: "text", Text: "x"}}})
+	ch.AppendMessage(store.Turn{Role: "user", Content: []domain.ContentBlock{{Type: "text", Text: "x"}}})
 	if n == before {
 		t.Error("AppendMessage did not fire OnChange")
 	}
@@ -1022,11 +1061,29 @@ func TestLooksLikeSQLiteAndTrimCap(t *testing.T) {
 	if got := trimCap("  short  "); got != "short" {
 		t.Errorf("trimCap = %q", got)
 	}
+	// Truncation is by rune, so the result is 80 characters plus the ellipsis —
+	// 83 bytes in UTF-8. Assert on the rune count, not the byte count.
 	long := strings.Repeat("x", 200)
 	got := trimCap(long)
-	if len(got) > 81 || !strings.HasSuffix(got, "…") {
-		t.Errorf("trimCap did not truncate: len=%d %q", len(got), got)
+	if !strings.HasSuffix(got, "…") {
+		t.Errorf("trimCap did not add an ellipsis: %q", got)
 	}
+	if n := utf8.RuneCountInString(got); n != 81 {
+		t.Errorf("trimCap produced %d runes, want 81 (80 + ellipsis)", n)
+	}
+	// Exactly at the boundary it must be left alone.
+	if got := trimCap(strings.Repeat("y", 80)); strings.HasSuffix(got, "…") {
+		t.Errorf("80 characters should not be truncated: %q", got)
+	}
+}
+
+func mustList(t *testing.T, s *Store) []SSHIdentityRow {
+	t.Helper()
+	rows, err := s.ListSSHIdentities()
+	if err != nil {
+		t.Fatalf("ListSSHIdentities: %v", err)
+	}
+	return rows
 }
 
 func TestListChatsOrdersNewestFirst(t *testing.T) {

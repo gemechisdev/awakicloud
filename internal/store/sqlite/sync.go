@@ -171,19 +171,34 @@ func (s *Syncer) flush(force bool) {
 	s.mu.Unlock()
 
 	manBytes, _ := json.MarshalIndent(man, "", "  ")
-	// Upload manifest as document + pin it (never delete old db files).
-	mMsg, mFile, err := s.api.SendDocument(ctx, s.chatID, "awaki-manifest.json", manBytes,
+	// Upload the manifest and pin it (old db files are never deleted, so the
+	// whole version history stays recoverable).
+	mMsg, _, err := s.api.SendDocument(ctx, s.chatID, "awaki-manifest.json", manBytes,
 		"awaki:dbmanifest;ver="+fmt.Sprint(ver))
 	if err != nil {
-		log.Warn().Err(err).Msg("sqlite sync: upload manifest failed")
+		// Pin the database directly instead. It is the weaker recovery path —
+		// no history and no recorded hash — but it keeps a healthy snapshot
+		// recoverable, and on a first sync there is no previously pinned
+		// manifest to fall back on, so without this a restart would find
+		// nothing at all.
+		log.Warn().Err(err).Msg("sqlite sync: manifest upload failed; pinning the database snapshot instead")
+		if perr := s.api.PinMessage(ctx, s.chatID, msgID); perr != nil {
+			log.Warn().Err(perr).Msg("sqlite sync: pinning the database snapshot also failed; this version is not recoverable")
+		}
 		return
 	}
-	_ = mFile
+	// Pin the manifest. A chat has exactly one pinned message, so this has to be
+	// the last pin of the cycle: pinning the db afterwards would displace the
+	// manifest, and recovery reads the pinned document first. With the db pinned
+	// the manifest is never fetched on restore, which silently disables the
+	// rollback history and the hash check. Pinning only the manifest is also the
+	// better recovery guarantee: the pinned manifest still points at the newest
+	// db by file id, so nothing is lost.
 	if err := s.api.PinMessage(ctx, s.chatID, mMsg); err != nil {
-		log.Debug().Err(err).Msg("sqlite sync: pin manifest (optional)")
+		// Not optional: without the pin, a restart finds no manifest and falls
+		// back to the previous pinned snapshot, silently losing this version.
+		log.Warn().Err(err).Msg("sqlite sync: pin manifest failed; recovery will fall back to the previously pinned snapshot")
 	}
-	// Also pin latest db as secondary recovery path
-	_ = s.api.PinMessage(ctx, s.chatID, msgID)
 
 	log.Info().Int("ver", ver).Str("hash", hash[:12]).Int("bytes", len(data)).Msg("sqlite sync: uploaded db snapshot")
 	s.mu.Lock()
@@ -198,55 +213,52 @@ func (s *Syncer) snapshotBytes() ([]byte, string, error) {
 	s.store.mu.Lock()
 	defer s.store.mu.Unlock()
 	tmp := s.store.path + ".snap"
-	// Checkpoint WAL into main file then copy
+	// Checkpoint WAL into the main file so a plain copy is complete.
 	_, _ = s.store.db.Exec(`PRAGMA wal_checkpoint(FULL)`)
-	in, err := os.ReadFile(s.store.path)
-	if err != nil {
-		return nil, "", err
-	}
-	// Use VACUUM INTO when possible for compact consistent copy
-	_, err = s.store.db.Exec(`VACUUM INTO ?`, tmp)
-	if err == nil {
+	// VACUUM INTO yields a compact, consistent copy. Prefer it.
+	if _, err := s.store.db.Exec(`VACUUM INTO ?`, tmp); err == nil {
 		if data, rerr := os.ReadFile(tmp); rerr == nil {
 			_ = os.Remove(tmp)
 			sum := sha256.Sum256(data)
 			return data, hex.EncodeToString(sum[:]), nil
 		}
+		_ = os.Remove(tmp)
 	}
-	_ = os.Remove(tmp)
-	sum := sha256.Sum256(in)
-	return in, hex.EncodeToString(sum[:]), nil
+	// Fallback: read the database file directly. The hash must be computed from
+	// the same bytes that are returned — reading the file before VACUUM ran and
+	// then hashing that buffer would describe a payload the caller never
+	// receives, so the recorded hash and the uploaded snapshot would disagree.
+	data, err := os.ReadFile(s.store.path)
+	if err != nil {
+		return nil, "", err
+	}
+	sum := sha256.Sum256(data)
+	return data, hex.EncodeToString(sum[:]), nil
 }
 
-// BootstrapFromTelegram restores the latest versioned awaki.db from the storage chat.
-// Order inside Telegram: pinned manifest → latest_file_id DB, or pinned DB document.
+// BootstrapFromTelegram restores the newest recoverable awaki.db from the
+// storage chat.
+//
+// Order: the pinned document is expected to be the manifest; the manifest points
+// at the newest database, with older versions in History. A pinned database is
+// still accepted, because a flush that fails between the two uploads leaves one
+// pinned and it is perfectly usable.
 func BootstrapFromTelegram(ctx context.Context, api TGAPI, chatID int64, dbPath string) (bool, error) {
-	cap, fileID, _, err := api.GetChatPinnedFile(ctx, chatID)
+	caption, fileID, _, err := api.GetChatPinnedFile(ctx, chatID)
 	if err != nil {
 		return false, fmt.Errorf("get pinned: %w", err)
 	}
 	if fileID == "" {
 		return false, fmt.Errorf("no pinned file in storage chat")
 	}
-	data, err := api.DownloadFile(ctx, fileID)
+	pinned, err := api.DownloadFile(ctx, fileID)
 	if err != nil {
 		return false, fmt.Errorf("download pinned: %w", err)
 	}
 
-	source := "pinned"
-	var man Manifest
-	if json.Unmarshal(data, &man) == nil && man.LatestFileID != "" {
-		data, err = api.DownloadFile(ctx, man.LatestFileID)
-		if err != nil {
-			return false, fmt.Errorf("download manifest latest db: %w", err)
-		}
-		source = fmt.Sprintf("manifest v%d", man.LatestVer)
-		log.Info().Int("ver", man.LatestVer).Str("hash", man.LatestHash).Msg("sqlite bootstrap: using manifest latest")
-	} else if stringsHasPrefix(cap, "awaki:db") || looksLikeSQLite(data) {
-		source = "pinned-db"
-		log.Info().Msg("sqlite bootstrap: pinned message is a db snapshot")
-	} else {
-		return false, fmt.Errorf("pinned message is not an awaki db/manifest (caption=%q)", trimCap(cap))
+	data, source, err := selectSnapshot(ctx, api, caption, pinned)
+	if err != nil {
+		return false, err
 	}
 	if !looksLikeSQLite(data) {
 		return false, fmt.Errorf("downloaded payload is not a sqlite database")
@@ -264,6 +276,81 @@ func BootstrapFromTelegram(ctx context.Context, api TGAPI, chatID int64, dbPath 
 	}
 	log.Info().Str("source", source).Int("bytes", len(data)).Str("path", dbPath).Msg("sqlite bootstrap: restored previous database")
 	return true, nil
+}
+
+// selectSnapshot turns the pinned document into database bytes, or explains why
+// it cannot. Every candidate is hash-checked against what was recorded at upload
+// time: this snapshot is the only copy of everything the agent knows, so
+// restoring a truncated download would replace a good database with a broken one
+// and look like a success.
+func selectSnapshot(ctx context.Context, api TGAPI, caption string, pinned []byte) ([]byte, string, error) {
+	var man Manifest
+	if json.Unmarshal(pinned, &man) == nil && man.LatestFileID != "" {
+		newest, ver := man.LatestFileID, man.LatestVer
+		data, err := api.DownloadFile(ctx, newest)
+		if err == nil {
+			if herr := verifyHash(data, man.LatestHash); herr != nil {
+				err = herr
+			}
+		}
+		if err == nil {
+			log.Info().Int("ver", ver).Msg("sqlite bootstrap: using manifest latest")
+			return data, fmt.Sprintf("manifest v%d", ver), nil
+		}
+		log.Warn().Err(err).Int("ver", ver).Msg("sqlite bootstrap: newest snapshot unusable, trying history")
+
+		// The manifest still names older snapshots, and they are never deleted,
+		// so walk back to the newest one that is present and intact. Better an
+		// old database than a failed boot.
+		for _, e := range man.History {
+			if e.FileID == "" || e.FileID == newest {
+				continue
+			}
+			older, herr := api.DownloadFile(ctx, e.FileID)
+			if herr != nil {
+				log.Debug().Err(herr).Int("ver", e.Ver).Msg("sqlite bootstrap: history entry unavailable")
+				continue
+			}
+			if herr := verifyHash(older, e.Hash); herr != nil {
+				log.Warn().Err(herr).Int("ver", e.Ver).Msg("sqlite bootstrap: history entry failed verification")
+				continue
+			}
+			if !looksLikeSQLite(older) {
+				continue
+			}
+			log.Warn().Int("want", ver).Int("using", e.Ver).Msg("sqlite bootstrap: recovered an earlier snapshot")
+			return older, fmt.Sprintf("manifest v%d (v%d unusable)", e.Ver, ver), nil
+		}
+		return nil, "", fmt.Errorf("no usable snapshot in manifest: %w", err)
+	}
+
+	// Not a manifest. Accept it only if it is, or claims to be, a database.
+	if stringsHasPrefix(caption, "awaki:db") || looksLikeSQLite(pinned) {
+		log.Info().Msg("sqlite bootstrap: pinned document is a database snapshot")
+		return pinned, "pinned-db", nil
+	}
+	return nil, "", fmt.Errorf("pinned document is not an awaki db or manifest (caption=%q)", trimCap(caption))
+}
+
+// verifyHash compares payload against an expected sha256 hex digest. An empty
+// expectation is accepted: manifests written before hashes were recorded must
+// still restore.
+func verifyHash(payload []byte, want string) error {
+	if want == "" {
+		return nil
+	}
+	sum := sha256.Sum256(payload)
+	if got := hex.EncodeToString(sum[:]); got != want {
+		return fmt.Errorf("payload hash mismatch: recorded %s, downloaded %s", short(want), short(got))
+	}
+	return nil
+}
+
+func short(h string) string {
+	if len(h) > 12 {
+		return h[:12]
+	}
+	return h
 }
 
 func trimCap(s string) string {
