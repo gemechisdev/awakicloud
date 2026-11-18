@@ -1,6 +1,7 @@
 package project
 
 import (
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -57,18 +58,29 @@ func shouldExcludeFromArchive(rel string) bool {
 	return shouldIgnore(rel)
 }
 
+// isGitInternal reports whether rel is a git internal that must not be archived.
+// Matched at ANY depth: a project's repository is usually nested one level down
+// (…/projects/<slug>/<repo>/.git), so a root-anchored match would silently ship
+// the index for the common case.
 func isGitInternal(rel string) bool {
 	rel = filepath.ToSlash(rel)
+	base := path.Base(rel)
+	parent := path.Base(path.Dir(rel)) // "" at the root
 	for _, pat := range gitInternalIgnore {
 		pat = filepath.ToSlash(pat)
 		if pat == rel {
 			return true
 		}
-		if strings.HasSuffix(pat, "/**") {
-			prefix := strings.TrimSuffix(pat, "/**")
-			if rel == prefix || strings.HasPrefix(rel, prefix+"/") {
+		if strings.Contains(pat, "/") {
+			// gitInternalIgnore entries are all ".git/<name>" — require that the
+			// path ends with that suffix so <anything>/.git/<name> matches too.
+			if rel == pat || strings.HasSuffix(rel, "/"+pat) {
 				return true
 			}
+			continue
+		}
+		if base == pat && parent == ".git" {
+			return true
 		}
 	}
 	return false

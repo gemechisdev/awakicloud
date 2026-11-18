@@ -159,8 +159,15 @@ func TestNestedRepositorySurvivesRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hasName(zipNames(t, data), "myrepo/.git/HEAD") {
+	names := zipNames(t, data)
+	if !hasName(names, "myrepo/.git/HEAD") {
 		t.Fatal("nested repository was not archived")
+	}
+	// Regression: the index exclusion must apply at any depth, not just the tree
+	// root — a nested repo's index was previously archived, which is exactly what
+	// makes a restore report the whole tree as deleted.
+	if hasName(names, "myrepo/.git/index") {
+		t.Error("nested .git/index must not be archived (it is a rebuildable cache)")
 	}
 
 	dst := t.TempDir()
