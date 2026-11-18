@@ -54,10 +54,11 @@ known_hosts
 .awaki-project.json
 
 # Data / state
-data/
 *.log
 tmp/
-docs/
+# docs/ is scratch space — except the correctness-pass plan, which I want tracked.
+docs/*
+!docs/CORRECTNESS_PASS.md
 
 # Docker
 docker-compose.override.yml
