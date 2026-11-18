@@ -255,6 +255,9 @@ func (e *Engine) handleCommand(ctx context.Context, msg channel.Message) {
 		}
 		e.cmdAddBackgroundTask(ctx, msg, raw)
 		return
+	case channel.CmdSchedules:
+		e.uiSchedulesBoard(ctx, msg)
+		return
 	case channel.CmdMode:
 		raw := ""
 		if cmd.Args != nil {

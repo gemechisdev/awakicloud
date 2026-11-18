@@ -50,6 +50,9 @@ func mainMenuKeyboard(current string) channel.KeyboardMessage {
 			},
 			{
 				{Text: "📋 Tasks", CallbackData: "ui:tasks"},
+				{Text: "⏰ Schedules", CallbackData: "ui:schedules"},
+			},
+			{
 				{Text: "🛡️ Mode", CallbackData: "ui:mode"},
 			},
 			{
@@ -73,6 +76,7 @@ func settingsKeyboard() channel.KeyboardMessage {
 			{{Text: "📚 Agent Skills", CallbackData: "ui:skills"}},
 			{{Text: "🧠 Models (all)", CallbackData: "ui:models:0"}},
 			{{Text: "🛡️ Permission mode", CallbackData: "ui:mode"}},
+			{{Text: "⏰ Schedules / reminders", CallbackData: "ui:schedules"}},
 			{{Text: "🧬 Soul", CallbackData: "ui:soul"}, {Text: "🧠 Memory", CallbackData: "ui:memory"}},
 			{{Text: "📤 Export data", CallbackData: "ui:export"}, {Text: "📥 Import data", CallbackData: "ui:import"}},
 			{{Text: "⬅ Home", CallbackData: "ui:home"}},

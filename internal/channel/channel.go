@@ -30,6 +30,7 @@ const (
 	CmdHelp           = "help"
 	CmdTasks          = "tasks"
 	CmdTaskAdd        = "task"
+	CmdSchedules      = "schedules"
 	CmdMCP            = "mcp"
 	CmdMCPAdd         = "mcp_add"
 	CmdSkills         = "skills"

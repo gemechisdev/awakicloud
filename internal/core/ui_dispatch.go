@@ -181,6 +181,24 @@ func (e *Engine) routeUI(ctx context.Context, msg channel.Message, data string) 
 		if len(parts) >= 3 {
 			e.uiTaskGet(ctx, msg, parts[2])
 		}
+	case "schedules":
+		e.uiSchedulesBoard(ctx, msg)
+	case "sched":
+		if len(parts) >= 3 {
+			e.uiScheduleDetail(ctx, msg, parts[2])
+		}
+	case "schedpause":
+		if len(parts) >= 3 {
+			e.uiSchedulePause(ctx, msg, parts[2], true)
+		}
+	case "schedresume":
+		if len(parts) >= 3 {
+			e.uiSchedulePause(ctx, msg, parts[2], false)
+		}
+	case "schedrm":
+		if len(parts) >= 3 {
+			e.uiScheduleRemove(ctx, msg, parts[2])
+		}
 	case "profile":
 		e.uiProfile(ctx, msg)
 	case "providers":

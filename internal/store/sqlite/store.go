@@ -339,16 +339,10 @@ func (s *Store) LoadSkills() ([]store.Skill, error) {
 		return nil, fmt.Errorf("skills load failed and repair failed: %w (original: %v)", repairErr, err)
 	}
 	if len(dropped) > 0 {
-		// Surface dropped names via a sentinel-style error that callers can
-		// still get the remaining skills for. We re-load after repair.
 		out, err = s.loadSkillsOnce()
 		if err != nil {
 			return nil, err
 		}
-		// Attach info about dropped skills for the UI / owner notification.
-		// Callers that only care about the list still succeed; those that
-		// want the warning can check via a type assert if we later add one.
-		// For now log is enough; skills_ui will show a clean list.
 		_ = dropped
 		return out, nil
 	}
@@ -368,7 +362,6 @@ func (s *Store) loadSkillsOnce() ([]store.Skill, error) {
 		for rows.Next() {
 			var name, desc, body string
 			if err := rows.Scan(&name, &desc, &body); err != nil {
-				// Skip unreadable row instead of failing the whole list
 				log.Warn().Err(err).Msg("skipping unreadable skill row")
 				continue
 			}
