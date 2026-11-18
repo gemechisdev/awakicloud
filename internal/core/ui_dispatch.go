@@ -199,6 +199,18 @@ func (e *Engine) routeUI(ctx context.Context, msg channel.Message, data string) 
 		if len(parts) >= 3 {
 			e.uiScheduleRemove(ctx, msg, parts[2])
 		}
+	case "ssh":
+		if len(parts) >= 3 {
+			e.uiSSHDetail(ctx, msg, parts[2])
+		} else {
+			e.uiSSHBoard(ctx, msg)
+		}
+	case "sshadd":
+		e.uiStartAddSSH(ctx, msg)
+	case "sshrm":
+		if len(parts) >= 3 {
+			e.uiSSHRemove(ctx, msg, parts[2])
+		}
 	case "profile":
 		e.uiProfile(ctx, msg)
 	case "providers":
