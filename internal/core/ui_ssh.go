@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -282,7 +283,14 @@ func (e *Engine) finishAddSSH(ctx context.Context, msg channel.Message, in sshcr
 	ident, err := e.ssh.Add(in)
 	e.ui.clear()
 	if err != nil {
+		if errors.Is(err, sshcreds.ErrNotDurable) {
+			_ = msg.Reply.SendText(ctx, "⚠️ Identity `"+in.Host+"` was written to disk but **not** the durable store — it will be lost when the container restarts.\n\n"+
+				"Reason: "+err.Error()+"\n\nThe SSH store is not backed by the database, so it cannot survive a redeploy.")
+			e.uiSSHBoard(ctx, msg)
+			return
+		}
 		_ = msg.Reply.SendText(ctx, "Failed to save identity: "+err.Error())
+		e.uiSSHBoard(ctx, msg)
 		return
 	}
 	var b strings.Builder

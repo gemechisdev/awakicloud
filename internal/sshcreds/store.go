@@ -16,6 +16,7 @@ package sshcreds
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -80,12 +81,26 @@ func New(dataDir string) *Store {
 	}
 }
 
+// ErrNotDurable reports that an identity could not be written to the durable
+// store. The identity still works for the current process, but it will be lost
+// when the container restarts, so callers must surface it instead of assuming
+// the change was saved.
+var ErrNotDurable = errors.New("ssh identity was not written to the durable store")
+
 // SetPersister attaches the DB backend and hydrates disk from it.
 func (s *Store) SetPersister(p Persister) error {
 	s.mu.Lock()
 	s.db = p
 	s.mu.Unlock()
 	return s.HydrateFromDB()
+}
+
+// Durable reports whether a DB backend is attached, i.e. whether identities
+// will survive a restart.
+func (s *Store) Durable() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.db != nil
 }
 
 func (s *Store) Dir() string        { return s.sshDir }
@@ -291,9 +306,10 @@ func (s *Store) Add(in AddInput) (Identity, error) {
 	if err := s.writeConfigsLocked(next); err != nil {
 		return Identity{}, err
 	}
-	// Durable persist
+	// Durable persist. A failure here means the identity is disk-only and will
+	// be lost on the next restart, so it must be surfaced rather than ignored.
 	if s.db != nil {
-		_ = s.db.UpsertSSHIdentity(DurableRow{
+		if err := s.db.UpsertSSHIdentity(DurableRow{
 			ID:         ident.ID,
 			Host:       ident.Host,
 			HostName:   ident.HostName,
@@ -304,7 +320,9 @@ func (s *Store) Add(in AddInput) (Identity, error) {
 			GitEmail:   ident.GitEmail,
 			GitHubUser: ident.GitHubUser,
 			CreatedAt:  ident.CreatedAt.Format(time.RFC3339Nano),
-		})
+		}); err != nil {
+			return ident, fmt.Errorf("%w: %v", ErrNotDurable, err)
+		}
 	}
 	return ident, nil
 }
@@ -340,7 +358,9 @@ func (s *Store) Remove(idOrHost string) error {
 		return err
 	}
 	if s.db != nil && removedID != "" {
-		_ = s.db.DeleteSSHIdentity(removedID)
+		if err := s.db.DeleteSSHIdentity(removedID); err != nil {
+			return fmt.Errorf("%w: %v", ErrNotDurable, err)
+		}
 	}
 	return nil
 }
@@ -358,6 +378,11 @@ func (s *Store) RebuildConfig() error {
 
 // HydrateFromDB materialises key files + config from the durable store.
 // Call after SetPersister / on process start so redeploys restore keys to disk.
+//
+// When the DB has no rows but disk does (e.g. an identity created before the DB
+// backend existed, or during a period when a persist failed), it back-fills the
+// DB from disk so the identity becomes durable from then on. After that, the DB
+// is the source of truth.
 func (s *Store) HydrateFromDB() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -369,7 +394,7 @@ func (s *Store) HydrateFromDB() error {
 		return err
 	}
 	if len(rows) == 0 {
-		return nil
+		return s.backfillDBLocked()
 	}
 	if err := s.ensure(); err != nil {
 		return err
@@ -407,6 +432,42 @@ func (s *Store) HydrateFromDB() error {
 		return err
 	}
 	return s.writeConfigsLocked(list)
+}
+
+// backfillDBLocked pushes identities that exist only on disk into the durable
+// store. Caller holds s.mu. Best-effort: one bad row must not stop the rest.
+func (s *Store) backfillDBLocked() error {
+	list, err := s.loadLocked()
+	if err != nil || len(list) == 0 {
+		return err
+	}
+	var firstErr error
+	for _, id := range list {
+		priv, rerr := os.ReadFile(id.IdentityFile)
+		if rerr != nil || len(priv) == 0 {
+			continue // nothing to persist without the key material
+		}
+		pub := id.PublicKey
+		if p, perr := os.ReadFile(id.IdentityFile + ".pub"); perr == nil {
+			pub = strings.TrimSpace(string(p))
+		}
+		row := DurableRow{
+			ID:         id.ID,
+			Host:       id.Host,
+			HostName:   id.HostName,
+			User:       id.User,
+			PrivateKey: priv,
+			PublicKey:  strings.TrimSpace(pub),
+			GitName:    id.GitName,
+			GitEmail:   id.GitEmail,
+			GitHubUser: id.GitHubUser,
+			CreatedAt:  id.CreatedAt.Format(time.RFC3339Nano),
+		}
+		if err := s.db.UpsertSSHIdentity(row); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 func (s *Store) writeConfigsLocked(list []Identity) error {

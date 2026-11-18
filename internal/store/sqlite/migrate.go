@@ -70,6 +70,50 @@ func (s *Store) MigrateFromDir(dataDir string) {
 		_ = s.SetConfigJSON("schedules", b)
 		imported++
 	}
+	// SSH identities: import the legacy on-disk metadata + keys into the DB so
+	// they survive redeploys the same way chats/skills/providers do. The key
+	// material lives next to the metadata under ssh/keys/{id}.
+	if raw, err := os.ReadFile(filepath.Join(dataDir, "ssh", "identities.json")); err == nil && len(raw) > 0 {
+		var list []struct {
+			ID           string `json:"id"`
+			Host         string `json:"host"`
+			HostName     string `json:"host_name"`
+			User         string `json:"user"`
+			IdentityFile string `json:"identity_file"`
+			PublicKey    string `json:"public_key"`
+			GitName      string `json:"git_name"`
+			GitEmail     string `json:"git_email"`
+			GitHubUser   string `json:"github_user"`
+			CreatedAt    string `json:"created_at"`
+		}
+		if json.Unmarshal(raw, &list) == nil {
+			for _, e := range list {
+				if e.Host == "" {
+					continue
+				}
+				keyID := e.ID
+				if keyID == "" {
+					keyID = e.Host
+				}
+				priv, rerr := os.ReadFile(filepath.Join(dataDir, "ssh", "keys", keyID))
+				if rerr != nil || len(priv) == 0 {
+					continue
+				}
+				created := strings.TrimSpace(e.CreatedAt)
+				if created == "" {
+					created = now()
+				}
+				if err := s.UpsertSSHIdentity(SSHIdentityRow{
+					ID: keyID, Host: e.Host, HostName: e.HostName, User: e.User,
+					PrivateKey: priv, PublicKey: strings.TrimSpace(e.PublicKey),
+					GitName: e.GitName, GitEmail: e.GitEmail, GitHubUser: e.GitHubUser,
+					CreatedAt: created,
+				}); err == nil {
+					imported++
+				}
+			}
+		}
+	}
 	// chats
 	epDir := filepath.Join(dataDir, "episodes")
 	_ = filepath.Walk(epDir, func(path string, info os.FileInfo, err error) error {
