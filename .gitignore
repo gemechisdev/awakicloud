@@ -32,6 +32,27 @@ desktop.ini
 deploy/.env
 deploy/deploy.sh
 
+# SSH / private key material — never commit these
+*.key
+*.pem
+*.p12
+*.pfx
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+id_ecdsa
+id_ecdsa.*
+id_dsa
+id_dsa.*
+*.ppk
+ssh/keys/
+ssh/identities.json
+known_hosts
+
+# Awaki per-instance metadata (path/mtime specific, not source)
+.awaki-project.json
+
 # Data / state
 data/
 *.log
