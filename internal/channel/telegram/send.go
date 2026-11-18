@@ -28,6 +28,28 @@ func (c *Channel) sendHTMLChunk(ctx context.Context, chatID int64, chunk format.
 	}
 }
 
+// sendLongThreaded is like sendLong but the first chunk is sent with
+// ReplyParameters pointing at replyToID, so the response visually threads
+// under the user's message. Continuations are unthreaded.
+func (c *Channel) sendLongThreaded(ctx context.Context, chatID, replyToID int64, text string) {
+	for i, chunk := range format.FormatHTMLChunks(text, maxMessageLen) {
+		if i == 0 {
+			c.sendThreadedHTMLChunk(ctx, chatID, replyToID, chunk)
+		} else {
+			c.sendHTMLChunk(ctx, chatID, chunk)
+		}
+	}
+}
+
+func (c *Channel) sendThreadedHTMLChunk(ctx context.Context, chatID, replyToID int64, chunk format.FormattedChunk) {
+	if err := c.client.SendMessageThreaded(ctx, chatID, chunk.HTML, models.ParseModeHTML, replyToID); err != nil {
+		log.Warn().Err(err).Msg("telegram threaded HTML send failed, falling back to plain")
+		if err := c.client.SendMessageThreaded(ctx, chatID, chunk.Text, "", replyToID); err != nil {
+			log.Error().Err(err).Msg("telegram threaded plain send failed")
+		}
+	}
+}
+
 func (c *Channel) sendLong(ctx context.Context, chatID int64, text string) {
 	for _, chunk := range format.FormatHTMLChunks(text, maxMessageLen) {
 		c.sendHTMLChunk(ctx, chatID, chunk)

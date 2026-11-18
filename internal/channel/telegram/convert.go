@@ -73,7 +73,6 @@ func (c *Channel) convertAndDispatch(ctx context.Context, msgs []*models.Message
 	}
 
 	chatID := msgs[0].Chat.ID
-	reply := c.newReplier(chatID)
 	var textParts []string
 	var attachments []transport.Attachment
 
@@ -152,12 +151,17 @@ func (c *Channel) convertAndDispatch(ctx context.Context, msgs []*models.Message
 		text = "What's in these files?"
 	}
 
-	if strings.HasPrefix(text, "/") {
-		fields := strings.Fields(text)
-		cmdName := fields[0]
-		log.Info().Str("cmd", cmdName).Msg("command received")
-		c.handleCommand(ctx, chatID, reply, text) // full line for args
-		return
+	// Default replier; commands always use this one (no thread on /help etc.).
+	var reply transport.Replier = c.newReplier(chatID)
+
+	// Prepend a "Replying to:" block when the user quoted or replied to
+	// something. Only the first message of a media group carries the quote.
+	if quoted := extractQuote(msgs[0]); quoted != "" {
+		text = formatQuotedBlock(quoted) + "\n\n" + text
+		// Thread the bot's own first response back under the user's message.
+		// The Replier only applies the thread to its first SendText; any
+		// continuation chunks are sent unthreaded.
+		reply = c.NewReplierForThread(chatID, int64(msgs[0].ID))
 	}
 
 	c.handler(ctx, channel.Message{
@@ -165,4 +169,99 @@ func (c *Channel) convertAndDispatch(ctx context.Context, msgs []*models.Message
 		Attachments: attachments,
 		Reply:       reply,
 	})
+}
+
+// formatQuotedBlock renders the quoted text as a markdown blockquote
+// with a "Replying to:" prefix, truncated to keep the agent's context small.
+// Truncation preserves the most recent part of the quoted text (where the
+// user's pointer usually is) — if a 20-line log was quoted, the agent
+// should see the tail, not the head.
+func formatQuotedBlock(quoted string) string {
+	const maxRunes = 4000 // generous but bounded; full replies to long code
+	runes := []rune(quoted)
+	if len(runes) > maxRunes {
+		quoted = string(runes[len(runes)-maxRunes:])
+	}
+	var b strings.Builder
+	b.WriteString("> Replying to:\n")
+	for _, line := range strings.Split(quoted, "\n") {
+		if line == "" {
+			b.WriteString("> \n")
+		} else {
+			b.WriteString("> ")
+			b.WriteString(line)
+			b.WriteByte('\n')
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// extractQuote builds a human-readable quoted block from a message's
+// reply/quote context. Empty string when the message has no usable reply.
+//
+// Telegram exposes three shapes of "replying to something":
+//
+//  1. ReplyToMessage *Message — same-chat reply to a visible message. The
+//     replied-to message's full Text/Caption is available.
+//  2. ExternalReply   *ExternalReplyInfo — reply to a message in *another*
+//     chat (forwarded or via a channel post). The message's own text is not
+//     present on the reply info; only the origin is. Fall back to a
+//     "[reply to {origin}] " placeholder.
+//  3. Quote           *TextQuote — user long-pressed and selected a slice of
+//     the replied-to message's text. This is the exact substring they meant;
+//     it should take precedence over the full message text.
+//
+// We prefer the quote over the full message text when both are present,
+// because it's what the user deliberately highlighted.
+func extractQuote(msg *models.Message) string {
+	if msg == nil {
+		return ""
+	}
+	var quoted string
+
+	// 1) Same-chat reply.
+	if r := msg.ReplyToMessage; r != nil {
+		if r.Text != "" {
+			quoted = strings.TrimSpace(r.Text)
+		} else if r.Caption != "" {
+			quoted = strings.TrimSpace(r.Caption)
+		}
+	}
+
+	// 2) External reply: no inline text, just the origin.
+	if msg.ExternalReply != nil && quoted == "" {
+		quoted = externalReplyLabel(msg.ExternalReply)
+	}
+
+	// 3) TextQuote overrides: it's the exact substring the user highlighted.
+	if msg.Quote != nil && msg.Quote.Text != "" {
+		quoted = strings.TrimSpace(msg.Quote.Text)
+	}
+
+	if quoted == "" {
+		return ""
+	}
+	return quoted
+}
+
+// externalReplyLabel renders a minimal label for an external reply,
+// e.g. "chat 'Awaki' message #1234". The bot only sees the origin — it has
+// no body text for messages it didn't author — so this is informational.
+func externalReplyLabel(e *models.ExternalReplyInfo) string {
+	var chatName string
+	if e.Chat != nil {
+		switch {
+		case e.Chat.Title != "":
+			chatName = e.Chat.Title
+		case e.Chat.FirstName != "":
+			chatName = e.Chat.FirstName
+		}
+	}
+	if chatName == "" {
+		chatName = "external chat"
+	}
+	if e.MessageID > 0 {
+		return fmt.Sprintf("(external reply to %s, message #%d)", chatName, e.MessageID)
+	}
+	return fmt.Sprintf("(external reply to %s)", chatName)
 }

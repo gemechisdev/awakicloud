@@ -19,6 +19,21 @@ func (c *Client) SendMessage(ctx context.Context, chatID int64, text string, par
 	return sent.ID, nil
 }
 
+// SendMessageThreaded sends a message that visually threads under replyToID
+// (Telegram "reply to" UI). Only the first message in a chunk set should
+// carry the thread marker; continuations use SendMessage.
+func (c *Client) SendMessageThreaded(ctx context.Context, chatID int64, text string, parseMode models.ParseMode, replyToID int64) error {
+	_, err := c.b.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID:    chatID,
+		Text:      text,
+		ParseMode: parseMode,
+		ReplyParameters: &models.ReplyParameters{
+			MessageID: int(replyToID),
+		},
+	})
+	return err
+}
+
 func (c *Client) SendPhoto(ctx context.Context, chatID int64, photo *models.InputFileUpload, caption string) error {
 	_, err := c.b.SendPhoto(ctx, &bot.SendPhotoParams{
 		ChatID: chatID, Photo: photo, Caption: caption,
