@@ -14,11 +14,18 @@ import (
 )
 
 type replier struct {
-	ch     *Channel
-	chatID int64
+	ch         *Channel
+	chatID     int64
+	replyToID  int64 // 0 = no thread; first message threads, continuations don't
+	firstReply bool  // whether the next SendText/SendFile should set the thread
 }
 
 func (r *replier) SendText(ctx context.Context, text string) error {
+	if r.replyToID != 0 && r.firstReply {
+		r.ch.sendLongThreaded(ctx, r.chatID, r.replyToID, text)
+		r.firstReply = false
+		return nil
+	}
 	r.ch.sendLong(ctx, r.chatID, text)
 	return nil
 }

@@ -57,6 +57,14 @@ func (c *Channel) newReplier(chatID int64) *replier {
 	return &replier{ch: c, chatID: chatID}
 }
 
+// NewReplierForThread returns a Replier that, when it sends text, will
+// visually thread under the given replyToID. The thread is only set on
+// the *first* message in the chunk; subsequent chunks are sent as
+// continuations without the thread marker.
+func (c *Channel) NewReplierForThread(chatID, replyToID int64) transport.Replier {
+	return &replier{ch: c, chatID: chatID, replyToID: replyToID, firstReply: true}
+}
+
 func (c *Channel) Run(ctx context.Context, handler channel.Handler) error {
 	c.handler = handler
 

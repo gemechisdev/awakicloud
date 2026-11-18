@@ -63,6 +63,12 @@ type Message struct {
 	Command       *Command
 	Reply         transport.Replier
 	EditMessageID int // if set, UI keyboards should edit this Telegram message
+
+	// QuotedText is the text the user replied-to or quoted in this message,
+	// rendered as a block. Populated by the channel layer from Telegram's
+	// reply_to_message / external_reply / quote fields. Empty when the
+	// incoming message has no reply context.
+	QuotedText string
 }
 
 type Handler func(ctx context.Context, msg Message)
