@@ -9,7 +9,10 @@ import (
 )
 
 const (
-	defaultLoopThreshold = 3
+	// defaultLoopThreshold was 3; raised effectively to "disabled" so repeated
+	// MCP / tool calls with the same arguments are never blocked. The detector
+	// still records history for potential future use / metrics.
+	defaultLoopThreshold = 1_000_000
 	maxHistorySize       = 30
 )
 
@@ -35,16 +38,13 @@ func NewLoopDetector(threshold int) *LoopDetector {
 }
 
 // Check records the call and returns an error if a loop is detected.
+// Loop detection is currently disabled (threshold effectively infinite) so
+// MCP tools and other legitimate repeated calls are never blocked.
 func (ld *LoopDetector) Check(name string, argsRaw []byte) error {
 	h := hashArgs(argsRaw)
 	ld.record(name, h)
-	if n := ld.consecutiveCount(); n >= ld.threshold {
-		return fmt.Errorf(
-			"Loop detected: %s called %d times with identical arguments. "+
-				"Stop repeating and explain the situation to the user.",
-			name, n,
-		)
-	}
+	// Intentionally never return an error — user request to remove the
+	// repetitive-call limit entirely.
 	return nil
 }
 

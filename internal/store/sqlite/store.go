@@ -57,6 +57,13 @@ func Open(dataDir string) (*Store, error) {
 		skills: filepath.Join(dataDir, "skills"),
 	}
 	_ = os.MkdirAll(s.skills, 0o755)
+	// Best-effort repair of known skills-table corruption (malformed types /
+	// broken unique index) so /skills and agent skill loading keep working.
+	if dropped, err := s.repairSkillsTable(); err != nil {
+		log.Warn().Err(err).Msg("skills table repair failed on open")
+	} else if len(dropped) > 0 {
+		log.Warn().Strs("dropped", dropped).Msg("skills table repaired on open; dropped malformed entries")
+	}
 	log.Info().Str("path", path).Msg("sqlite store open")
 	return s, nil
 }
@@ -216,7 +223,139 @@ func (s *Store) DeleteMemory(filename string) error {
 
 func (s *Store) SkillsDir() string { return s.skills }
 
+// repairSkillsTable removes malformed skill rows (wrong types, null required
+// columns, or duplicate primary keys that slipped past a broken index) and
+// rebuilds the table so subsequent queries succeed. Returns names of dropped
+// skills (for owner notification) and any hard error.
+func (s *Store) repairSkillsTable() (dropped []string, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Read via rowid + CAST so we can recover even when types are wrong or
+	// the unique index is corrupted. CAST turns numeric description into text
+	// so Scan succeeds; we still reject rows whose updated_at is missing.
+	const qFull = `SELECT rowid, CAST(name AS TEXT), CAST(description AS TEXT), CAST(body AS TEXT),
+		package_zip, IFNULL(CAST(package_hash AS TEXT),''), CAST(updated_at AS TEXT)
+		FROM skills`
+	const qSimple = `SELECT rowid, CAST(name AS TEXT), CAST(description AS TEXT), CAST(body AS TEXT),
+		CAST(updated_at AS TEXT) FROM skills`
+
+	rows, err := s.db.Query(qFull)
+	usePkg := true
+	if err != nil {
+		rows, err = s.db.Query(qSimple)
+		if err != nil {
+			return nil, err
+		}
+		usePkg = false
+	}
+	defer rows.Close()
+
+	type goodRow struct {
+		name, desc, body, hash, updated string
+		pkg                             []byte
+	}
+	seen := map[string]bool{}
+	var good []goodRow
+	var badNames []string
+
+	for rows.Next() {
+		var rowid int64
+		var name, desc, body, hash, updated string
+		var pkg []byte
+		var scanErr error
+		if usePkg {
+			scanErr = rows.Scan(&rowid, &name, &desc, &body, &pkg, &hash, &updated)
+		} else {
+			scanErr = rows.Scan(&rowid, &name, &desc, &body, &updated)
+		}
+		if scanErr != nil {
+			badNames = append(badNames, fmt.Sprintf("rowid=%d", rowid))
+			continue
+		}
+		// Reject rows that lack required text fields (nulls become empty after CAST)
+		if name == "" || updated == "" {
+			label := name
+			if label == "" {
+				label = fmt.Sprintf("rowid=%d", rowid)
+			}
+			badNames = append(badNames, label)
+			continue
+		}
+		if desc == "" {
+			desc = name
+		}
+		if seen[name] {
+			badNames = append(badNames, name+" (duplicate)")
+			continue
+		}
+		seen[name] = true
+		good = append(good, goodRow{name: name, desc: desc, body: body, hash: hash, updated: updated, pkg: pkg})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(badNames) == 0 {
+		return nil, nil
+	}
+
+	// Rebuild table to fix broken indexes and remove bad rows.
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.Exec(`DELETE FROM skills`); err != nil {
+		return nil, err
+	}
+	for _, g := range good {
+		_, err := tx.Exec(
+			`INSERT INTO skills(name,description,body,package_zip,package_hash,updated_at) VALUES(?,?,?,?,?,?)`,
+			g.name, g.desc, g.body, g.pkg, g.hash, g.updated,
+		)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	_, _ = s.db.Exec(`REINDEX skills`)
+	log.Warn().Strs("dropped", badNames).Int("kept", len(good)).Msg("skills table repaired: dropped malformed rows")
+	return badNames, nil
+}
+
 func (s *Store) LoadSkills() ([]store.Skill, error) {
+	// First attempt normal load.
+	out, err := s.loadSkillsOnce()
+	if err == nil {
+		return out, nil
+	}
+	// On any load failure (including "database disk image is malformed"), try repair.
+	log.Warn().Err(err).Msg("skills load failed, attempting repair")
+	dropped, repairErr := s.repairSkillsTable()
+	if repairErr != nil {
+		return nil, fmt.Errorf("skills load failed and repair failed: %w (original: %v)", repairErr, err)
+	}
+	if len(dropped) > 0 {
+		// Surface dropped names via a sentinel-style error that callers can
+		// still get the remaining skills for. We re-load after repair.
+		out, err = s.loadSkillsOnce()
+		if err != nil {
+			return nil, err
+		}
+		// Attach info about dropped skills for the UI / owner notification.
+		// Callers that only care about the list still succeed; those that
+		// want the warning can check via a type assert if we later add one.
+		// For now log is enough; skills_ui will show a clean list.
+		_ = dropped
+		return out, nil
+	}
+	return s.loadSkillsOnce()
+}
+
+func (s *Store) loadSkillsOnce() ([]store.Skill, error) {
 	rows, err := s.db.Query(`SELECT name, description, body, package_zip, IFNULL(package_hash, '') FROM skills ORDER BY name`)
 	if err != nil {
 		// Older schema without package columns
@@ -229,7 +368,9 @@ func (s *Store) LoadSkills() ([]store.Skill, error) {
 		for rows.Next() {
 			var name, desc, body string
 			if err := rows.Scan(&name, &desc, &body); err != nil {
-				return nil, err
+				// Skip unreadable row instead of failing the whole list
+				log.Warn().Err(err).Msg("skipping unreadable skill row")
+				continue
 			}
 			out = append(out, s.exportSkillRow(name, desc, body, nil, ""))
 		}
@@ -241,7 +382,8 @@ func (s *Store) LoadSkills() ([]store.Skill, error) {
 		var name, desc, body, hash string
 		var pkg []byte
 		if err := rows.Scan(&name, &desc, &body, &pkg, &hash); err != nil {
-			return nil, err
+			log.Warn().Err(err).Msg("skipping unreadable skill row")
+			continue
 		}
 		out = append(out, s.exportSkillRow(name, desc, body, pkg, hash))
 	}
