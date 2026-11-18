@@ -130,7 +130,11 @@ func ZipTree(root string) (data []byte, contentHash string, fileCount int, total
 			_ = zw.Close()
 			return nil, "", 0, 0, seekErr
 		}
-		w, createErr := zw.CreateHeader(&zip.FileHeader{Name: rel, Method: zip.Deflate, Modified: info.ModTime()})
+		fh := &zip.FileHeader{Name: rel, Method: zip.Deflate, Modified: info.ModTime()}
+		// Preserve the UNIX mode. Without this a restored shell script (or any
+		// executable) comes back as 0644 and will not run.
+		fh.SetMode(info.Mode())
+		w, createErr := zw.CreateHeader(fh)
 		if createErr != nil {
 			f.Close()
 			_ = zw.Close()

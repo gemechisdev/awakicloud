@@ -93,6 +93,41 @@ func TestGitDirectoryIsArchived(t *testing.T) {
 	}
 }
 
+// A restored tree must keep its executable bits, otherwise shell scripts shipped
+// with a project come back non-runnable.
+func TestArchivePreservesFileMode(t *testing.T) {
+	src := t.TempDir()
+	script := filepath.Join(src, "run.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho hi\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "plain.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	data, _, _, _, err := ZipTree(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dst := t.TempDir()
+	if err := ExtractZip(data, dst); err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Stat(filepath.Join(dst, "run.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Mode().Perm()&0o111 == 0 {
+		t.Errorf("run.sh restored as %v, want the executable bit preserved", st.Mode().Perm())
+	}
+	pl, err := os.Stat(filepath.Join(dst, "plain.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pl.Mode().Perm()&0o111 != 0 {
+		t.Errorf("plain.txt restored as %v, want non-executable", pl.Mode().Perm())
+	}
+}
+
 // Restoring an archive must yield a clean working tree, not "everything deleted".
 func TestRestoreProducesCleanWorkTree(t *testing.T) {
 	src := t.TempDir()
