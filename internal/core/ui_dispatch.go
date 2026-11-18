@@ -53,7 +53,10 @@ func (e *Engine) handleUICallback(ctx context.Context, msg channel.Message) bool
 	// Active wizard consumes free text (not commands starting with / except cancel).
 	// Import waits for a ZIP attachment: if one is present, let the attachment
 	// path handle it instead of swallowing the message as empty wizard text.
-	if w := e.ui.get(); w != nil && !strings.HasPrefix(text, "ui:") && !strings.HasPrefix(text, "prv:") && !strings.HasPrefix(text, "mdl:") {
+	// An inline "ui:" tap must never be parsed as free-text wizard input —
+	// otherwise a stale/mistyped button could answer the current step.
+	if w := e.ui.get(); w != nil && !strings.HasPrefix(text, "/") &&
+		!strings.HasPrefix(text, "ui:") && !strings.HasPrefix(text, "prv:") && !strings.HasPrefix(text, "mdl:") {
 		if strings.HasPrefix(text, "/") && text != "/cancel" {
 			// allow other slash commands to break out
 			e.ui.clear()
@@ -207,6 +210,8 @@ func (e *Engine) routeUI(ctx context.Context, msg channel.Message, data string) 
 		}
 	case "sshadd":
 		e.uiStartAddSSH(ctx, msg)
+	case "sshskip":
+		e.wizardAddSSHSkip(ctx, msg)
 	case "sshrm":
 		if len(parts) >= 3 {
 			e.uiSSHRemove(ctx, msg, parts[2])

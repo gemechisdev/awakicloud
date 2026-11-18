@@ -25,11 +25,12 @@ func (f *fakeLLM) Call(_ context.Context, _ []types.Message, _ llm.CallOptions) 
 	return r, nil
 }
 
-func (f *fakeLLM) ModelID() string          { return "fake" }
-func (f *fakeLLM) ModelLabel() string       { return "Fake" }
-func (f *fakeLLM) ContextWindow() int       { return 100_000 }
-func (f *fakeLLM) InputPricePerM() float64  { return 0 }
-func (f *fakeLLM) OutputPricePerM() float64 { return 0 }
+func (f *fakeLLM) ModelID() string            { return "fake" }
+func (f *fakeLLM) ModelLabel() string         { return "Fake" }
+func (f *fakeLLM) ContextWindow() int         { return 100_000 }
+func (f *fakeLLM) InputPricePerM() float64    { return 0 }
+func (f *fakeLLM) OutputPricePerM() float64   { return 0 }
+func (f *fakeLLM) SupportsContinuation() bool { return false }
 
 // captureSink records every event. The agent emits from a single goroutine
 // (the one calling Run), so no synchronization is needed in the test.

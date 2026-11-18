@@ -10,6 +10,7 @@ import (
 )
 
 func (e *Engine) uiSSHBoard(ctx context.Context, msg channel.Message) {
+	e.ui.clear()
 	if e.ssh == nil {
 		_ = msg.Reply.SendText(ctx, "SSH credentials are not available.")
 		return
@@ -110,15 +111,34 @@ func (e *Engine) uiSSHRemove(ctx context.Context, msg channel.Message, idKey str
 
 func (e *Engine) uiStartAddSSH(ctx context.Context, msg channel.Message) {
 	e.ui.set(&uiWizard{Kind: "ssh_add", Step: "host", Draft: map[string]string{}})
-	_ = msg.Reply.SendText(ctx,
+	e.sendSSHStep(ctx, msg,
 		"🔑 Add SSH identity — Step 1/6\n\n"+
 			"Host alias (what you type in git URLs).\n\n"+
 			"Examples:\n"+
 			"• `github.com` — default account\n"+
 			"• `github.com-gemechisdev` — second GitHub account\n"+
 			"• `github.com-gemechischala`\n\n"+
-			"Send the Host alias now (or Cancel).",
+			"Send the Host alias, or tap Cancel.",
+		nil,
 	)
+}
+
+// sshKeyRows builds the inline buttons shown while the SSH add wizard runs.
+// The Cancel button is on every step so the flow can be abandoned at any point;
+// extra holds per-step actions (Skip on the optional steps).
+func sshKeyRows(extra []channel.Button) [][]channel.Button {
+	rows := [][]channel.Button{}
+	if len(extra) > 0 {
+		rows = append(rows, extra)
+	}
+	rows = append(rows, []channel.Button{{Text: "❌ Cancel", CallbackData: "ui:ssh"}})
+	return rows
+}
+
+// sendSSHStep posts a wizard step with inline buttons so the user never has to
+// type "cancel"/"-" to move on.
+func (e *Engine) sendSSHStep(ctx context.Context, msg channel.Message, text string, extra []channel.Button) {
+	e.deliverKeyboard(ctx, msg, channel.KeyboardMessage{Text: text, Rows: sshKeyRows(extra)})
 }
 
 // wizardAddSSH drives the interactive add flow.
@@ -148,15 +168,16 @@ func (e *Engine) wizardAddSSH(ctx context.Context, msg channel.Message, w *uiWiz
 	case "host":
 		host := strings.TrimSpace(text)
 		if host == "" {
-			_ = msg.Reply.SendText(ctx, "Host alias cannot be empty. Try again or send Cancel.")
+			e.sendSSHStep(ctx, msg, "Host alias cannot be empty. Send it again, or tap Cancel.", nil)
 			return true
 		}
 		e.ui.setDraft("host", host)
 		e.ui.setStep("hostname")
-		_ = msg.Reply.SendText(ctx,
+		e.sendSSHStep(ctx, msg,
 			"Step 2/6 — HostName (real server).\n\n"+
 				"Usually `github.com`. Send that, or another hostname.\n"+
 				"Default if you send `-`: github.com",
+			nil,
 		)
 		return true
 
@@ -167,9 +188,10 @@ func (e *Engine) wizardAddSSH(ctx context.Context, msg channel.Message, w *uiWiz
 		}
 		e.ui.setDraft("hostname", hn)
 		e.ui.setStep("user")
-		_ = msg.Reply.SendText(ctx,
+		e.sendSSHStep(ctx, msg,
 			"Step 3/6 — SSH user.\n\n"+
 				"For GitHub this is always `git`. Send `git` or `-` for default.",
+			nil,
 		)
 		return true
 
@@ -180,26 +202,28 @@ func (e *Engine) wizardAddSSH(ctx context.Context, msg channel.Message, w *uiWiz
 		}
 		e.ui.setDraft("user", user)
 		e.ui.setStep("private_key")
-		_ = msg.Reply.SendText(ctx,
+		e.sendSSHStep(ctx, msg,
 			"Step 4/6 — Private key.\n\n"+
 				"Paste the full private key (including BEGIN/END lines),\n"+
 				"or upload the key file as a document.\n\n"+
 				"It is stored under the data dir with mode 600 and never sent back.",
+			nil,
 		)
 		return true
 
 	case "private_key":
 		priv := strings.TrimSpace(text)
 		if priv == "" {
-			_ = msg.Reply.SendText(ctx, "Private key is empty. Paste the key or upload the file.")
+			e.sendSSHStep(ctx, msg, "Private key is empty. Paste the key or upload the file.", nil)
 			return true
 		}
 		e.ui.setDraft("private_key", priv)
 		e.ui.setStep("public_key")
-		_ = msg.Reply.SendText(ctx,
+		e.sendSSHStep(ctx, msg,
 			"Step 5/6 — Public key (optional).\n\n"+
-				"Paste the `.pub` line, upload the file, or send `-` to skip.\n"+
+				"Paste the `.pub` line, upload the file, or tap Skip.\n"+
 				"Recommended so you can copy it into GitHub → Settings → SSH keys.",
+			[]channel.Button{{Text: "⏭ Skip", CallbackData: "ui:sshskip"}},
 		)
 		return true
 
@@ -210,14 +234,15 @@ func (e *Engine) wizardAddSSH(ctx context.Context, msg channel.Message, w *uiWiz
 		}
 		e.ui.setDraft("public_key", pub)
 		e.ui.setStep("meta")
-		_ = msg.Reply.SendText(ctx,
+		e.sendSSHStep(ctx, msg,
 			"Step 6/6 — Optional metadata.\n\n"+
 				"Send one line:\n"+
 				"`github_user | git name | git email`\n\n"+
 				"Examples:\n"+
 				"• `gemechisdev | Gemechis Dev | dev@example.com`\n"+
 				"• `gemechisdev`\n"+
-				"• `-` to skip all",
+				"or tap Skip to save without metadata.",
+			[]channel.Button{{Text: "⏭ Skip", CallbackData: "ui:sshskip"}},
 		)
 		return true
 
@@ -239,28 +264,77 @@ func (e *Engine) wizardAddSSH(ctx context.Context, msg channel.Message, w *uiWiz
 			GitName:    gitName,
 			GitEmail:   gitEmail,
 		}
-		ident, err := e.ssh.Add(in)
-		e.ui.clear()
-		if err != nil {
-			_ = msg.Reply.SendText(ctx, "Failed to save identity: "+err.Error())
-			return true
-		}
-		var b strings.Builder
-		fmt.Fprintf(&b, "✅ Saved SSH identity `%s`\n\n", ident.Host)
-		fmt.Fprintf(&b, "HostName: %s\nUser: %s\nKey: `%s`\n", ident.HostName, ident.User, ident.IdentityFile)
-		if ident.GitHubUser != "" {
-			fmt.Fprintf(&b, "GitHub: @%s\n", ident.GitHubUser)
-		}
-		fmt.Fprintf(&b, "\nUse in clone URLs:\n`git@%s:OWNER/REPO.git`\n", ident.Host)
-		if ident.PublicKey != "" {
-			fmt.Fprintf(&b, "\nAdd this public key on GitHub:\n```\n%s\n```\n", strings.TrimSpace(ident.PublicKey))
-		}
-		b.WriteString("\n~/.ssh/config was updated (Awaki managed section).")
-		_ = msg.Reply.SendText(ctx, b.String())
-		e.uiSSHBoard(ctx, msg)
+		e.finishAddSSH(ctx, msg, in)
 		return true
 	}
 	return true
+}
+
+// finishAddSSH saves the identity built by the add wizard and reports the result.
+// Used both by the final (metadata) step and by the Skip buttons on the
+// optional public-key / metadata steps.
+func (e *Engine) finishAddSSH(ctx context.Context, msg channel.Message, in sshcreds.AddInput) {
+	if e.ssh == nil {
+		e.ui.clear()
+		_ = msg.Reply.SendText(ctx, "SSH credentials are not available.")
+		return
+	}
+	ident, err := e.ssh.Add(in)
+	e.ui.clear()
+	if err != nil {
+		_ = msg.Reply.SendText(ctx, "Failed to save identity: "+err.Error())
+		return
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "✅ Saved SSH identity `%s`\n\n", ident.Host)
+	fmt.Fprintf(&b, "HostName: %s\nUser: %s\nKey: `%s`\n", ident.HostName, ident.User, ident.IdentityFile)
+	if ident.GitHubUser != "" {
+		fmt.Fprintf(&b, "GitHub: @%s\n", ident.GitHubUser)
+	}
+	fmt.Fprintf(&b, "\nUse in clone URLs:\n`git@%s:OWNER/REPO.git`\n", ident.Host)
+	if ident.PublicKey != "" {
+		fmt.Fprintf(&b, "\nAdd this public key on GitHub:\n```\n%s\n```\n", strings.TrimSpace(ident.PublicKey))
+	}
+	b.WriteString("\n~/.ssh/config was updated (Awaki managed section).")
+	_ = msg.Reply.SendText(ctx, b.String())
+	e.uiSSHBoard(ctx, msg)
+}
+
+// wizardAddSSHSkip advances the add wizard for the optional steps without
+// requiring the user to send "-": it keeps everything gathered so far and
+// jumps straight to saving (public key step) or saves as-is (metadata step).
+func (e *Engine) wizardAddSSHSkip(ctx context.Context, msg channel.Message) bool {
+	switch w := e.ui.get(); {
+	case w == nil:
+		e.uiSSHBoard(ctx, msg)
+		return true
+	case w.Step == "public_key":
+		e.ui.setStep("meta")
+		e.ui.setDraft("public_key", "")
+		e.sendSSHStep(ctx, msg,
+			"Step 6/6 — Optional metadata.\n\n"+
+				"Send one line:\n"+
+				"`github_user | git name | git email`\n\n"+
+				"Examples:\n"+
+				"• `gemechisdev | Gemechis Dev | dev@example.com`\n"+
+				"• `gemechisdev`\n"+
+				"or tap Skip to save without metadata.",
+			[]channel.Button{{Text: "⏭ Skip", CallbackData: "ui:sshskip"}},
+		)
+		return true
+	case w.Kind == "ssh_add" && w.Step == "meta":
+		e.finishAddSSH(ctx, msg, sshcreds.AddInput{
+			Host:       w.Draft["host"],
+			HostName:   w.Draft["hostname"],
+			User:       w.Draft["user"],
+			PrivateKey: w.Draft["private_key"],
+			PublicKey:  w.Draft["public_key"],
+		})
+		return true
+	default:
+		// Not an optional SSH step — ignore the tap (defensive).
+		return true
+	}
 }
 
 func parseSSHMeta(text string) (ghUser, gitName, gitEmail string) {

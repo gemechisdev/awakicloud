@@ -7,8 +7,8 @@
 //  3. OpenAI-compatible (and default):
 //     a. POST {base}/images/generations  (OpenAI Images API)
 //     b. If that fails, try inference-style endpoints used by many gateways:
-//        - POST {aiRoot}/run/{model}  JSON  {prompt,width,height}
-//        - POST {aiRoot}/run/{model}  multipart form-data
+//     - POST {aiRoot}/run/{model}  JSON  {prompt,width,height}
+//     - POST {aiRoot}/run/{model}  multipart form-data
 //     c. Flexible response parsing (OpenAI data[], result.image, image, b64, …)
 //
 // Chat completions is never used for image generation.
@@ -149,7 +149,6 @@ func inferenceRunURL(base, modelID string) (string, bool) {
 		// already
 	} else if strings.HasSuffix(root, "/v1") {
 		// Generic OpenAI base — some gateways map /v1/run/{model}
-		root = root
 		return root + "/run/" + modelID, true
 	} else {
 		return "", false

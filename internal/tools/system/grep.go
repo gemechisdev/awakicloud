@@ -54,9 +54,13 @@ func GrepTool() types.Tool {
 					"description": "File or directory to search (default: workspace root or .)",
 				},
 				"include": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
 					"description": "Glob(s) to include, e.g. \"*.go\" or [\"*.ts\",\"*.tsx\"]",
 				},
 				"exclude": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
 					"description": "Glob(s) to exclude, e.g. \"vendor/**\" or [\"node_modules\",\"dist\"]",
 				},
 				"type": map[string]any{
