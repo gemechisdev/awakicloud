@@ -177,9 +177,10 @@ func (c *Channel) SendKeyboardToOwner(ctx context.Context, km channel.KeyboardMe
 }
 
 // SendRichScreen sends a Telegram Rich Message screen with styled buttons.
+// km.Text is treated as Markdown and converted to Rich HTML before send so
+// **bold**, `code`, lists, etc. render correctly (never as raw asterisks).
 func (c *Channel) SendRichScreen(ctx context.Context, km channel.KeyboardMessage, editMsgID int) (int, error) {
-	html := km.Text
-	return c.sendRichScreen(ctx, c.ownerID, html, km.Rows, editMsgID)
+	return c.sendRichScreen(ctx, c.ownerID, km.Text, km.Rows, editMsgID)
 }
 
 // SendOrEditKeyboardToOwner edits the callback message when editMsgID > 0.
@@ -187,10 +188,37 @@ func (c *Channel) SendOrEditKeyboardToOwner(ctx context.Context, editMsgID int, 
 	c.sendOrEditKeyboard(ctx, c.ownerID, editMsgID, km)
 }
 
+// markdownToTelegramHTML converts Markdown UI copy into Telegram HTML.
+// Uses the goldmark-based FormatHTMLChunks pipeline (same as classic sends).
+func markdownToTelegramHTML(md string) (html string, plain string) {
+	chunks := format.FormatHTMLChunks(md, 0) // 0 = no chunking; full document
+	if len(chunks) == 0 {
+		return rich.EscapeHTML(md), md
+	}
+	var hb, pb strings.Builder
+	for i, ch := range chunks {
+		if i > 0 {
+			hb.WriteString("\n")
+			pb.WriteString("\n")
+		}
+		hb.WriteString(ch.HTML)
+		pb.WriteString(ch.Text)
+	}
+	return hb.String(), pb.String()
+}
+
 // sendRichScreen sends a Rich Message with HTML body and rich <tg-button-row>
 // buttons instead of legacy inline keyboards. Used for UI screens that benefit
 // from rich styling (tables, drawers, styled buttons).
-func (c *Channel) sendRichScreen(ctx context.Context, chatID int64, html string, rows [][]channel.Button, editMsgID int) (int, error) {
+func (c *Channel) sendRichScreen(ctx context.Context, chatID int64, markdownText string, rows [][]channel.Button, editMsgID int) (int, error) {
+	// ALWAYS convert Markdown → HTML first. Sending markdown as contentType
+	// "html" leaves **asterisks** visible (see /start welcome screen bug).
+	bodyHTML, bodyPlain := markdownToTelegramHTML(markdownText)
+	if bodyHTML == "" {
+		bodyHTML = rich.EscapeHTML(markdownText)
+		bodyPlain = markdownText
+	}
+
 	// Convert channel.Button rows to <tg-button-row> HTML
 	var buttonHTML strings.Builder
 	for _, row := range rows {
@@ -216,35 +244,37 @@ func (c *Channel) sendRichScreen(ctx context.Context, chatID int64, html string,
 		}
 	}
 
-	body := html
+	body := bodyHTML
 	if buttonHTML.Len() > 0 {
 		body += "\n" + buttonHTML.String()
 	}
-
 	body = rich.EnsureSafeLength(body)
-	if rich.IsRichWorthy(body) || len(rows) > 0 {
+	isRTL := rich.NeedsRTL(markdownText)
+
+	if rich.IsRichWorthy(markdownText) || len(rows) > 0 {
 		if editMsgID > 0 {
-			err := c.client.EditRichMessage(ctx, chatID, editMsgID, "html", body, false)
+			err := c.client.EditRichMessage(ctx, chatID, editMsgID, "html", body, isRTL)
 			if err != nil {
 				log.Warn().Err(err).Int("msg_id", editMsgID).Msg("telegram: edit rich screen failed, falling back")
-				return c.sendScreenPlain(ctx, chatID, html, rows, editMsgID)
+				return c.sendScreenPlain(ctx, chatID, bodyHTML, rows, editMsgID)
 			}
 			return editMsgID, nil
 		}
-		id, err := c.client.SendRichMessage(ctx, chatID, "html", body, false, false)
+		id, err := c.client.SendRichMessage(ctx, chatID, "html", body, isRTL, false)
 		if err != nil {
 			log.Warn().Err(err).Msg("telegram: send rich screen failed, falling back")
-			return c.sendScreenPlain(ctx, chatID, html, rows, editMsgID)
+			return c.sendScreenPlain(ctx, chatID, bodyHTML, rows, editMsgID)
 		}
 		return id, nil
 	}
 
-	// Short content — use plain send
+	// Short content — classic inline keyboard with already-converted HTML
+	_ = bodyPlain
 	if editMsgID > 0 {
-		_, err := c.sendScreenPlain(ctx, chatID, html, rows, editMsgID)
+		_, err := c.sendScreenPlain(ctx, chatID, bodyHTML, rows, editMsgID)
 		return editMsgID, err
 	}
-	return c.sendScreenPlain(ctx, chatID, html, rows, editMsgID)
+	return c.sendScreenPlain(ctx, chatID, bodyHTML, rows, editMsgID)
 }
 
 // sendScreenPlain falls back to legacy inline keyboard for short messages.
