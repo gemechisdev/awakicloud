@@ -35,7 +35,7 @@ func (r *replier) SendText(ctx context.Context, text string) error {
 	}
 
 	if r.replyToID != 0 && r.firstReply {
-		r.ch.sendLongThreaded(ctx, r.chatID, text)
+		r.ch.sendLongThreaded(ctx, r.chatID, r.replyToID, text)
 		r.firstReply = false
 		return nil
 	}
