@@ -9,6 +9,9 @@ import (
 	"github.com/yuin/goldmark/extension"
 	east "github.com/yuin/goldmark/extension/ast"
 	mdtext "github.com/yuin/goldmark/text"
+	htmlrender "github.com/yuin/goldmark/renderer/html"
+
+	"github.com/gemechischala/awaki/internal/channel/telegram/rich"
 )
 
 // FormattedChunk holds both the HTML and plain-text version of a chunk,
@@ -26,6 +29,8 @@ func init() {
 			extension.Strikethrough,
 			extension.Table,
 		),
+		// Allow preprocessed <tg-spoiler>/<sub>/… tags through to the AST as raw HTML.
+		goldmark.WithRendererOptions(htmlrender.WithUnsafe()),
 	)
 }
 
@@ -51,6 +56,18 @@ type htmlWriter struct {
 
 func (w *htmlWriter) writeText(s string) {
 	w.html.WriteString(escapeHTML(s))
+	w.plain.WriteString(s)
+}
+
+// writeInline escapes and applies Telegram-extended inline markdown (spoiler,
+// mark, underline, sub, sup) for rich-message mode. Used for normal text
+// nodes only — code spans/blocks keep writeText so markers stay literal.
+func (w *htmlWriter) writeInline(s string) {
+	if w.nativeTable {
+		w.html.WriteString(rich.ExtendedInlineHTML(s))
+	} else {
+		w.html.WriteString(escapeHTML(s))
+	}
 	w.plain.WriteString(s)
 }
 
@@ -259,7 +276,7 @@ func (w *htmlWriter) walkNode(n ast.Node, source []byte) {
 		w.writeText(string(node.Text(source)))
 
 	case *ast.Text:
-		w.writeText(string(node.Segment.Value(source)))
+		w.writeInline(string(node.Segment.Value(source)))
 		if node.SoftLineBreak() || node.HardLineBreak() {
 			if w.nativeTable {
 				w.writeRaw("<br/>")
@@ -438,6 +455,7 @@ func (w *htmlWriter) renderTableAsBullets(table ast.Node, source []byte) {
 }
 
 
+
 // FormatRichHTML converts markdown into a single Telegram Rich HTML document.
 // Unlike FormatHTMLChunks (classic HTML, tables → bullets), this emits native
 // <table bordered striped> blocks suitable for sendRichMessage html mode.
@@ -445,13 +463,15 @@ func FormatRichHTML(s string) string {
 	if s == "" {
 		return ""
 	}
+	// Tokens for spoiler/mark/sub/sup so goldmark does not treat ~sub~ as strike.
+	s, phs := rich.PreprocessExtendedMarkdown(s)
 	source := []byte(s)
 	doc := mdParser.Parser().Parse(mdtext.NewReader(source))
 	w := &htmlWriter{limit: 0, nativeTable: true}
 	w.walkNode(doc, source)
 	result := w.finish()
 	if len(result) == 0 {
-		return escapeHTML(s)
+		return rich.RestoreInlinePlaceholders(escapeHTML(s), phs)
 	}
 	var b strings.Builder
 	for i, ch := range result {
@@ -460,7 +480,7 @@ func FormatRichHTML(s string) string {
 		}
 		b.WriteString(ch.HTML)
 	}
-	return b.String()
+	return rich.RestoreInlinePlaceholders(b.String(), phs)
 }
 
 func (w *htmlWriter) renderNativeTable(table ast.Node, source []byte) {
@@ -515,7 +535,12 @@ func isTrustedRichHTML(s string) bool {
 		strings.Contains(s, "</tg-spoiler>") ||
 		strings.Contains(s, "<tg-time") ||
 		strings.Contains(s, "<details") ||
-		strings.Contains(s, "<table")
+		strings.Contains(s, "<table") ||
+		strings.Contains(s, "<mark") ||
+		strings.Contains(s, "<sub") ||
+		strings.Contains(s, "<sup") ||
+		strings.Contains(s, "<u>") ||
+		strings.Contains(s, "</u>")
 }
 
 // FormatHTMLChunks converts markdown into Telegram HTML chunks, each within

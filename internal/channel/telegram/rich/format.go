@@ -393,6 +393,138 @@ func init() {
 	italicRE = italicRE2
 }
 
+// ExtendedInlineHTML escapes s and applies Telegram-extended inline syntax that
+// goldmark does not parse: ||spoiler||, ==mark==, ++underline++, ~sub~, ^sup^.
+// Safe to call on plain text segments from FormatRichHTML.
+
+// InlinePlaceholder holds a deferred rich HTML fragment restored after goldmark.
+type InlinePlaceholder struct {
+	Token string
+	HTML  string
+}
+
+// PreprocessExtendedMarkdown replaces Telegram-extended inline markers with
+// opaque tokens so goldmark cannot mis-parse them (e.g. ~sub~ as strikethrough).
+// Call RestoreInlinePlaceholders on the final HTML.
+func PreprocessExtendedMarkdown(s string) (string, []InlinePlaceholder) {
+	if s == "" || !hasExtendedMarkers(s) {
+		return s, nil
+	}
+	parts, _ := splitFences(s)
+	var phs []InlinePlaceholder
+	for i, p := range parts {
+		if i%2 == 1 {
+			continue // fenced code
+		}
+		parts[i] = preprocessExtendedInText(p, &phs)
+	}
+	return strings.Join(parts, ""), phs
+}
+
+// RestoreInlinePlaceholders puts rich HTML fragments back in place of tokens.
+func RestoreInlinePlaceholders(s string, phs []InlinePlaceholder) string {
+	for i := len(phs) - 1; i >= 0; i-- {
+		s = strings.Replace(s, phs[i].Token, phs[i].HTML, 1)
+	}
+	return s
+}
+
+func hasExtendedMarkers(s string) bool {
+	return strings.Contains(s, "||") ||
+		strings.Contains(s, "==") ||
+		strings.Contains(s, "++") ||
+		strings.Contains(s, "^") ||
+		strings.Contains(s, "~")
+}
+
+// splitFences splits s into alternating text/code segments on ``` fences.
+// Odd indices are fence bodies left untouched.
+func splitFences(s string) (parts []string, hasFence bool) {
+	if !strings.Contains(s, "```") {
+		return []string{s}, false
+	}
+	var out []string
+	rest := s
+	for {
+		start := strings.Index(rest, "```")
+		if start < 0 {
+			out = append(out, rest)
+			break
+		}
+		out = append(out, rest[:start])
+		rest = rest[start:]
+		endRel := strings.Index(rest[3:], "```")
+		if endRel < 0 {
+			out = append(out, rest)
+			break
+		}
+		end := 3 + endRel + 3
+		out = append(out, rest[:end])
+		rest = rest[end:]
+		hasFence = true
+	}
+	return out, hasFence
+}
+
+func preprocessExtendedInText(s string, phs *[]InlinePlaceholder) string {
+	put := func(html string) string {
+		tok := fmt.Sprintf("«TGX%d»", len(*phs))
+		*phs = append(*phs, InlinePlaceholder{Token: tok, HTML: html})
+		return tok
+	}
+
+	type keep struct{ key, val string }
+	var kept []keep
+	keepPut := func(val string) string {
+		key := fmt.Sprintf("«KEEP%d»", len(kept))
+		kept = append(kept, keep{key, val})
+		return key
+	}
+	s = strikeRE.ReplaceAllStringFunc(s, func(m string) string { return keepPut(m) })
+	s = codeRE.ReplaceAllStringFunc(s, func(m string) string { return keepPut(m) })
+
+	s = spoilerRE.ReplaceAllStringFunc(s, func(m string) string {
+		inner := spoilerRE.FindStringSubmatch(m)[1]
+		return put("<tg-spoiler>" + escapeHTML(inner) + "</tg-spoiler>")
+	})
+	s = markRE.ReplaceAllStringFunc(s, func(m string) string {
+		inner := markRE.FindStringSubmatch(m)[1]
+		return put("<mark>" + escapeHTML(inner) + "</mark>")
+	})
+	s = underlineRE.ReplaceAllStringFunc(s, func(m string) string {
+		inner := underlineRE.FindStringSubmatch(m)[1]
+		return put("<u>" + escapeHTML(inner) + "</u>")
+	})
+	s = supRE.ReplaceAllStringFunc(s, func(m string) string {
+		inner := supRE.FindStringSubmatch(m)[1]
+		return put("<sup>" + escapeHTML(inner) + "</sup>")
+	})
+	s = subRE.ReplaceAllStringFunc(s, func(m string) string {
+		inner := subRE.FindStringSubmatch(m)[1]
+		return put("<sub>" + escapeHTML(inner) + "</sub>")
+	})
+
+	for i := len(kept) - 1; i >= 0; i-- {
+		s = strings.Replace(s, kept[i].key, kept[i].val, 1)
+	}
+	return s
+}
+
+func ExtendedInlineHTML(s string) string {
+	if s == "" {
+		return ""
+	}
+	s = escapeHTML(s)
+	s = spoilerRE.ReplaceAllString(s, "<tg-spoiler>$1</tg-spoiler>")
+	s = markRE.ReplaceAllString(s, "<mark>$1</mark>")
+	s = underlineRE.ReplaceAllString(s, "<u>$1</u>")
+	// Subscript before we might confuse with leftover tildes; strike is ~~ handled by goldmark.
+	s = subRE.ReplaceAllString(s, "<sub>$1</sub>")
+	s = supRE.ReplaceAllString(s, "<sup>$1</sup>")
+	return s
+}
+
+
 func isSafeURL(u string) bool {
 	u = strings.ToLower(u)
 	return strings.HasPrefix(u, "http://") ||
