@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM golang:1.25-bookworm AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS builder
 ARG TARGETOS TARGETARCH
 
 WORKDIR /src
@@ -15,7 +15,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /awaki ./cmd
 FROM ubuntu:24.04
 
 ARG TARGETARCH
-ARG GO_VERSION=1.25.0
+ARG GO_VERSION=1.26.1
 
 ENV DEBIAN_FRONTEND=noninteractive
 
