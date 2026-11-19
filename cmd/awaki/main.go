@@ -96,6 +96,7 @@ func main() {
 			"hooks_enabled": health.HookSecretFromEnv() != "",
 		}
 	})
+	eng.SetHealthSnapshot(hs.Snapshot)
 	hs.SetHooks(health.HookCallbacks{
 		Secret: health.HookSecretFromEnv(),
 		Agent: func(ctx context.Context, text string, plan bool, mode string) (map[string]any, error) {

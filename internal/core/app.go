@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -59,7 +60,8 @@ type Engine struct {
 	// navMu serialises chat/project navigation (new, resume, move, rename,
 	// create) so double-taps and concurrent callbacks cannot interleave.
 	navMu sync.Mutex
-	cloud cloudCache
+	cloud          cloudCache
+	healthSnapshot func() map[string]any
 }
 
 type Params struct {
@@ -77,6 +79,7 @@ type Params struct {
 	SSH                 *sshcreds.Store
 	ProjectSyncInterval time.Duration
 	RebuildAgent        func() error
+	HealthSnapshot      func() map[string]any
 }
 
 func New(p Params) *Engine {
@@ -95,6 +98,7 @@ func New(p Params) *Engine {
 		permStore:           p.PermStore,
 		rebuildAgent:        p.RebuildAgent,
 		projectSyncInterval: p.ProjectSyncInterval,
+		healthSnapshot:      p.HealthSnapshot,
 	}
 
 	// Wire dirty tracking: when file tools modify files inside an active
@@ -249,6 +253,8 @@ func (e *Engine) handleCommand(ctx context.Context, msg channel.Message) {
 		e.cmdPlugin(ctx, msg)
 	case channel.CmdHelp:
 		cmd.Result.Data = map[string]string{"text": helpCommandText()}
+	case channel.CmdHealth:
+		cmd.Result.Data = map[string]string{"text": e.healthCommandText()}
 	case channel.CmdTasks:
 		e.uiTasksBoard(ctx, msg)
 		return
@@ -568,6 +574,27 @@ func (e *Engine) RunScheduledTask(ctx context.Context, reply transport.Replier, 
 func helpCommandText() string {
 	return channel.HelpText()
 }
+
+// SetHealthSnapshot wires the HTTP health server snapshot into /health command replies.
+func (e *Engine) SetHealthSnapshot(fn func() map[string]any) {
+	e.healthSnapshot = fn
+}
+
+func (e *Engine) healthCommandText() string {
+	var st map[string]any
+	if e.healthSnapshot != nil {
+		st = e.healthSnapshot()
+	} else {
+		st = map[string]any{"status": "ok", "service": "awaki", "note": "health snapshot not wired"}
+	}
+	b, err := json.MarshalIndent(st, "", "  ")
+	if err != nil {
+		return "```\n" + err.Error() + "\n```"
+	}
+	// Fenced JSON so Telegram renders a monospace / copyable block.
+	return "```json\n" + string(b) + "\n```"
+}
+
 
 // cmdRaw returns the trimmed free-text argument of a command.
 func cmdRaw(cmd *channel.Command) string {

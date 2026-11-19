@@ -18,11 +18,12 @@ type StatusFunc func() map[string]any
 
 // Server is a tiny HTTP listener for platform health checks (Koyeb, Render, Railway, …).
 type Server struct {
-	addr   string
-	status StatusFunc
-	ready  atomic.Bool
-	srv    *http.Server
-	hooks  HookCallbacks
+	addr      string
+	status    StatusFunc
+	ready     atomic.Bool
+	srv       *http.Server
+	hooks     HookCallbacks
+	startedAt time.Time
 }
 
 // AddrFromEnv picks the listen address.
@@ -63,7 +64,7 @@ func New(addr string, status StatusFunc) *Server {
 			return map[string]any{"ok": true}
 		}
 	}
-	s := &Server{addr: addr, status: status}
+	s := &Server{addr: addr, status: status, startedAt: time.Now().UTC()}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleRoot)
 	mux.HandleFunc("/health", s.handleHealth)
@@ -82,6 +83,54 @@ func New(addr string, status StatusFunc) *Server {
 // SetReady marks the process as ready for /ready (after Telegram polling starts).
 func (s *Server) SetReady(v bool) { s.ready.Store(v) }
 
+// uptimeFields returns uptime_seconds and a human-readable uptime string.
+func (s *Server) uptimeFields() (seconds int64, human string) {
+	d := time.Since(s.startedAt)
+	if d < 0 {
+		d = 0
+	}
+	seconds = int64(d.Seconds())
+	// Format: 1d2h3m4s / 2h3m4s / 3m4s / 4s
+	sec := int(seconds)
+	days := sec / 86400
+	sec %= 86400
+	hours := sec / 3600
+	sec %= 3600
+	mins := sec / 60
+	sec %= 60
+	switch {
+	case days > 0:
+		human = fmt.Sprintf("%dd%dh%dm%ds", days, hours, mins, sec)
+	case hours > 0:
+		human = fmt.Sprintf("%dh%dm%ds", hours, mins, sec)
+	case mins > 0:
+		human = fmt.Sprintf("%dm%ds", mins, sec)
+	default:
+		human = fmt.Sprintf("%ds", sec)
+	}
+	return seconds, human
+}
+
+// handlePing stays minimal on purpose (load balancer probes). No uptime.
+// Snapshot returns the same payload shape as GET /health (status, time, uptime, started_at)
+// plus any fields from the injected StatusFunc. Safe for concurrent use.
+func (s *Server) Snapshot() map[string]any {
+	upSec, upHuman := s.uptimeFields()
+	st := map[string]any{}
+	if s.status != nil {
+		for k, v := range s.status() {
+			st[k] = v
+		}
+	}
+	st["status"] = "ok"
+	st["time"] = time.Now().UTC().Format(time.RFC3339)
+	st["uptime_seconds"] = upSec
+	st["uptime"] = upHuman
+	st["started_at"] = s.startedAt.Format(time.RFC3339)
+	st["ready"] = s.ready.Load()
+	return st
+}
+
 func (s *Server) handlePing(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
@@ -89,23 +138,36 @@ func (s *Server) handlePing(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	upSec, upHuman := s.uptimeFields()
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"status": "ok",
-		"time":   time.Now().UTC().Format(time.RFC3339),
+		"status":          "ok",
+		"time":            time.Now().UTC().Format(time.RFC3339),
+		"uptime_seconds":  upSec,
+		"uptime":          upHuman,
+		"started_at":      s.startedAt.Format(time.RFC3339),
 	})
 }
 
 func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
+	upSec, upHuman := s.uptimeFields()
 	w.Header().Set("Content-Type", "application/json")
 	if !s.ready.Load() {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]any{"ready": false})
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ready":          false,
+			"uptime_seconds": upSec,
+			"uptime":         upHuman,
+		})
 		return
 	}
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]any{"ready": true})
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ready":          true,
+		"uptime_seconds": upSec,
+		"uptime":         upHuman,
+	})
 }
 
 func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
@@ -114,8 +176,12 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	st := s.status()
+	upSec, upHuman := s.uptimeFields()
 	st["status"] = "ok"
 	st["time"] = time.Now().UTC().Format(time.RFC3339)
+	st["uptime_seconds"] = upSec
+	st["uptime"] = upHuman
+	st["started_at"] = s.startedAt.Format(time.RFC3339)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(st)
@@ -124,6 +190,9 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 // Start begins listening in the background. Returns when the listener is bound
 // or if bind fails. Call Shutdown on process exit.
 func (s *Server) Start(ctx context.Context) error {
+	if s.startedAt.IsZero() {
+		s.startedAt = time.Now().UTC()
+	}
 	ln, err := net.Listen("tcp", s.addr)
 	if err != nil {
 		return fmt.Errorf("health listen %s: %w", s.addr, err)

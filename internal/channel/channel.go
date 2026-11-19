@@ -28,6 +28,7 @@ const (
 	CmdRename         = "rename"
 	CmdPlan           = "plan"
 	CmdHelp           = "help"
+	CmdHealth         = "health"
 	CmdTasks          = "tasks"
 	CmdTaskAdd        = "task"
 	CmdSchedules      = "schedules"

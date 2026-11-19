@@ -32,6 +32,7 @@ var Commands = []CommandSpec{
 	{Slash: "rename", Cmd: CmdRename, Description: "Rename this chat", Help: "<title> — rename current chat", Menu: true},
 	{Slash: "stop", Cmd: CmdStop, Description: "Cancel current task", Help: "cancel current agent run", Menu: true},
 	{Slash: "help", Cmd: CmdHelp, Description: "List all commands", Help: "this list", Menu: true},
+	{Slash: "health", Cmd: CmdHealth, Description: "Server health JSON", Help: "raw health endpoint payload as code", Menu: true},
 
 	{Slash: "mode", Cmd: CmdMode, Description: "Permission mode auto/ask/plan", Help: "[auto|ask|plan] — sticky permission mode (buttons if bare)", Menu: true},
 	{Slash: "plan", Cmd: CmdPlan, Description: "One-shot read-only plan turn", Help: "<task> — one-shot read-only plan turn", Menu: true},
