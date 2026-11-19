@@ -1,8 +1,8 @@
 name: Setup SSH access & redeploy Koyeb
 
+# Manual only. Pushes to main are already redeployed by koyeb-deploy.yml;
+# triggering here too sent a second redeploy request on every push.
 on:
-  push:
-    branches: [ main ]
   workflow_dispatch:
     inputs:
       test_ssh:
