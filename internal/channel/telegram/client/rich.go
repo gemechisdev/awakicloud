@@ -11,28 +11,28 @@ import (
 // richMessageRequest mirrors the Telegram Bot API sendRichMessage / editMessageText
 // rich_message parameter.
 type richMessageRequest struct {
-	ChatID          int64  `json:"chat_id"`
-	RichMessage     richMessage `json:"rich_message"`
-	DisableNotification bool   `json:"disable_notification,omitempty"`
-	MessageID       int    `json:"message_id,omitempty"`
+	ChatID              int64       `json:"chat_id"`
+	RichMessage         richMessage `json:"rich_message"`
+	DisableNotification bool        `json:"disable_notification,omitempty"`
+	MessageID           int         `json:"message_id,omitempty"`
 }
 
 // richMessage mirrors InputRichMessage. Exactly one of HTML/Markdown/Blocks must be set.
 type richMessage struct {
-	HTML      string `json:"html,omitempty"`
-	Markdown  string `json:"markdown,omitempty"`
-	Blocks    any    `json:"blocks,omitempty"`
-	Media     any    `json:"media,omitempty"`
-	IsRTL     bool   `json:"is_rtl,omitempty"`
+	HTML     string `json:"html,omitempty"`
+	Markdown string `json:"markdown,omitempty"`
+	Blocks   any    `json:"blocks,omitempty"`
+	Media    any    `json:"media,omitempty"`
+	IsRTL    bool   `json:"is_rtl,omitempty"`
 }
 
 // draftRequest mirrors sendRichMessageDraft parameters.
 type draftRequest struct {
-	ChatID      int64  `json:"chat_id"`
-	DraftID     int    `json:"draft_id"`
+	ChatID      int64       `json:"chat_id"`
+	DraftID     int         `json:"draft_id"`
 	RichMessage richMessage `json:"rich_message"`
-	CanStop     bool   `json:"can_stop,omitempty"`
-	KeepOnStop  bool   `json:"keep_on_stop,omitempty"`
+	CanStop     bool        `json:"can_stop,omitempty"`
+	KeepOnStop  bool        `json:"keep_on_stop,omitempty"`
 }
 
 // SendRichMessage sends a persistent Telegram Rich Message via raw HTTP (Bot API 10.1+).
@@ -51,8 +51,8 @@ func (c *Client) SendRichMessage(ctx context.Context, chatID int64, contentType,
 	}
 
 	payload := richMessageRequest{
-		ChatID:             chatID,
-		RichMessage:        rm,
+		ChatID:              chatID,
+		RichMessage:         rm,
 		DisableNotification: disableNotification,
 	}
 	return c.postRich(ctx, "sendRichMessage", payload)
@@ -74,11 +74,11 @@ func (c *Client) SendRichMessageDraft(ctx context.Context, chatID int64, draftID
 	}
 
 	payload := draftRequest{
-		ChatID:       chatID,
-		DraftID:      draftID,
-		RichMessage:  rm,
-		CanStop:      canStop,
-		KeepOnStop:   keepOnStop,
+		ChatID:      chatID,
+		DraftID:     draftID,
+		RichMessage: rm,
+		CanStop:     canStop,
+		KeepOnStop:  keepOnStop,
 	}
 	_, err := c.postRich(ctx, "sendRichMessageDraft", payload)
 	return err
@@ -133,11 +133,11 @@ func (c *Client) postRich(ctx context.Context, method string, payload any) (int,
 	}
 
 	var result struct {
-		OK     bool   `json:"ok"`
+		OK     bool `json:"ok"`
 		Result struct {
 			MessageID int `json:"message_id"`
 		} `json:"result"`
-		ErrorCode int    `json:"error_code"`
+		ErrorCode   int    `json:"error_code"`
 		Description string `json:"description"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -159,9 +159,9 @@ var _ interface {
 
 // telegramRichAPIError is returned when Telegram rejects a rich message payload.
 type telegramRichAPIError struct {
-	Code          int
-	Description   string
-	Parameters    map[string]any
+	Code        int
+	Description string
+	Parameters  map[string]any
 }
 
 func (e *telegramRichAPIError) Error() string {

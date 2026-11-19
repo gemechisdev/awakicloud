@@ -58,8 +58,8 @@ func (r *replier) ConsumeEvents(ctx context.Context, events <-chan transport.Eve
 		thinkTimer *time.Timer
 		thinkCh    <-chan time.Time
 
-		draftID      int
-		draftActive  bool
+		draftID       int
+		draftActive   bool
 		draftLastText string
 	)
 

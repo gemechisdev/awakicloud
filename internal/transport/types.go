@@ -31,7 +31,7 @@ type Replier interface {
 type RichContentType string
 
 const (
-	RichHTML    RichContentType = "html"
+	RichHTML     RichContentType = "html"
 	RichMarkdown RichContentType = "markdown"
 	RichBlocks   RichContentType = "blocks"
 )
