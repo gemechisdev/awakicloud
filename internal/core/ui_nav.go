@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/gemechischala/awaki/internal/channel"
+	"github.com/gemechischala/awaki/internal/channel/telegram/rich"
 	"github.com/gemechischala/awaki/internal/providers"
 )
 
@@ -88,6 +89,9 @@ func settingsKeyboard() channel.KeyboardMessage {
 type keyboardSender interface {
 	SendKeyboardToOwner(ctx context.Context, km channel.KeyboardMessage)
 	SendOrEditKeyboardToOwner(ctx context.Context, editMsgID int, km channel.KeyboardMessage)
+	// SendRichScreen sends a Telegram Rich Message screen with styled buttons.
+	// Returns the message ID (or editMsgID when editing).
+	SendRichScreen(ctx context.Context, km channel.KeyboardMessage, editMsgID int) (int, error)
 }
 
 func (e *Engine) uiHome(ctx context.Context, msg channel.Message) {
@@ -148,6 +152,15 @@ func (e *Engine) currentLine() string {
 
 func (e *Engine) deliverKeyboard(ctx context.Context, msg channel.Message, km channel.KeyboardMessage) {
 	if ks, ok := e.ch.(keyboardSender); ok {
+		// Use rich screens for substantial content; fall back to plain for short text.
+		if rich.IsRichWorthy(km.Text) {
+			if msg.EditMessageID > 0 {
+				_, _ = ks.SendRichScreen(ctx, km, msg.EditMessageID)
+				return
+			}
+			_, _ = ks.SendRichScreen(ctx, km, 0)
+			return
+		}
 		if msg.EditMessageID > 0 {
 			ks.SendOrEditKeyboardToOwner(ctx, msg.EditMessageID, km)
 			return

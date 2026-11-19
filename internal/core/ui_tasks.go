@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/gemechischala/awaki/internal/channel"
+	"github.com/gemechischala/awaki/internal/channel/telegram/rich"
 	"github.com/gemechischala/awaki/internal/tasks"
 )
 
@@ -125,7 +126,7 @@ func (e *Engine) uiTaskGet(ctx context.Context, msg channel.Message, id string) 
 		if len([]rune(out)) > 3000 {
 			out = string([]rune(out)[:3000]) + "…"
 		}
-		fmt.Fprintf(&b, "\n--- output ---\n%s\n", out)
+		fmt.Fprintf(&b, "\n--- output ---\n%s\n", rich.CodeBlock(out))
 	}
 	e.deliverKeyboard(ctx, msg, channel.KeyboardMessage{
 		Text: b.String(),

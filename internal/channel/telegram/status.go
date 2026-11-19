@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gemechischala/awaki/internal/channel/telegram/client"
 	"github.com/gemechischala/awaki/internal/channel/telegram/format"
+	"github.com/gemechischala/awaki/internal/channel/telegram/rich"
 	"github.com/gemechischala/awaki/internal/transport"
 
 	"github.com/go-telegram/bot/models"
@@ -32,7 +32,7 @@ func taskStateEmoji(s transport.TaskStatus) string {
 	}
 }
 
-// formatStatus is the message body (header). Plan details live on inline buttons.
+// formatStatus is the plain-text fallback (MarkdownV2) for short statuses.
 func formatStatus(s transport.AgentStatus) string {
 	var parts []string
 
@@ -72,9 +72,9 @@ func formatStatus(s transport.AgentStatus) string {
 			if len(runes) > 300 {
 				label = string(runes[:300]) + "…"
 			}
-			parts = append(parts, emoji+" "+client.EscapeMarkdown(label))
+			parts = append(parts, emoji+" "+label)
 		} else {
-			parts = append(parts, emoji+" "+client.EscapeMarkdown(label)+"\\.\\.\\.")
+			parts = append(parts, emoji+" "+label+"\\.\\.\\.")
 		}
 	}
 
@@ -82,6 +82,59 @@ func formatStatus(s transport.AgentStatus) string {
 		return emoji + " Working\\.\\.\\."
 	}
 	return strings.Join(parts, "\n")
+}
+
+// formatStatusRich renders an AgentStatus as Telegram Rich HTML.
+// Plan tasks are wrapped in a collapsible <details> drawer.
+func formatStatusRich(s transport.AgentStatus) string {
+	var b strings.Builder
+
+	emoji := phaseEmoji[s.Phase]
+	if emoji == "" {
+		emoji = "⏳"
+	}
+
+	label := s.Detail
+	if label == "" {
+		switch s.Phase {
+		case transport.PhaseThinking:
+			label = "Thinking"
+		case transport.PhasePlanning:
+			label = "Planning"
+		default:
+			label = s.Tool
+		}
+	}
+	if label != "" {
+		b.WriteString(rich.Paragraph(emoji + " " + label))
+		if s.Phase != transport.PhaseMessage {
+			b.WriteString(rich.Paragraph("Working…"))
+		}
+	}
+
+	// Progress bar as tap-to-copy code
+	if s.Percent != nil {
+		b.WriteString(rich.CodeBlock(formatProgressBar(*s.Percent)))
+	}
+
+	// Plan tasks in a collapsible drawer
+	if len(s.Plan) > 0 {
+		var planLines []string
+		done := 0
+		for _, t := range s.Plan {
+			planLines = append(planLines, fmt.Sprintf("%s %s", taskStateEmoji(t.Status), t.Title))
+			if t.Status == transport.TaskCompleted {
+				done++
+			}
+		}
+		planHTML := strings.Join(planLines, "\n")
+		b.WriteString(rich.Details(fmt.Sprintf("📋 Plan %d/%d", done, len(s.Plan)), planHTML, false))
+	}
+
+	if b.Len() == 0 {
+		return rich.Paragraph(emoji + " Working…")
+	}
+	return b.String()
 }
 
 func formatProgressBar(pct int) string {
@@ -94,7 +147,7 @@ func formatProgressBar(pct int) string {
 	const width = 10
 	filled := pct * width / 100
 	bar := strings.Repeat("█", filled) + strings.Repeat("░", width-filled)
-	return fmt.Sprintf("`%s` %d%%", bar, pct)
+	return fmt.Sprintf("%s %d%%", bar, pct)
 }
 
 // planKeyboard builds read-only inline buttons: one row per task.
@@ -120,6 +173,19 @@ func planKeyboard(tasks []transport.PlanTask) [][]models.InlineKeyboardButton {
 }
 
 func (r *replier) sendStatus(ctx context.Context, status transport.AgentStatus) int {
+	html := formatStatusRich(status)
+
+	// Use rich message if content is substantial; otherwise fall back to plain.
+	if rich.IsRichWorthy(html) {
+		id, err := r.ch.client.SendRichMessage(ctx, r.chatID, "html", html, false, false)
+		if err != nil {
+			log.Warn().Err(err).Msg("telegram: send rich status failed, falling back to plain")
+			text := formatStatus(status)
+			return r.ch.sendAndGetID(ctx, r.chatID, text)
+		}
+		return id
+	}
+
 	text := formatStatus(status)
 	kb := planKeyboard(status.Plan)
 	if len(kb) == 0 {
@@ -137,6 +203,27 @@ func (r *replier) updateStatus(ctx context.Context, msgID int, status transport.
 	if msgID == 0 {
 		return
 	}
+	html := formatStatusRich(status)
+
+	if rich.IsRichWorthy(html) {
+		err := r.ch.client.EditRichMessage(ctx, r.chatID, msgID, "html", html, false)
+		if err != nil {
+			log.Warn().Err(err).Int("msg_id", msgID).Str("phase", string(status.Phase)).Msg("telegram: edit rich status failed, falling back to plain")
+			text := formatStatus(status)
+			kb := planKeyboard(status.Plan)
+			var err2 error
+			if len(kb) > 0 {
+				err2 = r.ch.client.EditMessageWithKeyboard(ctx, r.chatID, msgID, text, models.ParseModeMarkdown, kb)
+			} else {
+				err2 = r.ch.client.EditMessage(ctx, r.chatID, msgID, text, models.ParseModeMarkdown)
+			}
+			if err2 != nil {
+				log.Warn().Err(err2).Int("msg_id", msgID).Str("phase", string(status.Phase)).Msg("telegram: EditMessage status failed")
+			}
+		}
+		return
+	}
+
 	text := formatStatus(status)
 	kb := planKeyboard(status.Plan)
 	var err error
@@ -166,6 +253,19 @@ func (r *replier) editToFinal(ctx context.Context, msgID int, text string) {
 		return
 	}
 
+	html := rich.MarkdownToRichHTML(text)
+	if rich.IsRichWorthy(html) {
+		err := r.ch.client.EditRichMessage(ctx, r.chatID, msgID, "html", html, false)
+		if err != nil {
+			log.Warn().Err(err).Msg("telegram: edit to rich final failed, falling back to plain")
+			r.editToFinalPlain(ctx, msgID, text)
+		}
+		return
+	}
+	r.editToFinalPlain(ctx, msgID, text)
+}
+
+func (r *replier) editToFinalPlain(ctx context.Context, msgID int, text string) {
 	chunks := format.FormatHTMLChunks(text, maxMessageLen)
 	if len(chunks) == 0 {
 		r.deleteStatus(ctx, msgID)

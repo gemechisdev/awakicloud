@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sync"
+
+	"github.com/gemechischala/awaki/internal/channel/telegram/rich"
 	"github.com/gemechischala/awaki/internal/transport"
 	"github.com/gemechischala/awaki/internal/utils"
 	"os"
@@ -18,9 +21,16 @@ type replier struct {
 	chatID     int64
 	replyToID  int64 // 0 = no thread; first message threads, continuations don't
 	firstReply bool  // whether the next SendText/SendFile should set the thread
+
+	draftMu   sync.Mutex
+	nextDraft int
 }
 
 func (r *replier) SendText(ctx context.Context, text string) error {
+	if rich.IsRichWorthy(text) {
+		return r.SendRichMessage(ctx, "html", rich.MarkdownToRichHTML(text), false, false)
+	}
+
 	if r.replyToID != 0 && r.firstReply {
 		r.ch.sendLongThreaded(ctx, r.chatID, r.replyToID, text)
 		r.firstReply = false
@@ -94,4 +104,32 @@ func (r *replier) SendAsk(ctx context.Context, prompt string, kind transport.Ask
 
 func (r *replier) SendTyping(ctx context.Context) error {
 	return r.ch.client.SendTyping(ctx, r.chatID)
+}
+
+// SendRichMessage sends a persistent Telegram Rich Message.
+func (r *replier) SendRichMessage(ctx context.Context, contentType, content string, isRTL bool, disableNotification bool) error {
+	id, err := r.ch.client.SendRichMessage(ctx, r.chatID, contentType, content, isRTL, disableNotification)
+	if err != nil {
+		return err
+	}
+	_ = id
+	return nil
+}
+
+// SendRichMessageDraft streams an ephemeral rich message draft (30s lifetime).
+func (r *replier) SendRichMessageDraft(ctx context.Context, draftID int, contentType, content string, canStop bool, keepOnStop bool) error {
+	return r.ch.client.SendRichMessageDraft(ctx, r.chatID, draftID, contentType, content, canStop, keepOnStop)
+}
+
+// EditRichMessage updates an existing message to a Rich Message.
+func (r *replier) EditRichMessage(ctx context.Context, messageID int, contentType, content string, isRTL bool) error {
+	return r.ch.client.EditRichMessage(ctx, r.chatID, messageID, contentType, content, isRTL)
+}
+
+// nextDraftID returns a unique draft ID for this replier's chat.
+func (r *replier) nextDraftID() int {
+	r.draftMu.Lock()
+	defer r.draftMu.Unlock()
+	r.nextDraft++
+	return r.nextDraft
 }

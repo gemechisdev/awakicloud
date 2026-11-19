@@ -19,7 +19,9 @@ const pollTimeout = 10 * time.Second
 type UpdateHandler func(ctx context.Context, update *models.Update)
 
 type Client struct {
-	b *bot.Bot
+	b     *bot.Bot
+	token string
+	http  *http.Client
 }
 
 func New(token string, handler UpdateHandler) (*Client, error) {
@@ -34,7 +36,7 @@ func New(token string, handler UpdateHandler) (*Client, error) {
 		return nil, fmt.Errorf("telegram bot init: %w", err)
 	}
 	log.Info().Dur("poll_timeout", pollTimeout).Msg("telegram bot authorized")
-	return &Client{b: b}, nil
+	return &Client{b: b, token: token, http: httpClient}, nil
 }
 
 func (c *Client) Start(ctx context.Context) {

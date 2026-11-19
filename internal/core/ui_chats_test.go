@@ -33,6 +33,11 @@ func (r *fakeReplier) SendTyping(context.Context) error               { return n
 func (r *fakeReplier) SendAsk(context.Context, string, transport.AskKind, []transport.AskOption) error {
 	return nil
 }
+func (r *fakeReplier) SendRichMessage(context.Context, string, string, bool, bool) error { return nil }
+func (r *fakeReplier) SendRichMessageDraft(context.Context, int, string, string, bool, bool) error {
+	return nil
+}
+func (r *fakeReplier) EditRichMessage(context.Context, int, string, string, bool) error { return nil }
 func (r *fakeReplier) ConsumeEvents(context.Context, <-chan transport.Event, <-chan string) string {
 	return ""
 }

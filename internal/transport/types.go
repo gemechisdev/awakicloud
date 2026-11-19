@@ -10,11 +10,31 @@ type Replier interface {
 	SendTyping(ctx context.Context) error
 	SendAsk(ctx context.Context, prompt string, kind AskKind, options []AskOption) error
 
+	// SendRichMessage sends a persistent Telegram Rich Message (Bot API 10.1+).
+	// contentType is "html", "markdown", or "blocks". Exactly one mode is used.
+	SendRichMessage(ctx context.Context, contentType, content string, isRTL bool, disableNotification bool) error
+
+	// SendRichMessageDraft streams an ephemeral rich message draft (30s lifetime)
+	// for live AI reasoning. draftId must be non-zero and stable across updates.
+	SendRichMessageDraft(ctx context.Context, draftID int, contentType, content string, canStop bool, keepOnStop bool) error
+
+	// EditRichMessage updates an existing message to a Rich Message.
+	EditRichMessage(ctx context.Context, messageID int, contentType, content string, isRTL bool) error
+
 	// ConsumeEvents reads agent events and translates them into channel
 	// interactions (typing, status updates, text). Returns the final text output.
 	// replyInbox carries user responses for ask_user; pass nil to disable asking.
 	ConsumeEvents(ctx context.Context, events <-chan Event, replyInbox <-chan string) string
 }
+
+// RichContentType selects the input mode for InputRichMessage.
+type RichContentType string
+
+const (
+	RichHTML    RichContentType = "html"
+	RichMarkdown RichContentType = "markdown"
+	RichBlocks   RichContentType = "blocks"
+)
 
 // Phase represents a high-level stage of the agent's work.
 type Phase string

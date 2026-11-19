@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/gemechischala/awaki/internal/channel"
+	"github.com/gemechischala/awaki/internal/channel/telegram/rich"
 	"github.com/gemechischala/awaki/internal/sshcreds"
 )
 
@@ -94,13 +95,13 @@ func (e *Engine) uiSSHDetail(ctx context.Context, msg channel.Message, idKey str
 	if id.GitName != "" || id.GitEmail != "" {
 		fmt.Fprintf(&b, "Git author: %s <%s>\n", id.GitName, id.GitEmail)
 	}
-	fmt.Fprintf(&b, "\nClone example:\n`git@%s:OWNER/REPO.git`\n", id.Host)
+	fmt.Fprintf(&b, "\nClone example:\n%s\n", rich.CodeBlock(fmt.Sprintf("git@%s:OWNER/REPO.git", id.Host)))
 	if id.PublicKey != "" {
 		pub := id.PublicKey
 		if len([]rune(pub)) > 400 {
 			pub = string([]rune(pub)[:400]) + "…"
 		}
-		fmt.Fprintf(&b, "\nPublic key (add this on GitHub → SSH keys):\n```\n%s\n```\n", strings.TrimSpace(pub))
+		fmt.Fprintf(&b, "\nPublic key (add this on GitHub → SSH keys):\n%s\n", rich.CodeBlock(strings.TrimSpace(pub)))
 	} else {
 		b.WriteString("\n(No public key stored — paste one when re-adding, or derive with ssh-keygen -y.)\n")
 	}

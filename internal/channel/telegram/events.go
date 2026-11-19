@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"github.com/gemechischala/awaki/internal/channel/telegram/rich"
 	"github.com/gemechischala/awaki/internal/transport"
 	"time"
 )
@@ -56,6 +57,10 @@ func (r *replier) ConsumeEvents(ctx context.Context, events <-chan transport.Eve
 		hadTool    bool
 		thinkTimer *time.Timer
 		thinkCh    <-chan time.Time
+
+		draftID      int
+		draftActive  bool
+		draftLastText string
 	)
 
 	lastText = formatStatus(transport.AgentStatus{Phase: transport.PhaseThinking})
@@ -68,6 +73,7 @@ func (r *replier) ConsumeEvents(ctx context.Context, events <-chan transport.Eve
 		if thinkTimer != nil {
 			thinkTimer.Stop()
 		}
+		// Drafts auto-expire after 30s; no explicit delete needed.
 	}()
 
 	cancelThinking := func() {
@@ -139,10 +145,26 @@ func (r *replier) ConsumeEvents(ctx context.Context, events <-chan transport.Eve
 					thinkTimer = time.NewTimer(thinkingDelay)
 					thinkCh = thinkTimer.C
 				}
+				// Start an ephemeral draft for live AI streaming
+				draftID = r.nextDraftID()
+				draftActive = true
+				draftLastText = ""
+				_ = r.ch.client.SendRichMessageDraft(ctx, r.chatID, draftID, "html",
+					"<tg-thinking>Analyzing your request...</tg-thinking>", true, true)
 
 			case transport.LLMStreamEvent:
-				// Reserved for live token streaming. The authoritative final
-				// text arrives in DoneEvent.Text, so nothing to render here yet.
+				// Stream partial text into the ephemeral draft (deduplicated)
+				if !draftActive || e.Text == "" || e.Text == draftLastText {
+					break
+				}
+				draftLastText = e.Text
+				html := rich.MarkdownToRichHTML(e.Text)
+				if rich.IsRichWorthy(html) {
+					_ = r.ch.client.SendRichMessageDraft(ctx, r.chatID, draftID, "html", html, true, true)
+				} else {
+					_ = r.ch.client.SendRichMessageDraft(ctx, r.chatID, draftID, "html",
+						"<p>"+rich.EscapeHTML(e.Text)+"</p>", true, true)
+				}
 
 			case transport.ToolStartEvent:
 				hadTool = true
@@ -214,8 +236,10 @@ func (r *replier) ConsumeEvents(ctx context.Context, events <-chan transport.Eve
 			case transport.DoneEvent:
 				if ctx.Err() != nil {
 					r.deleteStatus(context.Background(), statusID)
+					draftActive = false
 					return ""
 				}
+				draftActive = false
 				if e.Text != "" {
 					r.editToFinal(context.Background(), statusID, e.Text)
 				} else {

@@ -2,9 +2,11 @@ package telegram
 
 import (
 	"context"
+	"strings"
 
 	"github.com/gemechischala/awaki/internal/channel"
 	"github.com/gemechischala/awaki/internal/channel/telegram/format"
+	"github.com/gemechischala/awaki/internal/channel/telegram/rich"
 	"github.com/go-telegram/bot/models"
 	"github.com/rs/zerolog/log"
 )
@@ -174,7 +176,117 @@ func (c *Channel) SendKeyboardToOwner(ctx context.Context, km channel.KeyboardMe
 	c.sendOrEditKeyboard(ctx, c.ownerID, 0, km)
 }
 
+// SendRichScreen sends a Telegram Rich Message screen with styled buttons.
+func (c *Channel) SendRichScreen(ctx context.Context, km channel.KeyboardMessage, editMsgID int) (int, error) {
+	html := km.Text
+	return c.sendRichScreen(ctx, c.ownerID, html, km.Rows, editMsgID)
+}
+
 // SendOrEditKeyboardToOwner edits the callback message when editMsgID > 0.
 func (c *Channel) SendOrEditKeyboardToOwner(ctx context.Context, editMsgID int, km channel.KeyboardMessage) {
 	c.sendOrEditKeyboard(ctx, c.ownerID, editMsgID, km)
+}
+
+// sendRichScreen sends a Rich Message with HTML body and rich <tg-button-row>
+// buttons instead of legacy inline keyboards. Used for UI screens that benefit
+// from rich styling (tables, drawers, styled buttons).
+func (c *Channel) sendRichScreen(ctx context.Context, chatID int64, html string, rows [][]channel.Button, editMsgID int) (int, error) {
+	// Convert channel.Button rows to <tg-button-row> HTML
+	var buttonHTML strings.Builder
+	for _, row := range rows {
+		var btns []map[string]string
+		for _, btn := range row {
+			spec := map[string]string{
+				"type":  "callback_data",
+				"style": "primary",
+				"data":  btn.CallbackData,
+				"label": btn.Text,
+			}
+			if btn.URL != "" {
+				spec["type"] = "url"
+				spec["style"] = "primary"
+				spec["url"] = btn.URL
+				delete(spec, "data")
+			}
+			btns = append(btns, spec)
+		}
+		if len(btns) > 0 {
+			buttonHTML.WriteString(rich.ButtonRow(btns, "center"))
+			buttonHTML.WriteString("\n")
+		}
+	}
+
+	body := html
+	if buttonHTML.Len() > 0 {
+		body += "\n" + buttonHTML.String()
+	}
+
+	if rich.IsRichWorthy(body) {
+		if editMsgID > 0 {
+			err := c.client.EditRichMessage(ctx, chatID, editMsgID, "html", body, false)
+			if err != nil {
+				log.Warn().Err(err).Int("msg_id", editMsgID).Msg("telegram: edit rich screen failed, falling back")
+				return c.sendScreenPlain(ctx, chatID, html, rows, editMsgID)
+			}
+			return editMsgID, nil
+		}
+		id, err := c.client.SendRichMessage(ctx, chatID, "html", body, false, false)
+		if err != nil {
+			log.Warn().Err(err).Msg("telegram: send rich screen failed, falling back")
+			return c.sendScreenPlain(ctx, chatID, html, rows, editMsgID)
+		}
+		return id, nil
+	}
+
+	// Short content — use plain send
+	if editMsgID > 0 {
+		return editMsgID, c.sendScreenPlain(ctx, chatID, html, rows, editMsgID)
+	}
+	return c.sendScreenPlain(ctx, chatID, html, rows, editMsgID)
+}
+
+// sendScreenPlain falls back to legacy inline keyboard for short messages.
+func (c *Channel) sendScreenPlain(ctx context.Context, chatID int64, html string, rows [][]channel.Button, editMsgID int) (int, error) {
+	var kbRows [][]models.InlineKeyboardButton
+	for _, row := range rows {
+		var r []models.InlineKeyboardButton
+		for _, b := range row {
+			btn := models.InlineKeyboardButton{Text: b.Text}
+			if b.URL != "" {
+				btn.URL = b.URL
+			} else {
+				btn.CallbackData = b.CallbackData
+			}
+			r = append(r, btn)
+		}
+		kbRows = append(kbRows, r)
+	}
+
+	var err error
+	if editMsgID > 0 {
+		if len(kbRows) > 0 {
+			err = c.client.EditMessageWithKeyboard(ctx, chatID, editMsgID, html, models.ParseModeHTML, kbRows)
+		} else {
+			err = c.client.EditMessage(ctx, chatID, editMsgID, html, models.ParseModeHTML)
+		}
+		if err != nil {
+			log.Warn().Err(err).Int("msg_id", editMsgID).Msg("telegram: edit plain screen failed")
+		}
+		return editMsgID, err
+	}
+
+	if len(kbRows) == 0 {
+		// No buttons — just send text
+		msgID, err := c.client.SendMessage(ctx, chatID, html, models.ParseModeHTML)
+		if err != nil {
+			return 0, err
+		}
+		return msgID, nil
+	}
+
+	sent, err := c.client.SendMessageWithKeyboard(ctx, chatID, html, models.ParseModeHTML, kbRows)
+	if err != nil {
+		return 0, err
+	}
+	return sent.ID, nil
 }
