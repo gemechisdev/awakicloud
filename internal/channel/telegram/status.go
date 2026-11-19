@@ -127,8 +127,8 @@ func formatStatusRich(s transport.AgentStatus) string {
 				done++
 			}
 		}
-		planHTML := strings.Join(planLines, "\n")
-		b.WriteString(rich.Details(fmt.Sprintf("📋 Plan %d/%d", done, len(s.Plan)), planHTML, false))
+		planBody := strings.Join(planLines, "\n")
+		b.WriteString(rich.DetailsPlain(fmt.Sprintf("📋 Plan %d/%d", done, len(s.Plan)), planBody, false))
 	}
 
 	if b.Len() == 0 {

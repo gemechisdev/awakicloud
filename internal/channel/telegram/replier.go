@@ -4,16 +4,16 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/gemechischala/awaki/internal/channel/telegram/rich"
 	"github.com/gemechischala/awaki/internal/transport"
 	"github.com/gemechischala/awaki/internal/utils"
-	"os"
-	"path/filepath"
-	"strings"
-
 	"github.com/go-telegram/bot/models"
+	"github.com/rs/zerolog/log"
 )
 
 type replier struct {
@@ -27,13 +27,39 @@ type replier struct {
 }
 
 func (r *replier) SendText(ctx context.Context, text string) error {
-	// Always use Rich HTML for agent output — supports everything MarkdownV2
-	// does plus tables, drawers, styled buttons, and 8x the character limit.
-	if len(strings.TrimSpace(text)) > 0 {
-		html := rich.MarkdownToRichHTML(text)
-		return r.SendRichMessage(ctx, "html", html, false, false)
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil
 	}
 
+	isRTL := rich.NeedsRTL(text)
+
+	// Prefer native Markdown for agent output: Telegram's rich Markdown
+	// already understands headings, tables, lists, code fences, etc.
+	// Fall back to classic HTML/plain paths on any failure so replies are never lost.
+	id, err := r.ch.client.SendRichMessage(ctx, r.chatID, "markdown", text, isRTL, false)
+	if err == nil {
+		_ = id
+		if r.replyToID != 0 && r.firstReply {
+			r.firstReply = false
+		}
+		return nil
+	}
+	log.Warn().Err(err).Msg("telegram: rich markdown send failed, trying HTML converter")
+
+	html := rich.MarkdownToRichHTML(text)
+	html = rich.EnsureSafeLength(html)
+	id, err = r.ch.client.SendRichMessage(ctx, r.chatID, "html", html, isRTL, false)
+	if err == nil {
+		_ = id
+		if r.replyToID != 0 && r.firstReply {
+			r.firstReply = false
+		}
+		return nil
+	}
+	log.Warn().Err(err).Msg("telegram: rich HTML send failed, falling back to classic send")
+
+	// Classic path restores threading behaviour.
 	if r.replyToID != 0 && r.firstReply {
 		r.ch.sendLongThreaded(ctx, r.chatID, r.replyToID, text)
 		r.firstReply = false

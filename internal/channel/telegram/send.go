@@ -221,7 +221,8 @@ func (c *Channel) sendRichScreen(ctx context.Context, chatID int64, html string,
 		body += "\n" + buttonHTML.String()
 	}
 
-	if rich.IsRichWorthy(body) {
+	body = rich.EnsureSafeLength(body)
+	if rich.IsRichWorthy(body) || len(rows) > 0 {
 		if editMsgID > 0 {
 			err := c.client.EditRichMessage(ctx, chatID, editMsgID, "html", body, false)
 			if err != nil {

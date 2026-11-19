@@ -153,14 +153,15 @@ func (r *replier) ConsumeEvents(ctx context.Context, events <-chan transport.Eve
 					"<tg-thinking>Analyzing your request...</tg-thinking>", true, true)
 
 			case transport.LLMStreamEvent:
-				// Stream partial text into the ephemeral draft (deduplicated)
+				// Stream partial text into the ephemeral draft (deduplicated).
+				// Prefer native markdown so tables/lists/code render correctly;
+				// fall back to escaped HTML paragraph for short plain text.
 				if !draftActive || e.Text == "" || e.Text == draftLastText {
 					break
 				}
 				draftLastText = e.Text
-				html := rich.MarkdownToRichHTML(e.Text)
-				if rich.IsRichWorthy(html) {
-					_ = r.ch.client.SendRichMessageDraft(ctx, r.chatID, draftID, "html", html, true, true)
+				if rich.IsRichWorthy(e.Text) || len(e.Text) > 200 {
+					_ = r.ch.client.SendRichMessageDraft(ctx, r.chatID, draftID, "markdown", e.Text, true, true)
 				} else {
 					_ = r.ch.client.SendRichMessageDraft(ctx, r.chatID, draftID, "html",
 						"<p>"+rich.EscapeHTML(e.Text)+"</p>", true, true)

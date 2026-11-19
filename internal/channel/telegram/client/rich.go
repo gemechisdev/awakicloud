@@ -5,53 +5,62 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
+
+	"github.com/gemechischala/awaki/internal/channel/telegram/rich"
 )
 
-// richMessageRequest mirrors the Telegram Bot API sendRichMessage / editMessageText
-// rich_message parameter.
+// richMessageRequest mirrors sendRichMessage / editMessageText rich_message.
 type richMessageRequest struct {
 	ChatID              int64       `json:"chat_id"`
+	MessageThreadID     int64       `json:"message_thread_id,omitempty"`
 	RichMessage         richMessage `json:"rich_message"`
 	DisableNotification bool        `json:"disable_notification,omitempty"`
 	MessageID           int         `json:"message_id,omitempty"`
+	ProtectContent      bool        `json:"protect_content,omitempty"`
 }
 
 // richMessage mirrors InputRichMessage. Exactly one of HTML/Markdown/Blocks must be set.
 type richMessage struct {
-	HTML     string `json:"html,omitempty"`
-	Markdown string `json:"markdown,omitempty"`
-	Blocks   any    `json:"blocks,omitempty"`
-	Media    any    `json:"media,omitempty"`
-	IsRTL    bool   `json:"is_rtl,omitempty"`
+	HTML                string `json:"html,omitempty"`
+	Markdown            string `json:"markdown,omitempty"`
+	Blocks              any    `json:"blocks,omitempty"`
+	Media               any    `json:"media,omitempty"`
+	IsRTL               bool   `json:"is_rtl,omitempty"`
+	SkipEntityDetection bool   `json:"skip_entity_detection,omitempty"`
 }
 
 // draftRequest mirrors sendRichMessageDraft parameters.
 type draftRequest struct {
-	ChatID      int64       `json:"chat_id"`
-	DraftID     int         `json:"draft_id"`
-	RichMessage richMessage `json:"rich_message"`
-	CanStop     bool        `json:"can_stop,omitempty"`
-	KeepOnStop  bool        `json:"keep_on_stop,omitempty"`
+	ChatID          int64       `json:"chat_id"`
+	DraftID         int         `json:"draft_id"`
+	MessageThreadID int64       `json:"message_thread_id,omitempty"`
+	RichMessage     richMessage `json:"rich_message"`
+	CanStop         bool        `json:"can_stop,omitempty"`
+	KeepOnStop      bool        `json:"keep_on_stop,omitempty"`
 }
 
-// SendRichMessage sends a persistent Telegram Rich Message via raw HTTP (Bot API 10.1+).
+// SendRichMessage sends a persistent Telegram Rich Message (Bot API 10.1+).
 // contentType must be "html", "markdown", or "blocks".
 func (c *Client) SendRichMessage(ctx context.Context, chatID int64, contentType, content string, isRTL bool, disableNotification bool) (int, error) {
-	rm := richMessage{IsRTL: isRTL}
-	switch contentType {
-	case "html":
-		rm.HTML = content
-	case "markdown":
-		rm.Markdown = content
-	case "blocks":
-		rm.Blocks = content
-	default:
-		return 0, fmt.Errorf("invalid contentType %q: must be html, markdown, or blocks", contentType)
+	return c.SendRichMessageOpts(ctx, chatID, contentType, content, isRTL, disableNotification, 0)
+}
+
+// SendRichMessageOpts is the full form with optional message_thread_id.
+func (c *Client) SendRichMessageOpts(ctx context.Context, chatID int64, contentType, content string, isRTL bool, disableNotification bool, messageThreadID int64) (int, error) {
+	rm, err := buildRichMessage(contentType, content, isRTL)
+	if err != nil {
+		return 0, err
+	}
+	if err := rich.ValidateRichMessage(rm.HTML, rm.Markdown, rm.Blocks); err != nil {
+		return 0, err
 	}
 
 	payload := richMessageRequest{
 		ChatID:              chatID,
+		MessageThreadID:     messageThreadID,
 		RichMessage:         rm,
 		DisableNotification: disableNotification,
 	}
@@ -61,41 +70,42 @@ func (c *Client) SendRichMessage(ctx context.Context, chatID int64, contentType,
 // SendRichMessageDraft streams an ephemeral rich message draft (30s lifetime).
 // draftID must be non-zero and stable across incremental updates.
 func (c *Client) SendRichMessageDraft(ctx context.Context, chatID int64, draftID int, contentType, content string, canStop bool, keepOnStop bool) error {
-	rm := richMessage{}
-	switch contentType {
-	case "html":
-		rm.HTML = content
-	case "markdown":
-		rm.Markdown = content
-	case "blocks":
-		rm.Blocks = content
-	default:
-		return fmt.Errorf("invalid contentType %q: must be html, markdown, or blocks", contentType)
+	return c.SendRichMessageDraftOpts(ctx, chatID, draftID, contentType, content, canStop, keepOnStop, 0)
+}
+
+// SendRichMessageDraftOpts includes optional message_thread_id.
+func (c *Client) SendRichMessageDraftOpts(ctx context.Context, chatID int64, draftID int, contentType, content string, canStop bool, keepOnStop bool, messageThreadID int64) error {
+	if draftID == 0 {
+		return fmt.Errorf("draft_id must be non-zero")
+	}
+	rm, err := buildRichMessage(contentType, content, false)
+	if err != nil {
+		return err
+	}
+	if rich.CharLen(content) > rich.MaxCharacters {
+		return fmt.Errorf("draft content exceeds hard limit of %d characters", rich.MaxCharacters)
 	}
 
 	payload := draftRequest{
-		ChatID:      chatID,
-		DraftID:     draftID,
-		RichMessage: rm,
-		CanStop:     canStop,
-		KeepOnStop:  keepOnStop,
+		ChatID:          chatID,
+		DraftID:         draftID,
+		MessageThreadID: messageThreadID,
+		RichMessage:     rm,
+		CanStop:         canStop,
+		KeepOnStop:      keepOnStop,
 	}
-	_, err := c.postRich(ctx, "sendRichMessageDraft", payload)
+	_, err = c.postRich(ctx, "sendRichMessageDraft", payload)
 	return err
 }
 
-// EditRichMessage updates an existing message to a Rich Message.
+// EditRichMessage updates an existing message to a Rich Message via editMessageText.
 func (c *Client) EditRichMessage(ctx context.Context, chatID int64, messageID int, contentType, content string, isRTL bool) error {
-	rm := richMessage{IsRTL: isRTL}
-	switch contentType {
-	case "html":
-		rm.HTML = content
-	case "markdown":
-		rm.Markdown = content
-	case "blocks":
-		rm.Blocks = content
-	default:
-		return fmt.Errorf("invalid contentType %q: must be html, markdown, or blocks", contentType)
+	rm, err := buildRichMessage(contentType, content, isRTL)
+	if err != nil {
+		return err
+	}
+	if err := rich.ValidateRichMessage(rm.HTML, rm.Markdown, rm.Blocks); err != nil {
+		return err
 	}
 
 	payload := richMessageRequest{
@@ -103,11 +113,32 @@ func (c *Client) EditRichMessage(ctx context.Context, chatID int64, messageID in
 		MessageID:   messageID,
 		RichMessage: rm,
 	}
-	_, err := c.postRich(ctx, "editMessageText", payload)
+	_, err = c.postRich(ctx, "editMessageText", payload)
 	return err
 }
 
-// postRich POSTs a JSON payload to the Telegram Bot API rich message endpoint.
+func buildRichMessage(contentType, content string, isRTL bool) (richMessage, error) {
+	rm := richMessage{IsRTL: isRTL}
+	switch contentType {
+	case "html":
+		rm.HTML = rich.EnsureSafeLength(content)
+	case "markdown":
+		rm.Markdown = content
+		if rich.CharLen(content) > rich.MaxCharacters {
+			return rm, fmt.Errorf("markdown content exceeds hard limit of %d characters", rich.MaxCharacters)
+		}
+	case "blocks":
+		if content == "" {
+			return rm, fmt.Errorf("blocks content is empty")
+		}
+		rm.Blocks = json.RawMessage(content)
+	default:
+		return rm, fmt.Errorf("invalid contentType %q: must be html, markdown, or blocks", contentType)
+	}
+	return rm, nil
+}
+
+// postRich POSTs a JSON payload to the Telegram Bot API.
 func (c *Client) postRich(ctx context.Context, method string, payload any) (int, error) {
 	url := fmt.Sprintf("https://api.telegram.org/bot%s/%s", c.token, method)
 
@@ -128,47 +159,48 @@ func (c *Client) postRich(ctx context.Context, method string, payload any) (int,
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("rich message API HTTP %d", resp.StatusCode)
-	}
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 
 	var result struct {
-		OK     bool `json:"ok"`
-		Result struct {
-			MessageID int `json:"message_id"`
-		} `json:"result"`
+		OK          bool   `json:"ok"`
+		Result      any    `json:"result"`
 		ErrorCode   int    `json:"error_code"`
 		Description string `json:"description"`
+		Parameters  any    `json:"parameters"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(raw, &result); err != nil {
+		if resp.StatusCode != http.StatusOK {
+			return 0, fmt.Errorf("rich message API HTTP %d: %s", resp.StatusCode, truncate(string(raw), 200))
+		}
 		return 0, fmt.Errorf("decode rich message response: %w", err)
 	}
 	if !result.OK {
 		return 0, fmt.Errorf("rich message API error %d: %s", result.ErrorCode, result.Description)
 	}
-	return result.Result.MessageID, nil
+
+	msgID := 0
+	if m, ok := result.Result.(map[string]any); ok {
+		switch v := m["message_id"].(type) {
+		case float64:
+			msgID = int(v)
+		case int:
+			msgID = v
+		}
+	}
+	return msgID, nil
 }
 
-// ensureCompileTimeInterface checks that Client satisfies the rich message interface.
-// It is a compile-time assertion only.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
+}
+
 var _ interface {
 	SendRichMessage(context.Context, int64, string, string, bool, bool) (int, error)
 	SendRichMessageDraft(context.Context, int64, int, string, string, bool, bool) error
 	EditRichMessage(context.Context, int64, int, string, string, bool) error
 } = (*Client)(nil)
 
-// telegramRichAPIError is returned when Telegram rejects a rich message payload.
-type telegramRichAPIError struct {
-	Code        int
-	Description string
-	Parameters  map[string]any
-}
-
-func (e *telegramRichAPIError) Error() string {
-	if e.Parameters != nil {
-		if retryAfter, ok := e.Parameters["retry_after"]; ok {
-			return fmt.Sprintf("telegram rich API error %d: %s (retry_after=%v)", e.Code, e.Description, retryAfter)
-		}
-	}
-	return fmt.Sprintf("telegram rich API error %d: %s", e.Code, e.Description)
-}
+var _ = strings.Contains

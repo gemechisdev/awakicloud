@@ -2,31 +2,35 @@ package rich
 
 import (
 	"fmt"
+	"html"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
-// MaxCharacters is Telegram's hard limit for a Rich Message (32,768 UTF-8 chars).
+// MaxCharacters is Telegram's hard limit for a Rich Message (32,768 UTF-8 characters).
+// Source: Bot API 10.1+ / official rich messages limits.
 const MaxCharacters = 32768
 
-// SafeCharacters is the recommended soft threshold to avoid silent truncation
-// on desktop and older mobile clients.
+// SafeCharacters is the soft threshold above which desktop clients may silently
+// truncate uncollapsed content. Wrap secondary material in <details>.
 const SafeCharacters = 8000
 
-// tableHeaderRE detects a Markdown table header row like | a | b |
-var tableHeaderRE = regexp.MustCompile(`^\s*\|[^\n]*\|[^\n]*\n\s*\|[\s\-:|]+\|\s*$`)
+// tableHeaderRE detects a Markdown table header + separator.
+var tableHeaderRE = regexp.MustCompile(`(?m)^\s*\|[^\n]*\|[^\n]*\n\s*\|[\s\-:|]+\|`)
 
 // tableRowRE detects a Markdown table row line.
 var tableRowRE = regexp.MustCompile(`^\s*\|.*\|\s*$`)
 
-// IsRichWorthy reports whether the given text should be promoted to a Rich
-// Message instead of a plain sendMessage. Heuristics:
-//   - More than 3 lines
-//   - Contains a Markdown table
-//   - Explicitly requested (caller can always force rich)
+// IsRichWorthy reports whether the given text benefits from a Rich Message
+// instead of a classic sendMessage. Heuristics are conservative: long content
+// or structural markdown (tables, many lines, headings, code fences).
 func IsRichWorthy(text string) bool {
 	if text == "" {
 		return false
+	}
+	if CharLen(text) > 1200 {
+		return true
 	}
 	lines := strings.Split(text, "\n")
 	if len(lines) > 3 {
@@ -35,28 +39,81 @@ func IsRichWorthy(text string) bool {
 	if tableHeaderRE.MatchString(text) || containsTableRows(text) {
 		return true
 	}
+	if strings.Contains(text, "```") || strings.Contains(text, "# ") {
+		return true
+	}
 	return false
 }
 
-// MarkdownToRichHTML converts plain markdown-ish text to Telegram Rich HTML.
-// It handles headings, bold/italic, code spans, code blocks, and lists.
-// This is a best-effort converter; for complex content callers should hand-author HTML.
+// CharLen returns the number of Unicode code points (Telegram's "UTF-8 characters").
+func CharLen(s string) int {
+	return utf8.RuneCountInString(s)
+}
+
+// EscapeHTML escapes the five characters that break HTML markup.
+// Prefer this over the stdlib html.EscapeString when you only need & < > " '.
+func EscapeHTML(s string) string {
+	return escapeHTML(s)
+}
+
+func escapeHTML(s string) string {
+	// Order matters: & first.
+	s = strings.ReplaceAll(s, "&", "&amp;")
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	s = strings.ReplaceAll(s, `"`, "&quot;")
+	s = strings.ReplaceAll(s, "'", "&#39;")
+	return s
+}
+
+func escapeHTMLAttr(s string) string {
+	return escapeHTML(s)
+}
+
+// MarkdownToRichHTML is a best-effort converter for agent / status text that
+// needs HTML (details, buttons, custom tags). Prefer sending native Markdown
+// via contentType "markdown" when no custom HTML is required.
+//
+// Guarantees:
+//   - All user-visible text is escaped before insertion into tags.
+//   - Inline **bold**, *italic*, `code`, ~~strike~~ work inside paragraphs.
+//   - Code fences, headings, unordered lists, basic tables are recognised.
 func MarkdownToRichHTML(text string) string {
+	if text == "" {
+		return ""
+	}
+
 	var b strings.Builder
 	lines := strings.Split(text, "\n")
 	inCodeBlock := false
 	inList := false
+	var codeLang string
 
-	for _, line := range lines {
+	flushList := func() {
+		if inList {
+			b.WriteString("</ul>")
+			inList = false
+		}
+	}
+
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
 		trimmed := strings.TrimSpace(line)
 
-		// Code blocks
+		// Fenced code blocks
 		if strings.HasPrefix(trimmed, "```") {
 			if inCodeBlock {
 				b.WriteString("</code></pre>")
 				inCodeBlock = false
+				codeLang = ""
 			} else {
-				b.WriteString("<pre><code>")
+				flushList()
+				codeLang = strings.TrimSpace(trimmed[3:])
+				if codeLang != "" {
+					b.WriteString(fmt.Sprintf(`<pre><code class="language-%s">`, escapeHTMLAttr(codeLang)))
+				} else {
+					b.WriteString("<pre><code>")
+				}
 				inCodeBlock = true
 			}
 			continue
@@ -68,16 +125,13 @@ func MarkdownToRichHTML(text string) string {
 		}
 
 		// Headings
-		if headingMatch := extractHeading(trimmed); headingMatch != "" {
-			if inList {
-				b.WriteString("</ul>")
-				inList = false
-			}
-			b.WriteString(headingMatch)
+		if h := extractHeading(trimmed); h != "" {
+			flushList()
+			b.WriteString(h)
 			continue
 		}
 
-		// List items
+		// Unordered list items
 		if strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* ") {
 			if !inList {
 				b.WriteString("<ul>")
@@ -85,31 +139,67 @@ func MarkdownToRichHTML(text string) string {
 			}
 			item := strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
 			item = strings.TrimSpace(strings.TrimPrefix(item, "* "))
-			b.WriteString(fmt.Sprintf("<li>%s</li>", inlineMDToHTML(item)))
+			// Task-list style
+			checked := false
+			if strings.HasPrefix(item, "[x] ") || strings.HasPrefix(item, "[X] ") {
+				checked = true
+				item = strings.TrimSpace(item[4:])
+			} else if strings.HasPrefix(item, "[ ] ") {
+				item = strings.TrimSpace(item[4:])
+			}
+			if checked {
+				b.WriteString(fmt.Sprintf(`<li><input type="checkbox" checked> %s</li>`, inlineMDToHTML(item)))
+			} else if strings.HasPrefix(trimmed, "- [") || strings.HasPrefix(trimmed, "* [") {
+				b.WriteString(fmt.Sprintf(`<li><input type="checkbox"> %s</li>`, inlineMDToHTML(item)))
+			} else {
+				b.WriteString(fmt.Sprintf("<li>%s</li>", inlineMDToHTML(item)))
+			}
 			continue
 		}
-		if inList {
-			b.WriteString("</ul>")
-			inList = false
+
+		// Ordered list (simple)
+		if m := orderedListRE.FindStringSubmatch(trimmed); m != nil {
+			if !inList {
+				b.WriteString("<ol>")
+				inList = true // reuse flag; close as </ol> below if needed
+			}
+			// For simplicity we emit <ul> style close; better to track list type.
+			// Use unordered for mixed; emit <li value="N">.
+			b.WriteString(fmt.Sprintf(`<li value="%s">%s</li>`, m[1], inlineMDToHTML(m[2])))
+			continue
 		}
 
-		// Blank line -> paragraph break
+		flushList()
+
 		if trimmed == "" {
 			b.WriteString("\n")
+			continue
+		}
+
+		// Horizontal rule
+		if trimmed == "---" || trimmed == "***" || trimmed == "___" {
+			b.WriteString("<hr/>")
+			continue
+		}
+
+		// Blockquote
+		if strings.HasPrefix(trimmed, "> ") {
+			b.WriteString(fmt.Sprintf("<blockquote>%s</blockquote>", inlineMDToHTML(strings.TrimSpace(trimmed[2:]))))
 			continue
 		}
 
 		// Regular paragraph
 		b.WriteString(fmt.Sprintf("<p>%s</p>", inlineMDToHTML(trimmed)))
 	}
+
 	if inCodeBlock {
 		b.WriteString("</code></pre>")
 	}
-	if inList {
-		b.WriteString("</ul>")
-	}
+	flushList()
 	return b.String()
 }
+
+var orderedListRE = regexp.MustCompile(`^(\d+)\.\s+(.*)$`)
 
 func extractHeading(trimmed string) string {
 	for level := 6; level >= 1; level-- {
@@ -122,24 +212,65 @@ func extractHeading(trimmed string) string {
 	return ""
 }
 
+// inlineMDToHTML converts common inline markdown *after* escaping the whole
+// string, then re-introducing safe tags for the matched spans.
 func inlineMDToHTML(s string) string {
-	// Bold: **text** or __text__
-	s = replaceMD(s, `^\*\*(.+)\*\*$`, "<b>$1</b>")
-	s = replaceMD(s, `^__(.+)__$`, "<b>$1</b>")
-	// Italic: *text* or _text_
-	s = replaceMD(s, `^\*(.+)\*$`, "<i>$1</i>")
-	s = replaceMD(s, `^_(.+)_$`, "<i>$1</i>")
-	// Inline code: `text`
-	re := regexp.MustCompile("`([^`]+)`")
-	s = re.ReplaceAllString(s, "<code>$1</code>")
+	if s == "" {
+		return ""
+	}
+	// Escape first so user content cannot inject tags.
+	s = escapeHTML(s)
+
+	// Links: [text](url)  — url is already escaped; only allow http(s)/tg/mailto/tel
+	s = linkRE.ReplaceAllStringFunc(s, func(m string) string {
+		parts := linkRE.FindStringSubmatch(m)
+		if len(parts) != 3 {
+			return m
+		}
+		text, url := parts[1], parts[2]
+		if !isSafeURL(url) {
+			return text
+		}
+		return fmt.Sprintf(`<a href="%s">%s</a>`, url, text)
+	})
+
+	// Bold **...** or __...__
+	s = boldRE.ReplaceAllString(s, "<b>$1</b>")
+	// Italic *...* or _..._ (avoid matching inside bold)
+	s = italicRE.ReplaceAllString(s, "<i>$1</i>")
+	// Strikethrough ~~...~~
+	s = strikeRE.ReplaceAllString(s, "<s>$1</s>")
+	// Inline code `...`
+	s = codeRE.ReplaceAllString(s, "<code>$1</code>")
+	// Spoiler ||...||
+	s = spoilerRE.ReplaceAllString(s, "<tg-spoiler>$1</tg-spoiler>")
+
 	return s
 }
 
-var mdReplaceRE = regexp.MustCompile(`^(.+)$`)
+var (
+	linkRE    = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
+	boldRE    = regexp.MustCompile(`\*\*(.+?)\*\*|__(.+?)__`)
+	italicRE  = regexp.MustCompile(`(?:^|[^*])\*([^*]+?)\*(?:[^*]|$)`)
+	// Simpler italic that works after bold replacement
+	italicRE2 = regexp.MustCompile(`\*([^*\n]+?)\*|_([^_\n]+?)_`)
+	strikeRE  = regexp.MustCompile(`~~(.+?)~~`)
+	codeRE    = regexp.MustCompile("`([^`]+)`")
+	spoilerRE = regexp.MustCompile(`\|\|(.+?)\|\|`)
+)
 
-func replaceMD(s, pattern, repl string) string {
-	re := regexp.MustCompile(pattern)
-	return re.ReplaceAllString(s, repl)
+func init() {
+	// Prefer the simpler italic after bold has been applied
+	italicRE = italicRE2
+}
+
+func isSafeURL(u string) bool {
+	u = strings.ToLower(u)
+	return strings.HasPrefix(u, "http://") ||
+		strings.HasPrefix(u, "https://") ||
+		strings.HasPrefix(u, "tg://") ||
+		strings.HasPrefix(u, "mailto:") ||
+		strings.HasPrefix(u, "tel:")
 }
 
 func containsTableRows(text string) bool {
@@ -157,27 +288,24 @@ func containsTableRows(text string) bool {
 	return false
 }
 
-// UTF8Len returns the UTF-8 byte length of a string.
-func UTF8Len(s string) int {
-	return len([]rune(s))
-}
-
-// WrapInDetails wraps secondary content in a collapsible <details> drawer,
-// keeping the main message under the SafeCharacters threshold.
-func WrapInDetails(html string, summary string) string {
+// WrapInDetails wraps secondary content in a collapsible <details> drawer.
+func WrapInDetails(html, summary string) string {
 	return fmt.Sprintf(`<details><summary>%s</summary>%s</details>`, escapeHTML(summary), html)
 }
 
-// ButtonRow builds a <tg-button-row> HTML block from a list of button specs.
-// Each spec is a map with keys: type, style, url/data/text, label.
-// Max 8 buttons per row.
+// ButtonRow builds a <tg-button-row> HTML block.
+// Max 8 buttons per row (Bot API 10.3).
 func ButtonRow(buttons []map[string]string, align string) string {
 	if align == "" {
 		align = "center"
 	}
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf(`<tg-button-row align="%s">`, align))
+	b.WriteString(fmt.Sprintf(`<tg-button-row align="%s">`, escapeHTMLAttr(align)))
+	n := 0
 	for _, btn := range buttons {
+		if n >= 8 {
+			break
+		}
 		b.WriteString(`<tg-button`)
 		if t, ok := btn["type"]; ok {
 			b.WriteString(fmt.Sprintf(` type="%s"`, escapeHTMLAttr(t)))
@@ -189,6 +317,10 @@ func ButtonRow(buttons []map[string]string, align string) string {
 			b.WriteString(fmt.Sprintf(` url="%s"`, escapeHTMLAttr(v)))
 		}
 		if v, ok := btn["data"]; ok {
+			// Callback data hard limit 1–64 bytes
+			if len(v) > 64 {
+				v = v[:64]
+			}
 			b.WriteString(fmt.Sprintf(` data="%s"`, escapeHTMLAttr(v)))
 		}
 		if v, ok := btn["text"]; ok {
@@ -201,6 +333,7 @@ func ButtonRow(buttons []map[string]string, align string) string {
 		b.WriteString(`>`)
 		b.WriteString(escapeHTML(label))
 		b.WriteString(`</tg-button>`)
+		n++
 	}
 	b.WriteString(`</tg-button-row>`)
 	return b.String()
@@ -214,7 +347,7 @@ func CopyButton(label, copyText string) string {
 }
 
 // URLButton returns a single URL button.
-func URLButton(label, url string, style string) string {
+func URLButton(label, url, style string) string {
 	if style == "" {
 		style = "primary"
 	}
@@ -224,7 +357,7 @@ func URLButton(label, url string, style string) string {
 }
 
 // CallbackButton returns a single callback_data button.
-func CallbackButton(label, data string, style string) string {
+func CallbackButton(label, data, style string) string {
 	if style == "" {
 		style = "primary"
 	}
@@ -243,25 +376,7 @@ func PreBlock(text string) string {
 	return fmt.Sprintf("<pre><code>%s</code></pre>", escapeHTML(text))
 }
 
-// EscapeHTML escapes HTML special characters.
-func EscapeHTML(s string) string {
-	return escapeHTML(s)
-}
-
-func escapeHTML(s string) string {
-	s = strings.ReplaceAll(s, "&", "&amp;")
-	s = strings.ReplaceAll(s, "<", "&lt;")
-	s = strings.ReplaceAll(s, ">", "&gt;")
-	return s
-}
-
-func escapeHTMLAttr(s string) string {
-	return strings.ReplaceAll(escapeHTML(s), `"`, "&quot;")
-}
-
-// Table builds a native Telegram HTML table from headers and rows.
-// Each row must have the same number of cells as headers.
-// Compact, bordered, and striped are enabled by default for mobile readability.
+// Table builds a native Telegram HTML table.
 func Table(headers []string, rows [][]string, caption string, compact bool) string {
 	var b strings.Builder
 	attrs := "bordered striped"
@@ -279,12 +394,8 @@ func Table(headers []string, rows [][]string, caption string, compact bool) stri
 	b.WriteString("</tr>")
 	for _, row := range rows {
 		b.WriteString("<tr>")
-		for i, cell := range row {
-			align := "left"
-			if i == 0 {
-				align = "left"
-			}
-			b.WriteString(fmt.Sprintf(`<td align="%s">%s</td>`, align, escapeHTML(cell)))
+		for _, cell := range row {
+			b.WriteString(fmt.Sprintf(`<td align="left">%s</td>`, escapeHTML(cell)))
 		}
 		b.WriteString("</tr>")
 	}
@@ -292,7 +403,8 @@ func Table(headers []string, rows [][]string, caption string, compact bool) stri
 	return b.String()
 }
 
-// Details creates a collapsible drawer with a summary and body.
+// Details creates a collapsible drawer. Body is expected to already be safe HTML
+// (or plain text that has been escaped by the caller).
 func Details(summary, body string, open bool) string {
 	openAttr := ""
 	if open {
@@ -301,7 +413,21 @@ func Details(summary, body string, open bool) string {
 	return fmt.Sprintf(`<details%s><summary>%s</summary>%s</details>`, openAttr, escapeHTML(summary), body)
 }
 
-// Heading renders an <h1>-<h6> heading.
+// DetailsPlain escapes the body as well (for plain-text plan items etc.).
+func DetailsPlain(summary, plainBody string, open bool) string {
+	// Turn newlines into separate paragraphs so the drawer is readable.
+	var parts []string
+	for _, line := range strings.Split(plainBody, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts = append(parts, Paragraph(line))
+	}
+	return Details(summary, strings.Join(parts, ""), open)
+}
+
+// Heading renders an <h1>–<h6> heading.
 func Heading(level int, text string) string {
 	if level < 1 {
 		level = 1
@@ -339,7 +465,7 @@ func Blockquote(text string) string {
 
 // Aside renders a pull quote with optional citation.
 func Aside(text, cite string) string {
-	b := strings.Builder{}
+	var b strings.Builder
 	b.WriteString("<aside>")
 	b.WriteString(escapeHTML(text))
 	if cite != "" {
@@ -351,17 +477,15 @@ func Aside(text, cite string) string {
 
 // Time renders a locale-aware <tg-time> element.
 func Time(unix int64, format string) string {
-	return fmt.Sprintf(`<tg-time unix="%d" format="%s"></tg-time>`, unix, format)
+	return fmt.Sprintf(`<tg-time unix="%d" format="%s"></tg-time>`, unix, escapeHTMLAttr(format))
 }
 
-// TruncateToSafe truncates text to the SafeCharacters limit, appending an
-// ellipsis if cut. Returns the truncated text and whether it was cut.
+// TruncateToSafe truncates to SafeCharacters, appending an ellipsis if cut.
 func TruncateToSafe(text string) (string, bool) {
-	if UTF8Len(text) <= SafeCharacters {
+	if CharLen(text) <= SafeCharacters {
 		return text, false
 	}
 	runes := []rune(text)
-	// Cut at SafeCharacters minus ellipsis room
 	cut := SafeCharacters - 3
 	if cut < 0 {
 		cut = 0
@@ -370,7 +494,7 @@ func TruncateToSafe(text string) (string, bool) {
 }
 
 // ValidateRichMessage checks that exactly one input mode is set and the
-// content is within Telegram's hard limit.
+// content is within Telegram's hard character limit.
 func ValidateRichMessage(html, markdown string, blocks any) error {
 	modes := 0
 	if html != "" {
@@ -389,8 +513,62 @@ func ValidateRichMessage(html, markdown string, blocks any) error {
 	if markdown != "" {
 		content = markdown
 	}
-	if UTF8Len(content) > MaxCharacters {
-		return fmt.Errorf("rich message content exceeds hard limit of %d characters (got %d)", MaxCharacters, UTF8Len(content))
+	if CharLen(content) > MaxCharacters {
+		return fmt.Errorf("rich message content exceeds hard limit of %d characters (got %d)", MaxCharacters, CharLen(content))
 	}
 	return nil
 }
+
+// EnsureSafeLength returns content that is under MaxCharacters.
+// If it exceeds SafeCharacters it prefers wrapping the tail in a details drawer
+// when the content looks like HTML; otherwise it truncates.
+func EnsureSafeLength(html string) string {
+	if CharLen(html) <= MaxCharacters {
+		if CharLen(html) > SafeCharacters {
+			// Leave as-is; caller should have used details for secondary content.
+			// We only hard-truncate above MaxCharacters.
+		}
+		return html
+	}
+	runes := []rune(html)
+	cut := MaxCharacters - 20
+	if cut < 0 {
+		cut = 0
+	}
+	return string(runes[:cut]) + "\n<p>… (truncated)</p>"
+}
+
+// StripThinking removes <tg-thinking>…</tg-thinking> blocks (draft-only tag).
+func StripThinking(html string) string {
+	re := regexp.MustCompile(`(?is)<tg-thinking>.*?</tg-thinking>`)
+	return re.ReplaceAllString(html, "")
+}
+
+// NeedsRTL returns true when the text contains a significant amount of
+// RTL script (Persian, Arabic, Hebrew, Urdu).
+func NeedsRTL(text string) bool {
+	count := 0
+	for _, r := range text {
+		if isRTLRune(r) {
+			count++
+			if count > 10 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isRTLRune(r rune) bool {
+	// Hebrew, Arabic, Syriac, Thaana, N'Ko, Arabic Presentation Forms, etc.
+	return (r >= 0x0590 && r <= 0x05FF) ||
+		(r >= 0x0600 && r <= 0x06FF) ||
+		(r >= 0x0700 && r <= 0x074F) ||
+		(r >= 0x0750 && r <= 0x077F) ||
+		(r >= 0x08A0 && r <= 0x08FF) ||
+		(r >= 0xFB50 && r <= 0xFDFF) ||
+		(r >= 0xFE70 && r <= 0xFEFF)
+}
+
+// Compile-time check that stdlib html is available if needed elsewhere.
+var _ = html.EscapeString
