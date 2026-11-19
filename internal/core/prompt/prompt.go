@@ -83,7 +83,7 @@ func buildParallelToolSection() string {
 
 TOOLS THAT RUN IN PARALLEL (read-only, safe): read_file, file_info, list_files, directory_tree, glob_files, read_files, grep, memory_list, memory_read, memory_search, skill_list, skill_read, skill_files, web_search, recall.
 
-TOOLS THAT RUN SEQUENTIALLY (one at a time): write_file, edit_file, apply_patch, delete_file, move_file, copy_file, make_dir, bash, git_*, task_plan, schedule_*, bg_task_*, ask_user, send_message, report_status, memory_write, memory_append, memory_delete, skill_run, skill_create, skill_update, skill_delete, MCP tools, deploy tools.
+TOOLS THAT RUN SEQUENTIALLY (one at a time): write_file, edit_file, apply_patch, delete_file, move_file, copy_file, make_dir, bash, git_*, task_plan, schedule_*, bg_task_*, ask_user, send_message, report_status, memory_write, memory_append, memory_delete, skill_run, skill_install, skill_create, skill_update, skill_delete, MCP tools, deploy tools.
 
 BEST PRACTICES:
 - If you need to read 2+ files, search grep + read a file, or list a dir + grep, issue them ALL in ONE message — do not wait for one to finish before calling the next.
@@ -173,7 +173,9 @@ tricky API integration, debugging session, deployment procedure), consider
 creating a skill with skill_create. A skill captures HOW to do something —
 commands, API calls, gotchas — so you do it better and faster next time.
 Skills are NOT for facts (use memory for that). Skills are for procedures.
-Owners can also install full packages (zip with SKILL.md + references/scripts) via /skills.`
+Owners can also install full packages (zip with SKILL.md + references/scripts) via /skills.
+To add skills from a repo or URL (GitHub, skills.sh, smithery, .zip), call skill_install(source) — it keeps
+references/scripts (L2/L3) and registers the skill. Never copy skill files into the skills directory by hand.`
 }
 
 func buildSystemAccessSection() string {

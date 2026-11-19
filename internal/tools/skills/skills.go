@@ -173,7 +173,7 @@ func SkillTools(st store.Store) []types.Tool {
 			Name:  "skill_create",
 			Label: "Creating skill",
 			Description: "Create a Level-1 skill (SKILL.md) for a reusable procedure you want to remember. " +
-				"For full packages (references/scripts), the owner should install a skill zip via /skills.",
+				"For full packages (references/scripts) or skills from a repo/URL, use skill_install instead.",
 			Parameters: map[string]any{
 				"name":        map[string]any{"type": "string", "description": "lowercase-hyphen name"},
 				"description": map[string]any{"type": "string", "description": "One-line when to use this skill"},
@@ -198,6 +198,56 @@ func SkillTools(st store.Store) []types.Tool {
 					return types.Result{Output: err.Error(), IsErr: true}
 				}
 				return types.Result{Output: "skill created: " + path}
+			},
+		},
+		{
+			Name:  "skill_install",
+			Label: "Installing skill",
+			Description: "Install Agent Skill package(s) from a source into the skill library, including references/, assets/ and scripts/ " +
+				"(L2/L3). Sources: a local path (path/to/skill dir, folder of skills, .zip or .md), owner/repo, owner/repo@skill, owner/repo/path, https://github.com/owner/repo[/tree/ref/path], " +
+				"https://skills.sh/..., https://smithery.ai/skills/..., a site with /.well-known/skills, or a direct .zip/.md URL. " +
+				"ALWAYS use this to add skills from a repo/URL. NEVER copy files into the skills directory by hand (bash/write_file): " +
+				"that bypasses registration and DB sync, so the skill is not persisted and L2/L3 parts are not detected.",
+			Parameters: map[string]any{
+				"source": map[string]any{"type": "string", "description": "Local path, repo, URL or owner/repo@skill"},
+				"skill":  map[string]any{"type": "string", "description": "Optional: install only this skill from a multi-skill source"},
+				"all":    map[string]any{"type": "boolean", "description": "Allow installing more than 25 skills from one source"},
+			},
+			Required: []string{"source"},
+			Handler: func(ctx context.Context, input map[string]any) types.Result {
+				source, err := types.GetString(input, "source")
+				if err != nil {
+					return types.ErrResult(err)
+				}
+				opts := skillpkg.InstallOptions{}
+				if v, ok := input["skill"].(string); ok {
+					opts.Skill = strings.TrimSpace(v)
+				}
+				if v, ok := input["all"].(bool); ok {
+					opts.All = v
+				}
+				var list []store.Skill
+				if lp, ok := skillpkg.ResolveLocalSource(source); ok {
+					list, err = mgr.InstallLocal(lp, opts)
+				} else {
+					list, err = mgr.InstallFromSource(ctx, source, opts)
+				}
+				if err != nil {
+					return types.Result{Output: "install failed: " + err.Error(), IsErr: true}
+				}
+				if len(list) == 0 {
+					return types.Result{Output: "install failed: no skills found in " + source, IsErr: true}
+				}
+				var b strings.Builder
+				fmt.Fprintf(&b, "installed %d skill(s) from %s:\n", len(list), source)
+				for _, sk := range list {
+					got, ok, _ := mgr.Get(sk.Name)
+					if !ok {
+						return types.Result{Output: "install reported success but skill not registered: " + sk.Name, IsErr: true}
+					}
+					fmt.Fprintf(&b, "- %s [%s]\n", got.Name, got.LevelLabel())
+				}
+				return types.Result{Output: b.String()}
 			},
 		},
 		{

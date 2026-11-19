@@ -104,7 +104,7 @@ var readOnlyDenylist = []string{
 	"bash", "write_file", "edit_file", "apply_patch", "create_file", "delete_file", "copy_file", "move_file", "make_dir",
 	"git_stage", "git_commit", "git_checkout", "git_restore", "git_stash", "git_reset", "git_branch_update", "git_sync", "git_clone",
 	"memory_write", "memory_append", "memory_delete",
-	"skill_create", "skill_update", "skill_delete",
+	"skill_create", "skill_update", "skill_delete", "skill_install",
 	"soul_write", "user_write",
 	"delegate",
 }
