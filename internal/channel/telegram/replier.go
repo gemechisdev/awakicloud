@@ -9,8 +9,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/gemechischala/awaki/internal/channel/telegram/format"
-	"github.com/gemechischala/awaki/internal/channel/telegram/rich"
 	"github.com/gemechischala/awaki/internal/transport"
 	"github.com/gemechischala/awaki/internal/utils"
 	"github.com/go-telegram/bot/models"
