@@ -27,12 +27,15 @@ type replier struct {
 }
 
 func (r *replier) SendText(ctx context.Context, text string) error {
-	if rich.IsRichWorthy(text) {
-		return r.SendRichMessage(ctx, "html", rich.MarkdownToRichHTML(text), false, false)
+	// Always use Rich HTML for agent output — supports everything MarkdownV2
+	// does plus tables, drawers, styled buttons, and 8x the character limit.
+	if len(strings.TrimSpace(text)) > 0 {
+		html := rich.MarkdownToRichHTML(text)
+		return r.SendRichMessage(ctx, "html", html, false, false)
 	}
 
 	if r.replyToID != 0 && r.firstReply {
-		r.ch.sendLongThreaded(ctx, r.chatID, r.replyToID, text)
+		r.ch.sendLongThreaded(ctx, r.chatID, text)
 		r.firstReply = false
 		return nil
 	}
