@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/gemechischala/awaki/internal/channel/telegram/format"
 	"github.com/gemechischala/awaki/internal/channel/telegram/rich"
 	"github.com/gemechischala/awaki/internal/transport"
 	"github.com/gemechischala/awaki/internal/utils"
@@ -36,7 +37,6 @@ func (r *replier) SendText(ctx context.Context, text string) error {
 
 	// Prefer native Markdown for agent output: Telegram's rich Markdown
 	// already understands headings, tables, lists, code fences, etc.
-	// Fall back to classic HTML/plain paths on any failure so replies are never lost.
 	id, err := r.ch.client.SendRichMessage(ctx, r.chatID, "markdown", text, isRTL, false)
 	if err == nil {
 		_ = id
@@ -45,9 +45,13 @@ func (r *replier) SendText(ctx context.Context, text string) error {
 		}
 		return nil
 	}
-	log.Warn().Err(err).Msg("telegram: rich markdown send failed, trying HTML converter")
+	log.Warn().Err(err).Msg("telegram: rich markdown send failed, trying rich HTML")
 
-	html := rich.MarkdownToRichHTML(text)
+	// Goldmark → rich HTML with native <table> (not classic bullets / raw pipes).
+	html := format.FormatRichHTML(text)
+	if html == "" {
+		html = rich.MarkdownToRichHTML(text)
+	}
 	html = rich.EnsureSafeLength(html)
 	id, err = r.ch.client.SendRichMessage(ctx, r.chatID, "html", html, isRTL, false)
 	if err == nil {

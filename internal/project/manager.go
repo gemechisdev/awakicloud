@@ -443,6 +443,17 @@ func (m *Manager) SyncIfTreeChanged(ctx context.Context, slug string, lastEditor
 		meta = Meta{Name: slug, Slug: slug}
 	}
 	dir := m.ProjectDir(slug)
+	// Ephemeral disks: project trees are restored lazily on first use.
+	// Auto-sync must not treat "not on disk yet" as a failure — there is
+	// nothing local to upload until EnsureSessionWorkspace / ActivateProject
+	// has materialized the archive.
+	if st, statErr := os.Stat(dir); statErr != nil || !st.IsDir() {
+		if statErr != nil && !os.IsNotExist(statErr) {
+			return false, meta, statErr
+		}
+		log.Debug().Str("slug", slug).Msg("project auto-sync skipped (local tree not restored yet)")
+		return false, meta, nil
+	}
 	hash, err := ContentHash(dir)
 	if err != nil {
 		return false, meta, err

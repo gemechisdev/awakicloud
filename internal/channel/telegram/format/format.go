@@ -45,7 +45,8 @@ type htmlWriter struct {
 	limit     int
 	chunks    []FormattedChunk
 	tagStack  []tagEntry
-	listStack []listState
+	listStack   []listState
+	nativeTable bool // emit <table> for rich messages instead of bullets
 }
 
 func (w *htmlWriter) writeText(s string) {
@@ -270,7 +271,11 @@ func (w *htmlWriter) walkNode(n ast.Node, source []byte) {
 		w.closeTag()
 
 	case *east.Table:
-		w.renderTableAsBullets(n, source)
+		if w.nativeTable {
+			w.renderNativeTable(n, source)
+		} else {
+			w.renderTableAsBullets(n, source)
+		}
 
 	default:
 		w.walkChildren(n, source)
@@ -342,6 +347,76 @@ func (w *htmlWriter) renderTableAsBullets(table ast.Node, source []byte) {
 			w.writeText("\n")
 		}
 	}
+}
+
+
+// FormatRichHTML converts markdown into a single Telegram Rich HTML document.
+// Unlike FormatHTMLChunks (classic HTML, tables → bullets), this emits native
+// <table bordered striped> blocks suitable for sendRichMessage html mode.
+func FormatRichHTML(s string) string {
+	if s == "" {
+		return ""
+	}
+	source := []byte(s)
+	doc := mdParser.Parser().Parse(mdtext.NewReader(source))
+	w := &htmlWriter{limit: 0, nativeTable: true}
+	w.walkNode(doc, source)
+	result := w.finish()
+	if len(result) == 0 {
+		return escapeHTML(s)
+	}
+	var b strings.Builder
+	for i, ch := range result {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(ch.HTML)
+	}
+	return b.String()
+}
+
+func (w *htmlWriter) renderNativeTable(table ast.Node, source []byte) {
+	var headers []string
+	var rows [][]string
+	for child := table.FirstChild(); child != nil; child = child.NextSibling() {
+		switch child.(type) {
+		case *east.TableHeader:
+			for cell := child.FirstChild(); cell != nil; cell = cell.NextSibling() {
+				headers = append(headers, extractCellText(cell, source))
+			}
+		case *east.TableRow:
+			var rowCells []string
+			for cell := child.FirstChild(); cell != nil; cell = cell.NextSibling() {
+				rowCells = append(rowCells, extractCellText(cell, source))
+			}
+			rows = append(rows, rowCells)
+		}
+	}
+	if len(headers) == 0 && len(rows) == 0 {
+		return
+	}
+	w.html.WriteString(`<table bordered striped compact>`)
+	if len(headers) > 0 {
+		w.html.WriteString("<tr>")
+		for _, h := range headers {
+			w.html.WriteString("<th align=\"center\">")
+			w.writeText(h)
+			w.html.WriteString("</th>")
+		}
+		w.html.WriteString("</tr>")
+	}
+	for _, row := range rows {
+		w.html.WriteString("<tr>")
+		for _, cell := range row {
+			w.html.WriteString("<td align=\"left\">")
+			w.writeText(cell)
+			w.html.WriteString("</td>")
+		}
+		w.html.WriteString("</tr>")
+	}
+	w.html.WriteString("</table>")
+	w.writeText("\n")
+	w.maybeFlush()
 }
 
 // FormatHTMLChunks converts markdown into Telegram HTML chunks, each within

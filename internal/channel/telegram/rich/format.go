@@ -70,6 +70,67 @@ func escapeHTMLAttr(s string) string {
 	return escapeHTML(s)
 }
 
+
+// parseGFMTable tries to read a GFM table starting at lines[i].
+// Returns the HTML table, the number of lines consumed, and true on success.
+func parseGFMTable(lines []string, i int) (html string, consumed int, ok bool) {
+	if i >= len(lines) {
+		return "", 0, false
+	}
+	headerLine := strings.TrimSpace(lines[i])
+	if !tableRowRE.MatchString(headerLine) {
+		return "", 0, false
+	}
+	if i+1 >= len(lines) {
+		return "", 0, false
+	}
+	sep := strings.TrimSpace(lines[i+1])
+	// Separator: |---|:---:| or similar
+	if !regexp.MustCompile(`^\|?[\s:|-]+\|[\s:|-]*$`).MatchString(sep) && !regexp.MustCompile(`^\s*\|?(\s*:?-+:?\s*\|)+\s*:?-+:?\s*\|?\s*$`).MatchString(sep) {
+		// Still accept classic |---|---|
+		if !strings.Contains(sep, "-") || !strings.Contains(sep, "|") {
+			return "", 0, false
+		}
+	}
+	splitRow := func(line string) []string {
+		line = strings.TrimSpace(line)
+		line = strings.TrimPrefix(line, "|")
+		line = strings.TrimSuffix(line, "|")
+		parts := strings.Split(line, "|")
+		out := make([]string, 0, len(parts))
+		for _, p := range parts {
+			out = append(out, strings.TrimSpace(p))
+		}
+		return out
+	}
+	headers := splitRow(headerLine)
+	if len(headers) == 0 {
+		return "", 0, false
+	}
+	var rows [][]string
+	j := i + 2
+	for j < len(lines) {
+		rowLine := strings.TrimSpace(lines[j])
+		if rowLine == "" || !tableRowRE.MatchString(rowLine) {
+			break
+		}
+		cells := splitRow(rowLine)
+		// Pad / trim to header width
+		for len(cells) < len(headers) {
+			cells = append(cells, "")
+		}
+		if len(cells) > len(headers) {
+			cells = cells[:len(headers)]
+		}
+		rows = append(rows, cells)
+		j++
+	}
+	if len(rows) == 0 {
+		return "", 0, false
+	}
+	return Table(headers, rows, "", true), j - i, true
+}
+
 // MarkdownToRichHTML is a best-effort converter for agent / status text that
 // needs HTML (details, buttons, custom tags). Prefer sending native Markdown
 // via contentType "markdown" when no custom HTML is required.
@@ -121,6 +182,14 @@ func MarkdownToRichHTML(text string) string {
 		if inCodeBlock {
 			b.WriteString(escapeHTML(line))
 			b.WriteString("\n")
+			continue
+		}
+
+		// GFM tables (| a | b | + separator + rows)
+		if html, n, ok := parseGFMTable(lines, i); ok {
+			flushList()
+			b.WriteString(html)
+			i += n - 1 // loop will i++
 			continue
 		}
 

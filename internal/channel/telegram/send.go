@@ -191,20 +191,24 @@ func (c *Channel) SendOrEditKeyboardToOwner(ctx context.Context, editMsgID int, 
 // markdownToTelegramHTML converts Markdown UI copy into Telegram HTML.
 // Uses the goldmark-based FormatHTMLChunks pipeline (same as classic sends).
 func markdownToTelegramHTML(md string) (html string, plain string) {
-	chunks := format.FormatHTMLChunks(md, 0) // 0 = no chunking; full document
-	if len(chunks) == 0 {
-		return rich.EscapeHTML(md), md
+	// Prefer rich HTML so GFM tables become native <table>, not bullet lists.
+	html = format.FormatRichHTML(md)
+	if html == "" {
+		html = rich.EscapeHTML(md)
 	}
-	var hb, pb strings.Builder
+	// Plain text companion for classic fallback (strip tags roughly via chunks).
+	chunks := format.FormatHTMLChunks(md, 0)
+	if len(chunks) == 0 {
+		return html, md
+	}
+	var pb strings.Builder
 	for i, ch := range chunks {
 		if i > 0 {
-			hb.WriteString("\n")
 			pb.WriteString("\n")
 		}
-		hb.WriteString(ch.HTML)
 		pb.WriteString(ch.Text)
 	}
-	return hb.String(), pb.String()
+	return html, pb.String()
 }
 
 // sendRichScreen sends a Rich Message with HTML body and rich <tg-button-row>
