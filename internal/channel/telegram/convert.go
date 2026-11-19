@@ -154,6 +154,14 @@ func (c *Channel) convertAndDispatch(ctx context.Context, msgs []*models.Message
 	// Default replier; commands always use this one (no thread on /help etc.).
 	var reply transport.Replier = c.newReplier(chatID)
 
+	// Slash commands: route to the command handler instead of the AI agent.
+	// Only plain text (no attachments) whose first word is a registered
+	// command qualifies; /cancel, /skip and unknown text fall through.
+	if len(msgs) == 1 && len(attachments) == 0 && isRegisteredCommand(text) {
+		c.handleCommand(ctx, chatID, reply, text)
+		return
+	}
+
 	// Prepend a "Replying to:" block when the user quoted or replied to
 	// something. Only the first message of a media group carries the quote.
 	if quoted := extractQuote(msgs[0]); quoted != "" {
@@ -264,4 +272,23 @@ func externalReplyLabel(e *models.ExternalReplyInfo) string {
 		return fmt.Sprintf("(external reply to %s, message #%d)", chatName, e.MessageID)
 	}
 	return fmt.Sprintf("(external reply to %s)", chatName)
+}
+
+// isRegisteredCommand reports whether text starts with a known bot command,
+// accepting Telegram's /cmd@BotName form.
+func isRegisteredCommand(text string) bool {
+	text = strings.TrimSpace(text)
+	if !strings.HasPrefix(text, "/") {
+		return false
+	}
+	fields := strings.Fields(text)
+	if len(fields) == 0 {
+		return false
+	}
+	name := fields[0]
+	if i := strings.Index(name, "@"); i > 0 {
+		name = name[:i]
+	}
+	_, ok := commandMap[name]
+	return ok
 }
