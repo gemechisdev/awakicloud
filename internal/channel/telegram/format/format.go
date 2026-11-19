@@ -142,17 +142,46 @@ func (w *htmlWriter) walkNode(n ast.Node, source []byte) {
 		w.walkChildren(n, source)
 
 	case *ast.Paragraph:
-		w.walkChildren(n, source)
-		if !w.inList() {
-			w.writeText("\n\n")
-			w.maybeFlush()
+		// Rich HTML collapses whitespace: use real <p> blocks so newlines survive.
+		if w.nativeTable {
+			if w.inList() {
+				w.walkChildren(n, source)
+			} else {
+				w.openTag("<p>", "</p>")
+				w.walkChildren(n, source)
+				w.closeTag()
+				w.plain.WriteString("\n\n")
+				w.maybeFlush()
+			}
+		} else {
+			w.walkChildren(n, source)
+			if !w.inList() {
+				w.writeText("\n\n")
+				w.maybeFlush()
+			}
 		}
 
 	case *ast.Heading:
-		w.openTag("<b>", "</b>")
-		w.walkChildren(n, source)
-		w.closeTag()
-		w.writeText("\n\n")
+		if w.nativeTable {
+			level := node.Level
+			if level < 1 {
+				level = 1
+			}
+			if level > 6 {
+				level = 6
+			}
+			open := fmt.Sprintf("<h%d>", level)
+			close := fmt.Sprintf("</h%d>", level)
+			w.openTag(open, close)
+			w.walkChildren(n, source)
+			w.closeTag()
+			w.plain.WriteString("\n\n")
+		} else {
+			w.openTag("<b>", "</b>")
+			w.walkChildren(n, source)
+			w.closeTag()
+			w.writeText("\n\n")
+		}
 		w.maybeFlush()
 
 	case *ast.Emphasis:
@@ -188,7 +217,11 @@ func (w *htmlWriter) walkNode(n ast.Node, source []byte) {
 		}
 		w.closeTag()
 		if !w.inList() {
-			w.writeText("\n")
+			if w.nativeTable {
+				w.plain.WriteString("\n")
+			} else {
+				w.writeText("\n")
+			}
 			w.maybeFlush()
 		}
 
@@ -196,6 +229,9 @@ func (w *htmlWriter) walkNode(n ast.Node, source []byte) {
 		w.openTag("<blockquote>", "</blockquote>")
 		w.walkChildren(n, source)
 		w.closeTag()
+		if w.nativeTable {
+			w.plain.WriteString("\n")
+		}
 
 	case *ast.Link:
 		href := strings.TrimSpace(string(node.Destination))
@@ -225,36 +261,74 @@ func (w *htmlWriter) walkNode(n ast.Node, source []byte) {
 	case *ast.Text:
 		w.writeText(string(node.Segment.Value(source)))
 		if node.SoftLineBreak() || node.HardLineBreak() {
-			w.writeText("\n")
+			// In rich HTML, literal \n is collapsed — emit <br/> so line
+			// breaks inside a paragraph (e.g. /help command list) survive.
+			if w.nativeTable {
+				w.writeRaw("<br/>")
+				w.plain.WriteString("\n")
+			} else {
+				w.writeText("\n")
+			}
 		}
 
 	case *ast.String:
 		w.writeText(string(node.Value))
 
 	case *ast.List:
-		if w.inList() {
-			w.writeText("\n")
-		}
-		w.listStack = append(w.listStack, listState{
-			ordered: node.IsOrdered(),
-			index:   node.Start - 1,
-		})
-		w.walkChildren(n, source)
-		w.listStack = w.listStack[:len(w.listStack)-1]
-		if !w.inList() {
-			w.writeText("\n")
-			w.maybeFlush()
+		if w.nativeTable {
+			tag := "ul"
+			if node.IsOrdered() {
+				tag = "ol"
+			}
+			w.openTag("<"+tag+">", "</"+tag+">")
+			w.listStack = append(w.listStack, listState{
+				ordered: node.IsOrdered(),
+				index:   node.Start - 1,
+			})
+			w.walkChildren(n, source)
+			w.listStack = w.listStack[:len(w.listStack)-1]
+			w.closeTag()
+			w.plain.WriteString("\n")
+			if !w.inList() {
+				w.maybeFlush()
+			}
+		} else {
+			if w.inList() {
+				w.writeText("\n")
+			}
+			w.listStack = append(w.listStack, listState{
+				ordered: node.IsOrdered(),
+				index:   node.Start - 1,
+			})
+			w.walkChildren(n, source)
+			w.listStack = w.listStack[:len(w.listStack)-1]
+			if !w.inList() {
+				w.writeText("\n")
+				w.maybeFlush()
+			}
 		}
 
 	case *ast.ListItem:
-		w.writeText(w.listPrefix())
-		w.walkChildren(n, source)
-		if !strings.HasSuffix(w.plain.String(), "\n") {
-			w.writeText("\n")
+		if w.nativeTable {
+			w.openTag("<li>", "</li>")
+			w.walkChildren(n, source)
+			w.closeTag()
+			w.plain.WriteString("\n")
+		} else {
+			w.writeText(w.listPrefix())
+			w.walkChildren(n, source)
+			if !strings.HasSuffix(w.plain.String(), "\n") {
+				w.writeText("\n")
+			}
 		}
 
 	case *ast.ThematicBreak:
-		w.writeText("───\n\n")
+		if w.nativeTable {
+			w.writeRaw("<hr/>")
+			w.plain.WriteString("\n\n")
+		} else {
+			w.writeText("───\n\n")
+		}
 		w.maybeFlush()
 
 	case *ast.HTMLBlock:

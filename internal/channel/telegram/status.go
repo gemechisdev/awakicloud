@@ -359,24 +359,33 @@ func (r *replier) editToFinal(ctx context.Context, msgID int, text string) {
 	}
 
 	isRTL := rich.NeedsRTL(text)
-	// Prefer markdown rich edit (tables, lists, code intact).
-	err := r.ch.client.EditRichMessage(ctx, r.chatID, msgID, "markdown", text, isRTL)
-	if err == nil {
-		return
-	}
-	log.Warn().Err(err).Msg("telegram: edit to rich markdown final failed, trying HTML")
-
 	md := rich.ConvertMathMarkdown(text)
 	html := format.FormatRichHTML(md)
 	if html == "" {
 		html = rich.MarkdownToRichHTML(md)
 	}
 	html = rich.EnsureSafeLength(html)
-	err = r.ch.client.EditRichMessage(ctx, r.chatID, msgID, "html", html, isRTL)
+
+	// Multi-line → HTML first so soft newlines survive as <br/>/<p>.
+	var err error
+	if rich.IsRichWorthy(text) || strings.Contains(text, "\n") {
+		err = r.ch.client.EditRichMessage(ctx, r.chatID, msgID, "html", html, isRTL)
+		if err == nil {
+			return
+		}
+		log.Warn().Err(err).Msg("telegram: edit to rich HTML final failed, trying markdown")
+		err = r.ch.client.EditRichMessage(ctx, r.chatID, msgID, "markdown", text, isRTL)
+	} else {
+		err = r.ch.client.EditRichMessage(ctx, r.chatID, msgID, "markdown", text, isRTL)
+		if err != nil {
+			log.Warn().Err(err).Msg("telegram: edit to rich markdown final failed, trying HTML")
+			err = r.ch.client.EditRichMessage(ctx, r.chatID, msgID, "html", html, isRTL)
+		}
+	}
 	if err == nil {
 		return
 	}
-	log.Warn().Err(err).Msg("telegram: edit to rich HTML final failed, falling back to plain")
+	log.Warn().Err(err).Msg("telegram: edit to rich final failed, falling back to plain")
 	r.editToFinalPlain(ctx, msgID, text)
 }
 

@@ -35,26 +35,39 @@ func (r *replier) SendText(ctx context.Context, text string) error {
 
 	isRTL := rich.NeedsRTL(text)
 
-	// Prefer native Markdown for agent output: Telegram's rich Markdown
-	// already understands headings, tables, lists, code fences, etc.
-	id, err := r.ch.client.SendRichMessage(ctx, r.chatID, "markdown", text, isRTL, false)
-	if err == nil {
-		_ = id
-		if r.replyToID != 0 && r.firstReply {
-			r.firstReply = false
+	// Multi-line / structured text → HTML first. Native rich markdown uses
+	// CommonMark soft-break rules, so single newlines collapse into spaces
+	// (command lists, status boards, etc. become one long line).
+	sendHTML := func() (int, error) {
+		textHTML := rich.ConvertMathMarkdown(text)
+		html := format.FormatRichHTML(textHTML)
+		if html == "" {
+			html = rich.MarkdownToRichHTML(textHTML)
 		}
-		return nil
+		html = rich.EnsureSafeLength(html)
+		return r.ch.client.SendRichMessage(ctx, r.chatID, "html", html, isRTL, false)
 	}
-	log.Warn().Err(err).Msg("telegram: rich markdown send failed, trying rich HTML")
 
-	// Goldmark → rich HTML with native <table> (not classic bullets / raw pipes).
-	textHTML := rich.ConvertMathMarkdown(text)
-	html := format.FormatRichHTML(textHTML)
-	if html == "" {
-		html = rich.MarkdownToRichHTML(textHTML)
+	var id int
+	var err error
+	if rich.IsRichWorthy(text) || strings.Contains(text, "\n") {
+		id, err = sendHTML()
+		if err == nil {
+			_ = id
+			if r.replyToID != 0 && r.firstReply {
+				r.firstReply = false
+			}
+			return nil
+		}
+		log.Warn().Err(err).Msg("telegram: rich HTML send failed, trying rich markdown")
+		id, err = r.ch.client.SendRichMessage(ctx, r.chatID, "markdown", text, isRTL, false)
+	} else {
+		id, err = r.ch.client.SendRichMessage(ctx, r.chatID, "markdown", text, isRTL, false)
+		if err != nil {
+			log.Warn().Err(err).Msg("telegram: rich markdown send failed, trying rich HTML")
+			id, err = sendHTML()
+		}
 	}
-	html = rich.EnsureSafeLength(html)
-	id, err = r.ch.client.SendRichMessage(ctx, r.chatID, "html", html, isRTL, false)
 	if err == nil {
 		_ = id
 		if r.replyToID != 0 && r.firstReply {
@@ -62,7 +75,7 @@ func (r *replier) SendText(ctx context.Context, text string) error {
 		}
 		return nil
 	}
-	log.Warn().Err(err).Msg("telegram: rich HTML send failed, falling back to classic send")
+	log.Warn().Err(err).Msg("telegram: rich send failed, falling back to classic send")
 
 	// Classic path restores threading behaviour.
 	if r.replyToID != 0 && r.firstReply {

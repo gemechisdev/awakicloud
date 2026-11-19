@@ -13,7 +13,30 @@ import (
 
 func (c *Channel) send(ctx context.Context, chatID int64, markdownText string) {
 	// Rich-first for all outbound text (32k budget, native tables/lists).
+	// Prefer HTML for multi-line / structured content: Telegram's native
+	// markdown mode collapses single newlines (CommonMark soft breaks),
+	// which turns /help and similar command lists into one long line.
 	isRTL := rich.NeedsRTL(markdownText)
+	if rich.IsRichWorthy(markdownText) || strings.Contains(markdownText, "\n") {
+		md := rich.ConvertMathMarkdown(markdownText)
+		html := format.FormatRichHTML(md)
+		if html == "" {
+			html = rich.MarkdownToRichHTML(md)
+		}
+		html = rich.EnsureSafeLength(html)
+		if _, err := c.client.SendRichMessage(ctx, chatID, "html", html, isRTL, false); err == nil {
+			return
+		} else {
+			log.Warn().Err(err).Msg("telegram rich HTML send failed, trying rich markdown")
+		}
+		if _, err := c.client.SendRichMessage(ctx, chatID, "markdown", markdownText, isRTL, false); err == nil {
+			return
+		} else {
+			log.Warn().Err(err).Msg("telegram rich markdown send failed, falling back to classic")
+		}
+		c.sendLongClassic(ctx, chatID, markdownText)
+		return
+	}
 	if _, err := c.client.SendRichMessage(ctx, chatID, "markdown", markdownText, isRTL, false); err == nil {
 		return
 	} else {
@@ -48,18 +71,33 @@ func (c *Channel) sendHTMLChunk(ctx context.Context, chatID int64, chunk format.
 // under the user's message. Continuations are unthreaded.
 func (c *Channel) sendLongThreaded(ctx context.Context, chatID, replyToID int64, text string) {
 	// Rich path has no reply_to on all clients; still prefer rich for content quality.
+	// Multi-line → HTML first so soft newlines are preserved as <br/>/<p>.
 	isRTL := rich.NeedsRTL(text)
-	if _, err := c.client.SendRichMessage(ctx, chatID, "markdown", text, isRTL, false); err == nil {
+	if rich.IsRichWorthy(text) || strings.Contains(text, "\n") {
+		md := rich.ConvertMathMarkdown(text)
+		html := format.FormatRichHTML(md)
+		if html == "" {
+			html = rich.MarkdownToRichHTML(md)
+		}
+		html = rich.EnsureSafeLength(html)
+		if _, err := c.client.SendRichMessage(ctx, chatID, "html", html, isRTL, false); err == nil {
+			return
+		}
+		if _, err := c.client.SendRichMessage(ctx, chatID, "markdown", text, isRTL, false); err == nil {
+			return
+		}
+	} else if _, err := c.client.SendRichMessage(ctx, chatID, "markdown", text, isRTL, false); err == nil {
 		return
-	}
-	md := rich.ConvertMathMarkdown(text)
-	html := format.FormatRichHTML(md)
-	if html == "" {
-		html = rich.MarkdownToRichHTML(md)
-	}
-	html = rich.EnsureSafeLength(html)
-	if _, err := c.client.SendRichMessage(ctx, chatID, "html", html, isRTL, false); err == nil {
-		return
+	} else {
+		md := rich.ConvertMathMarkdown(text)
+		html := format.FormatRichHTML(md)
+		if html == "" {
+			html = rich.MarkdownToRichHTML(md)
+		}
+		html = rich.EnsureSafeLength(html)
+		if _, err := c.client.SendRichMessage(ctx, chatID, "html", html, isRTL, false); err == nil {
+			return
+		}
 	}
 	for i, chunk := range format.FormatHTMLChunks(text, maxMessageLen) {
 		if i == 0 {
@@ -235,11 +273,15 @@ func (c *Channel) SendOrEditKeyboardToOwner(ctx context.Context, editMsgID int, 
 }
 
 // markdownToTelegramHTML converts Markdown UI copy into Telegram HTML.
-// Uses the goldmark-based FormatHTMLChunks pipeline (same as classic sends).
+// Uses the goldmark-based FormatRichHTML pipeline (paragraphs, <br/>, lists).
 func markdownToTelegramHTML(md string) (html string, plain string) {
-	// Prefer rich HTML so GFM tables become native <table>, not bullet lists.
+	// Prefer rich HTML so GFM tables become native <table>, not bullet lists,
+	// and soft line breaks survive as <br/> instead of collapsing to spaces.
 	md = rich.ConvertMathMarkdown(md)
 	html = format.FormatRichHTML(md)
+	if html == "" {
+		html = rich.MarkdownToRichHTML(md)
+	}
 	if html == "" {
 		html = rich.EscapeHTML(md)
 	}
