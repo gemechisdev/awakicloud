@@ -33,51 +33,15 @@ func (r *replier) SendText(ctx context.Context, text string) error {
 		return nil
 	}
 
-	isRTL := rich.NeedsRTL(text)
-
-	// Multi-line / structured text → HTML first. Native rich markdown uses
-	// CommonMark soft-break rules, so single newlines collapse into spaces
-	// (command lists, status boards, etc. become one long line).
-	sendHTML := func() (int, error) {
-		textHTML := rich.ConvertMathMarkdown(text)
-		html := format.FormatRichHTML(textHTML)
-		if html == "" {
-			html = rich.MarkdownToRichHTML(textHTML)
-		}
-		html = rich.EnsureSafeLength(html)
-		return r.ch.client.SendRichMessage(ctx, r.chatID, "html", html, isRTL, false)
-	}
-
-	var id int
-	var err error
-	if rich.IsRichWorthy(text) || strings.Contains(text, "\n") {
-		id, err = sendHTML()
-		if err == nil {
-			_ = id
-			if r.replyToID != 0 && r.firstReply {
-				r.firstReply = false
-			}
-			return nil
-		}
-		log.Warn().Err(err).Msg("telegram: rich HTML send failed, trying rich markdown")
-		id, err = r.ch.client.SendRichMessage(ctx, r.chatID, "markdown", text, isRTL, false)
-	} else {
-		id, err = r.ch.client.SendRichMessage(ctx, r.chatID, "markdown", text, isRTL, false)
-		if err != nil {
-			log.Warn().Err(err).Msg("telegram: rich markdown send failed, trying rich HTML")
-			id, err = sendHTML()
-		}
-	}
-	if err == nil {
-		_ = id
+	// Multi-line → HTML first so soft newlines survive.
+	if r.ch.sendRichPreferHTML(ctx, r.chatID, text) {
 		if r.replyToID != 0 && r.firstReply {
 			r.firstReply = false
 		}
 		return nil
 	}
-	log.Warn().Err(err).Msg("telegram: rich send failed, falling back to classic send")
+	log.Warn().Msg("telegram: rich send failed, falling back to classic send")
 
-	// Classic path restores threading behaviour.
 	if r.replyToID != 0 && r.firstReply {
 		r.ch.sendLongThreaded(ctx, r.chatID, r.replyToID, text)
 		r.firstReply = false

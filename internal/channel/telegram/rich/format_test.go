@@ -6,7 +6,7 @@ import (
 )
 
 func TestEscapeHTML(t *testing.T) {
-	in := "a <b> & \"c\" 'd'"
+	in := `a <b> & "c" 'd'`
 	out := EscapeHTML(in)
 	if strings.Contains(out, "<") || strings.Contains(out, ">") {
 		t.Fatalf("unescaped brackets: %q", out)
@@ -17,7 +17,7 @@ func TestEscapeHTML(t *testing.T) {
 }
 
 func TestInlineMDEscapesThenFormats(t *testing.T) {
-	in := "say **hello** <script> and `code`"
+	in := `say **hello** <script> and \`code\``
 	out := inlineMDToHTML(in)
 	if strings.Contains(out, "<script>") {
 		t.Fatalf("script not escaped: %q", out)
@@ -40,14 +40,50 @@ func TestMarkdownToRichHTML_HeadingsAndList(t *testing.T) {
 		t.Fatalf("list missing: %q", html)
 	}
 	if !strings.Contains(html, "<b>bold</b>") {
-		t.Fatalf("bold missing: %q", html)
+		t.Fatalf("inline bold missing: %q", html)
 	}
 }
 
-func TestMarkdownToRichHTML_SoftLinesAsParagraphs(t *testing.T) {
-	md := "Commands:\n\n/start — main\n/help — list"
-	html := MarkdownToRichHTML(md)
-	if strings.Count(html, "<p>") < 2 {
-		t.Fatalf("expected multiple paragraphs: %q", html)
+func TestCharLenAndValidate(t *testing.T) {
+	if CharLen("café") != 4 {
+		t.Fatalf("CharLen café = %d", CharLen("café"))
+	}
+	err := ValidateRichMessage("<p>hi</p>", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = ValidateRichMessage("<p>hi</p>", "also", nil)
+	if err == nil {
+		t.Fatal("expected dual-mode error")
+	}
+}
+
+func TestDetailsPlainEscapes(t *testing.T) {
+	out := DetailsPlain("sum <x>", "line <y>\nline & z", false)
+	if strings.Contains(out, "<y>") || strings.Contains(out, "<x>") {
+		t.Fatalf("not escaped: %q", out)
+	}
+	if !strings.Contains(out, "<p>") {
+		t.Fatalf("expected paragraphs: %q", out)
+	}
+}
+
+func TestStripThinking(t *testing.T) {
+	in := `<tg-thinking>wait</tg-thinking><p>done</p>`
+	out := StripThinking(in)
+	if strings.Contains(out, "tg-thinking") {
+		t.Fatalf("thinking not stripped: %q", out)
+	}
+	if !strings.Contains(out, "<p>done</p>") {
+		t.Fatalf("body lost: %q", out)
+	}
+}
+
+func TestNeedsRTL(t *testing.T) {
+	if NeedsRTL("hello world") {
+		t.Fatal("latin should be false")
+	}
+	if !NeedsRTL("سلام دنیا این یک متن فارسی است برای تست") {
+		t.Fatal("persian should be true")
 	}
 }

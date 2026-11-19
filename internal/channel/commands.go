@@ -100,9 +100,11 @@ func MenuCommands() [][2]string {
 }
 
 // HelpText builds the full /help message from the catalog.
+// Uses markdown list items so each command stays on its own line in both
+// native markdown and rich-HTML paths (soft-break collapse safe).
 func HelpText() string {
 	var b strings.Builder
-	b.WriteString("Commands:\n\n")
+	b.WriteString("**Commands**\n\n")
 	for _, c := range Commands {
 		if c.HideHelp {
 			continue
@@ -111,15 +113,17 @@ func HelpText() string {
 		if help == "" {
 			help = c.Description
 		}
-		b.WriteString("/")
+		b.WriteString("- `/")
 		b.WriteString(c.Slash)
+		b.WriteString("`")
 		if help != "" {
 			b.WriteString(" — ")
 			b.WriteString(help)
 		}
 		b.WriteByte('\n')
 	}
-	b.WriteString("\nPermission: /mode auto | ask | plan\n")
-	b.WriteString("One-shot plan: /plan <task>\n")
+	b.WriteString("\n**Permission:** `/mode auto | ask | plan`\n\n")
+	b.WriteString("**One-shot plan:** `/plan <task>`\n")
 	return strings.TrimSpace(b.String())
 }
+

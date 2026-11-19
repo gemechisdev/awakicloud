@@ -359,14 +359,8 @@ func (r *replier) editToFinal(ctx context.Context, msgID int, text string) {
 	}
 
 	isRTL := rich.NeedsRTL(text)
-	md := rich.ConvertMathMarkdown(text)
-	html := format.FormatRichHTML(md)
-	if html == "" {
-		html = rich.MarkdownToRichHTML(md)
-	}
-	html = rich.EnsureSafeLength(html)
+	html := richHTMLFromMarkdown(text)
 
-	// Multi-line → HTML first so soft newlines survive as <br/>/<p>.
 	var err error
 	if rich.IsRichWorthy(text) || strings.Contains(text, "\n") {
 		err = r.ch.client.EditRichMessage(ctx, r.chatID, msgID, "html", html, isRTL)

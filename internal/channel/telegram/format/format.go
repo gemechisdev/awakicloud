@@ -261,8 +261,6 @@ func (w *htmlWriter) walkNode(n ast.Node, source []byte) {
 	case *ast.Text:
 		w.writeText(string(node.Segment.Value(source)))
 		if node.SoftLineBreak() || node.HardLineBreak() {
-			// In rich HTML, literal \n is collapsed — emit <br/> so line
-			// breaks inside a paragraph (e.g. /help command list) survive.
 			if w.nativeTable {
 				w.writeRaw("<br/>")
 				w.plain.WriteString("\n")
