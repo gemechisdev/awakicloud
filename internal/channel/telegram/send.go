@@ -240,7 +240,8 @@ func (c *Channel) sendRichScreen(ctx context.Context, chatID int64, html string,
 
 	// Short content — use plain send
 	if editMsgID > 0 {
-		return editMsgID, c.sendScreenPlain(ctx, chatID, html, rows, editMsgID)
+		_, err := c.sendScreenPlain(ctx, chatID, html, rows, editMsgID)
+		return editMsgID, err
 	}
 	return c.sendScreenPlain(ctx, chatID, html, rows, editMsgID)
 }
@@ -284,9 +285,9 @@ func (c *Channel) sendScreenPlain(ctx context.Context, chatID int64, html string
 		return msgID, nil
 	}
 
-	sent, err := c.client.SendMessageWithKeyboard(ctx, chatID, html, models.ParseModeHTML, kbRows)
+	sentID, err := c.client.SendMessageWithKeyboard(ctx, chatID, html, models.ParseModeHTML, kbRows)
 	if err != nil {
 		return 0, err
 	}
-	return sent.ID, nil
+	return sentID, nil
 }
