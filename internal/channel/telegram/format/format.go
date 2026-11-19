@@ -54,6 +54,12 @@ func (w *htmlWriter) writeText(s string) {
 	w.plain.WriteString(s)
 }
 
+// writeRaw inserts trusted HTML (e.g. <tg-math>) without escaping tags.
+func (w *htmlWriter) writeRaw(s string) {
+	w.html.WriteString(s)
+	w.plain.WriteString(s)
+}
+
 func (w *htmlWriter) openTag(open, close string) {
 	w.html.WriteString(open)
 	w.tagStack = append(w.tagStack, tagEntry{open: open, close: close})
@@ -255,14 +261,24 @@ func (w *htmlWriter) walkNode(n ast.Node, source []byte) {
 		lines := n.Lines()
 		for i := 0; i < lines.Len(); i++ {
 			seg := lines.At(i)
-			w.writeText(string(seg.Value(source)))
+			s := string(seg.Value(source))
+			if w.nativeTable && isTrustedRichHTML(s) {
+				w.writeRaw(s)
+			} else {
+				w.writeText(s)
+			}
 		}
 
 	case *ast.RawHTML:
 		segs := node.Segments
 		for i := 0; i < segs.Len(); i++ {
 			seg := segs.At(i)
-			w.writeText(string(seg.Value(source)))
+			s := string(seg.Value(source))
+			if w.nativeTable && isTrustedRichHTML(s) {
+				w.writeRaw(s)
+			} else {
+				w.writeText(s)
+			}
 		}
 
 	case *east.Strikethrough:
@@ -417,6 +433,17 @@ func (w *htmlWriter) renderNativeTable(table ast.Node, source []byte) {
 	w.html.WriteString("</table>")
 	w.writeText("\n")
 	w.maybeFlush()
+}
+
+func isTrustedRichHTML(s string) bool {
+	s = strings.TrimSpace(s)
+	return strings.Contains(s, "<tg-math") ||
+		strings.Contains(s, "</tg-math>") ||
+		strings.Contains(s, "<tg-spoiler") ||
+		strings.Contains(s, "</tg-spoiler>") ||
+		strings.Contains(s, "<tg-time") ||
+		strings.Contains(s, "<details") ||
+		strings.Contains(s, "<table")
 }
 
 // FormatHTMLChunks converts markdown into Telegram HTML chunks, each within

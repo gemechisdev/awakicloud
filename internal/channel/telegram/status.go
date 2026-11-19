@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/gemechischala/awaki/internal/channel/telegram/format"
 	"github.com/gemechischala/awaki/internal/channel/telegram/rich"
@@ -11,6 +12,13 @@ import (
 
 	"github.com/go-telegram/bot/models"
 	"github.com/rs/zerolog/log"
+)
+
+// Rich status can show far more than classic 4k messages.
+const (
+	statusDetailVisibleRunes = 1200 // shown inline before folding
+	statusDetailMaxRunes     = 12000
+	statusPlanMaxTasks       = 40
 )
 
 var phaseEmoji = map[transport.Phase]string{
@@ -85,7 +93,9 @@ func formatStatus(s transport.AgentStatus) string {
 }
 
 // formatStatusRich renders an AgentStatus as Telegram Rich HTML.
-// Plan tasks are wrapped in a collapsible <details> drawer.
+// Uses the larger rich-message budget: commands in <code>/<pre>, long
+// output folded into <details>, plan in a collapsible drawer. The same
+// message is edited in place via EditRichMessage while the agent runs.
 func formatStatusRich(s transport.AgentStatus) string {
 	var b strings.Builder
 
@@ -94,38 +104,81 @@ func formatStatusRich(s transport.AgentStatus) string {
 		emoji = "⏳"
 	}
 
-	label := s.Detail
-	if label == "" {
-		switch s.Phase {
-		case transport.PhaseThinking:
-			label = "Thinking"
-		case transport.PhasePlanning:
-			label = "Planning"
-		default:
-			label = s.Tool
-		}
+	phaseLabel := ""
+	switch s.Phase {
+	case transport.PhaseThinking:
+		phaseLabel = "Thinking"
+	case transport.PhasePlanning:
+		phaseLabel = "Planning"
+	case transport.PhaseTool:
+		phaseLabel = "Running tool"
+	case transport.PhaseWorking:
+		phaseLabel = "Working"
+	case transport.PhaseMessage:
+		phaseLabel = "Update"
+	default:
+		phaseLabel = "Working"
 	}
-	if label != "" {
-		b.WriteString(rich.Paragraph(emoji + " " + label))
-		if s.Phase != transport.PhaseMessage {
-			b.WriteString(rich.Paragraph("Working…"))
+
+	b.WriteString(rich.Heading(3, emoji+" "+phaseLabel))
+
+	// Tool name as tap-to-copy code
+	if s.Tool != "" {
+		b.WriteString("<p>Tool: " + rich.CodeBlock(s.Tool) + "</p>")
+	}
+
+	detail := strings.TrimSpace(s.Detail)
+	if detail == "" && s.Tool == "" {
+		b.WriteString(rich.Paragraph("…"))
+	} else if detail != "" {
+		// Commands / shell-like detail → fenced code block (tap-to-copy on mobile).
+		if looksLikeCommand(detail) || s.Phase == transport.PhaseTool {
+			cmd, rest := splitCommandAndOutput(detail)
+			if cmd != "" {
+				b.WriteString(rich.PreBlock(truncateRunes(cmd, 4000)))
+			}
+			if rest != "" {
+				vis, folded := foldLong(rest, statusDetailVisibleRunes, statusDetailMaxRunes)
+				if vis != "" && folded == "" {
+					b.WriteString(rich.Paragraph(vis))
+				} else if vis != "" {
+					b.WriteString(rich.Paragraph(vis))
+				}
+				if folded != "" {
+					b.WriteString(rich.DetailsPlain("📄 Output / response", folded, false))
+				}
+			} else if cmd == "" {
+				b.WriteString(rich.PreBlock(truncateRunes(detail, 4000)))
+			}
+		} else {
+			vis, folded := foldLong(detail, statusDetailVisibleRunes, statusDetailMaxRunes)
+			if vis != "" {
+				b.WriteString(rich.Paragraph(vis))
+			}
+			if folded != "" {
+				b.WriteString(rich.DetailsPlain("📄 More detail", folded, false))
+			}
 		}
 	}
 
-	// Progress bar as tap-to-copy code
 	if s.Percent != nil {
 		b.WriteString(rich.CodeBlock(formatProgressBar(*s.Percent)))
 	}
 
-	// Plan tasks in a collapsible drawer
 	if len(s.Plan) > 0 {
 		var planLines []string
 		done := 0
+		n := 0
 		for _, t := range s.Plan {
+			if n >= statusPlanMaxTasks {
+				planLines = append(planLines, fmt.Sprintf("… +%d more", len(s.Plan)-statusPlanMaxTasks))
+				break
+			}
 			planLines = append(planLines, fmt.Sprintf("%s %s", taskStateEmoji(t.Status), t.Title))
 			if t.Status == transport.TaskCompleted {
 				done++
 			}
+			n++
 		}
 		planBody := strings.Join(planLines, "\n")
 		b.WriteString(rich.DetailsPlain(fmt.Sprintf("📋 Plan %d/%d", done, len(s.Plan)), planBody, false))
@@ -134,7 +187,93 @@ func formatStatusRich(s transport.AgentStatus) string {
 	if b.Len() == 0 {
 		return rich.Paragraph(emoji + " Working…")
 	}
-	return b.String()
+	return rich.EnsureSafeLength(b.String())
+}
+
+func looksLikeCommand(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	// Heuristics: shell prompts, common tools, paths, flags
+	if strings.HasPrefix(s, "$ ") || strings.HasPrefix(s, "# ") || strings.HasPrefix(s, "> ") {
+		return true
+	}
+	first := strings.Fields(s)
+	if len(first) == 0 {
+		return false
+	}
+	cmd := first[0]
+	if strings.ContainsAny(cmd, "/\\") {
+		return true
+	}
+	switch cmd {
+	case "go", "git", "npm", "npx", "yarn", "pnpm", "pip", "python", "python3",
+		"node", "docker", "kubectl", "curl", "wget", "make", "cmake", "cargo",
+		"bash", "sh", "zsh", "sudo", "apt", "apt-get", "brew", "systemctl",
+		"cat", "ls", "cd", "rm", "cp", "mv", "mkdir", "chmod", "chown", "ssh",
+		"scp", "rsync", "tar", "unzip", "grep", "rg", "find", "sed", "awk":
+		return true
+	}
+	if strings.HasPrefix(cmd, "./") || strings.HasPrefix(cmd, "../") {
+		return true
+	}
+	return false
+}
+
+// splitCommandAndOutput splits "cmd\noutput..." style detail.
+func splitCommandAndOutput(detail string) (cmd, rest string) {
+	detail = strings.TrimSpace(detail)
+	if detail == "" {
+		return "", ""
+	}
+	// "label: command" form from buildToolStatus
+	if i := strings.Index(detail, ": "); i > 0 && i < 80 {
+		prefix := detail[:i]
+		// If prefix looks like a short label, keep full string as command when no newline
+		if !strings.Contains(detail, "\n") && looksLikeCommand(strings.TrimSpace(detail[i+2:])) {
+			return strings.TrimSpace(detail[i+2:]), ""
+		}
+		_ = prefix
+	}
+	if i := strings.Index(detail, "\n"); i >= 0 {
+		return strings.TrimSpace(detail[:i]), strings.TrimSpace(detail[i+1:])
+	}
+	if looksLikeCommand(detail) {
+		return detail, ""
+	}
+	return "", detail
+}
+
+func foldLong(s string, visible, max int) (head, folded string) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", ""
+	}
+	r := []rune(s)
+	if len(r) > max {
+		r = append(r[:max], '…')
+	}
+	if len(r) <= visible {
+		return string(r), ""
+	}
+	// Break at newline near boundary when possible
+	cut := visible
+	for i := visible; i > visible-200 && i > 0; i-- {
+		if r[i] == '\n' {
+			cut = i
+			break
+		}
+	}
+	return string(r[:cut]) + "…", string(r[cut:])
+}
+
+func truncateRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	r := []rune(s)
+	return string(r[:n]) + "…"
 }
 
 func formatProgressBar(pct int) string {
@@ -151,7 +290,6 @@ func formatProgressBar(pct int) string {
 }
 
 // planKeyboard builds read-only inline buttons: one row per task.
-// Callback data is ignored by the bot (plan:noop).
 func planKeyboard(tasks []transport.PlanTask) [][]models.InlineKeyboardButton {
 	if len(tasks) == 0 {
 		return nil
@@ -159,7 +297,6 @@ func planKeyboard(tasks []transport.PlanTask) [][]models.InlineKeyboardButton {
 	var rows [][]models.InlineKeyboardButton
 	for i, t := range tasks {
 		label := taskStateEmoji(t.Status) + " " + t.Title
-		// Telegram button text max 64 runes
 		runes := []rune(label)
 		if len(runes) > 64 {
 			label = string(runes[:61]) + "…"
@@ -174,26 +311,10 @@ func planKeyboard(tasks []transport.PlanTask) [][]models.InlineKeyboardButton {
 
 func (r *replier) sendStatus(ctx context.Context, status transport.AgentStatus) int {
 	html := formatStatusRich(status)
-
-	// Use rich message if content is substantial; otherwise fall back to plain.
-	if rich.IsRichWorthy(html) {
-		id, err := r.ch.client.SendRichMessage(ctx, r.chatID, "html", html, false, false)
-		if err != nil {
-			log.Warn().Err(err).Msg("telegram: send rich status failed, falling back to plain")
-			text := formatStatus(status)
-			return r.ch.sendAndGetID(ctx, r.chatID, text)
-		}
-		return id
-	}
-
-	text := formatStatus(status)
-	kb := planKeyboard(status.Plan)
-	if len(kb) == 0 {
-		return r.ch.sendAndGetID(ctx, r.chatID, text)
-	}
-	id, err := r.ch.client.SendMessageWithKeyboard(ctx, r.chatID, text, models.ParseModeMarkdown, kb)
+	id, err := r.ch.client.SendRichMessage(ctx, r.chatID, "html", html, false, false)
 	if err != nil {
-		log.Warn().Err(err).Msg("telegram: send status with plan keyboard failed")
+		log.Warn().Err(err).Msg("telegram: send rich status failed, falling back to plain")
+		text := formatStatus(status)
 		return r.ch.sendAndGetID(ctx, r.chatID, text)
 	}
 	return id
@@ -204,36 +325,20 @@ func (r *replier) updateStatus(ctx context.Context, msgID int, status transport.
 		return
 	}
 	html := formatStatusRich(status)
-
-	if rich.IsRichWorthy(html) {
-		err := r.ch.client.EditRichMessage(ctx, r.chatID, msgID, "html", html, false)
-		if err != nil {
-			log.Warn().Err(err).Int("msg_id", msgID).Str("phase", string(status.Phase)).Msg("telegram: edit rich status failed, falling back to plain")
-			text := formatStatus(status)
-			kb := planKeyboard(status.Plan)
-			var err2 error
-			if len(kb) > 0 {
-				err2 = r.ch.client.EditMessageWithKeyboard(ctx, r.chatID, msgID, text, models.ParseModeMarkdown, kb)
-			} else {
-				err2 = r.ch.client.EditMessage(ctx, r.chatID, msgID, text, models.ParseModeMarkdown)
-			}
-			if err2 != nil {
-				log.Warn().Err(err2).Int("msg_id", msgID).Str("phase", string(status.Phase)).Msg("telegram: EditMessage status failed")
-			}
-		}
-		return
-	}
-
-	text := formatStatus(status)
-	kb := planKeyboard(status.Plan)
-	var err error
-	if len(kb) > 0 {
-		err = r.ch.client.EditMessageWithKeyboard(ctx, r.chatID, msgID, text, models.ParseModeMarkdown, kb)
-	} else {
-		err = r.ch.client.EditMessage(ctx, r.chatID, msgID, text, models.ParseModeMarkdown)
-	}
+	err := r.ch.client.EditRichMessage(ctx, r.chatID, msgID, "html", html, false)
 	if err != nil {
-		log.Warn().Err(err).Int("msg_id", msgID).Str("phase", string(status.Phase)).Msg("telegram: EditMessage status failed")
+		log.Warn().Err(err).Int("msg_id", msgID).Str("phase", string(status.Phase)).Msg("telegram: edit rich status failed, falling back to plain")
+		text := formatStatus(status)
+		kb := planKeyboard(status.Plan)
+		var err2 error
+		if len(kb) > 0 {
+			err2 = r.ch.client.EditMessageWithKeyboard(ctx, r.chatID, msgID, text, models.ParseModeMarkdown, kb)
+		} else {
+			err2 = r.ch.client.EditMessage(ctx, r.chatID, msgID, text, models.ParseModeMarkdown)
+		}
+		if err2 != nil {
+			log.Warn().Err(err2).Int("msg_id", msgID).Str("phase", string(status.Phase)).Msg("telegram: EditMessage status failed")
+		}
 	}
 }
 
@@ -246,22 +351,32 @@ func (r *replier) deleteStatus(ctx context.Context, msgID int) {
 	}
 }
 
-// editToFinal replaces the status message with the final response text.
+// editToFinal replaces the status message with the final response text (rich-first).
 func (r *replier) editToFinal(ctx context.Context, msgID int, text string) {
 	if msgID == 0 {
-		r.ch.sendLong(ctx, r.chatID, text)
+		_ = r.SendText(ctx, text)
 		return
 	}
 
-	html := rich.MarkdownToRichHTML(text)
-	if rich.IsRichWorthy(html) {
-		err := r.ch.client.EditRichMessage(ctx, r.chatID, msgID, "html", html, false)
-		if err != nil {
-			log.Warn().Err(err).Msg("telegram: edit to rich final failed, falling back to plain")
-			r.editToFinalPlain(ctx, msgID, text)
-		}
+	isRTL := rich.NeedsRTL(text)
+	// Prefer markdown rich edit (tables, lists, code intact).
+	err := r.ch.client.EditRichMessage(ctx, r.chatID, msgID, "markdown", text, isRTL)
+	if err == nil {
 		return
 	}
+	log.Warn().Err(err).Msg("telegram: edit to rich markdown final failed, trying HTML")
+
+	md := rich.ConvertMathMarkdown(text)
+	html := format.FormatRichHTML(md)
+	if html == "" {
+		html = rich.MarkdownToRichHTML(md)
+	}
+	html = rich.EnsureSafeLength(html)
+	err = r.ch.client.EditRichMessage(ctx, r.chatID, msgID, "html", html, isRTL)
+	if err == nil {
+		return
+	}
+	log.Warn().Err(err).Msg("telegram: edit to rich HTML final failed, falling back to plain")
 	r.editToFinalPlain(ctx, msgID, text)
 }
 
@@ -273,7 +388,6 @@ func (r *replier) editToFinalPlain(ctx context.Context, msgID int, text string) 
 	}
 
 	if len(chunks) == 1 {
-		// Clear keyboard by editing to plain final text
 		err := r.ch.client.EditMessage(ctx, r.chatID, msgID, chunks[0].HTML, models.ParseModeHTML)
 		if err != nil {
 			log.Warn().Err(err).Msg("telegram: edit to final HTML failed, trying plain text")
@@ -281,7 +395,7 @@ func (r *replier) editToFinalPlain(ctx context.Context, msgID int, text string) 
 			if err != nil {
 				log.Warn().Err(err).Msg("telegram: edit to final plain failed, falling back to delete+send")
 				r.deleteStatus(ctx, msgID)
-				r.ch.sendLong(ctx, r.chatID, text)
+				_ = r.SendText(ctx, text)
 			}
 		}
 		return
@@ -291,7 +405,7 @@ func (r *replier) editToFinalPlain(ctx context.Context, msgID int, text string) 
 	if err != nil {
 		log.Warn().Err(err).Msg("telegram: edit first chunk failed, falling back to delete+send")
 		r.deleteStatus(ctx, msgID)
-		r.ch.sendLong(ctx, r.chatID, text)
+		_ = r.SendText(ctx, text)
 		return
 	}
 	for _, chunk := range chunks[1:] {

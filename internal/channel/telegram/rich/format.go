@@ -143,6 +143,7 @@ func MarkdownToRichHTML(text string) string {
 	if text == "" {
 		return ""
 	}
+	text = ConvertMathMarkdown(text)
 
 	var b strings.Builder
 	lines := strings.Split(text, "\n")
@@ -190,6 +191,43 @@ func MarkdownToRichHTML(text string) string {
 			flushList()
 			b.WriteString(html)
 			i += n - 1 // loop will i++
+			continue
+		}
+
+		// Block math $$ ... $$
+		if strings.HasPrefix(trimmed, "$$") {
+			flushList()
+			if strings.Count(trimmed, "$$") >= 2 && len(trimmed) > 4 {
+				inner := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(trimmed, "$$"), "$$"))
+				b.WriteString(Math(inner, true))
+				continue
+			}
+			var body strings.Builder
+			if len(trimmed) > 2 {
+				body.WriteString(trimmed[2:])
+				body.WriteByte('\n')
+			}
+			i++
+			for i < len(lines) {
+				l := lines[i]
+				t := strings.TrimSpace(l)
+				if strings.Contains(t, "$$") {
+					before, _, _ := strings.Cut(t, "$$")
+					body.WriteString(before)
+					break
+				}
+				body.WriteString(l)
+				body.WriteByte('\n')
+				i++
+			}
+			b.WriteString(Math(body.String(), true))
+			continue
+		}
+
+		// Pre-converted rich tags — emit raw
+		if strings.HasPrefix(trimmed, "<tg-math") || strings.HasPrefix(trimmed, "<tg-spoiler") || strings.HasPrefix(trimmed, "<tg-math-block") {
+			flushList()
+			b.WriteString(trimmed)
 			continue
 		}
 
@@ -313,6 +351,22 @@ func inlineMDToHTML(s string) string {
 	s = codeRE.ReplaceAllString(s, "<code>$1</code>")
 	// Spoiler ||...||
 	s = spoilerRE.ReplaceAllString(s, "<tg-spoiler>$1</tg-spoiler>")
+	// Highlight ==marked==
+	s = markRE.ReplaceAllString(s, "<mark>$1</mark>")
+	// Underline ++text++ (Telegram HTML <u>; not GFM-standard but useful)
+	s = underlineRE.ReplaceAllString(s, "<u>$1</u>")
+	// Subscript H~2~O style (single tilde pairs; strike uses ~~)
+	s = subRE.ReplaceAllString(s, "<sub>$1</sub>")
+	// Superscript x^2^ style
+	s = supRE.ReplaceAllString(s, "<sup>$1</sup>")
+	// Inline math $...$ (after escape; $ and TeX ASCII are safe)
+	s = inlineMathRE.ReplaceAllStringFunc(s, func(m string) string {
+		inner := strings.TrimSpace(m[1 : len(m)-1])
+		if inner == "" {
+			return m
+		}
+		return Math(inner, false)
+	})
 
 	return s
 }
@@ -324,8 +378,14 @@ var (
 	// Simpler italic that works after bold replacement
 	italicRE2 = regexp.MustCompile(`\*([^*\n]+?)\*|_([^_\n]+?)_`)
 	strikeRE  = regexp.MustCompile(`~~(.+?)~~`)
-	codeRE    = regexp.MustCompile("`([^`]+)`")
-	spoilerRE = regexp.MustCompile(`\|\|(.+?)\|\|`)
+	codeRE       = regexp.MustCompile("`([^`]+)`")
+	spoilerRE    = regexp.MustCompile(`\|\|(.+?)\|\|`)
+	markRE       = regexp.MustCompile(`==([^=]+?)==`)
+	underlineRE  = regexp.MustCompile(`\+\+([^+]+?)\+\+`)
+	subRE        = regexp.MustCompile(`~([^~\n]+?)~`)
+	supRE        = regexp.MustCompile(`\^([^\^\n]+?)\^`)
+	blockMathRE  = regexp.MustCompile(`(?s)\$\$(.+?)\$\$`)
+	inlineMathRE = regexp.MustCompile(`\$([^\$\n]+?)\$`)
 )
 
 func init() {
@@ -520,6 +580,47 @@ func Footer(text string) string {
 // HR renders a horizontal divider.
 func HR() string {
 	return "<hr/>"
+}
+
+// Math renders TeX/LaTeX: inline <tg-math>, block <tg-math-block> (Bot API RichText).
+func Math(tex string, display bool) string {
+	tex = strings.TrimSpace(tex)
+	if tex == "" {
+		return ""
+	}
+	if display {
+		return fmt.Sprintf(`<tg-math-block>%s</tg-math-block>`, escapeHTML(tex))
+	}
+	return fmt.Sprintf(`<tg-math>%s</tg-math>`, escapeHTML(tex))
+}
+
+// ConvertMathMarkdown replaces $$...$$ (block) and $...$ (inline) with <tg-math>.
+// Call before Markdown→HTML so formulas survive goldmark and the hand converter.
+func ConvertMathMarkdown(s string) string {
+	if s == "" || !strings.Contains(s, "$") {
+		return s
+	}
+	// Block first: $$ ... $$ (may span lines)
+	s = blockMathRE.ReplaceAllStringFunc(s, func(m string) string {
+		inner := strings.TrimSpace(m[2 : len(m)-2])
+		if inner == "" {
+			return m
+		}
+		return Math(inner, true)
+	})
+	// Inline: $...$ (single line, no nested $)
+	s = inlineMathRE.ReplaceAllStringFunc(s, func(m string) string {
+		inner := strings.TrimSpace(m[1 : len(m)-1])
+		if inner == "" {
+			return m
+		}
+		// Skip currency-like $10 or empty
+		if len(inner) < 1 {
+			return m
+		}
+		return Math(inner, false)
+	})
+	return s
 }
 
 // Spoiler renders tap-to-reveal content.

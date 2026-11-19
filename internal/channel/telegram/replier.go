@@ -48,9 +48,10 @@ func (r *replier) SendText(ctx context.Context, text string) error {
 	log.Warn().Err(err).Msg("telegram: rich markdown send failed, trying rich HTML")
 
 	// Goldmark → rich HTML with native <table> (not classic bullets / raw pipes).
-	html := format.FormatRichHTML(text)
+	textHTML := rich.ConvertMathMarkdown(text)
+	html := format.FormatRichHTML(textHTML)
 	if html == "" {
-		html = rich.MarkdownToRichHTML(text)
+		html = rich.MarkdownToRichHTML(textHTML)
 	}
 	html = rich.EnsureSafeLength(html)
 	id, err = r.ch.client.SendRichMessage(ctx, r.chatID, "html", html, isRTL, false)

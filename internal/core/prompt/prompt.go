@@ -27,6 +27,7 @@ func SystemPrompt(ctx PromptContext) string {
 		buildParallelToolSection(),
 		buildWorkStrategySection(),
 		buildInteractionSection(),
+		buildTelegramRichSection(),
 		buildIdentityToolsSection(),
 		buildMemorySection(),
 		buildRecallSection(),
@@ -271,6 +272,48 @@ func buildDockerSection() string {
 - Always persist important data to /data
 - For background services, prefer tools/scheduler over systemd or nohup
 - If you configure something system-wide, document it in memory for re-setup`
+}
+
+
+func buildTelegramRichSection() string {
+	return "TELEGRAM RICH MESSAGES (Bot API 10.1-10.3): Replies are Rich Messages (~32,768 UTF-8 chars, up to 500 blocks). " +
+		"Prefer structured Markdown; the channel sends via sendRichMessage.\n\n" +
+		"INLINE FORMATTING (RichText) — use these freely:\n" +
+		"- **bold** / __bold__ → bold\n" +
+		"- *italic* / _italic_ → italic\n" +
+		"- ~~strikethrough~~ → strikethrough\n" +
+		"- ++underline++ → underline\n" +
+		"- ==highlight== → marked/highlight\n" +
+		"- ||spoiler|| → tap-to-reveal spoiler\n" +
+		"- inline code in backticks → monospace (tap-to-copy)\n" +
+		"- H~2~O → subscript; x^2^ → superscript\n" +
+		"- $E=mc^2$ → inline LaTeX math (<tg-math>)\n" +
+		"- $$\\int_0^1 x^2\\,dx$$ → block LaTeX (<tg-math-block>)\n" +
+		"- [label](https://...), mailto:, tel:, tg://user?id=\n" +
+		"- @mentions, #hashtags, $CASHTAG, /commands: write normally (auto-detected)\n\n" +
+		"BLOCK STRUCTURE:\n" +
+		"- # … ###### headings, paragraphs, --- divider\n" +
+		"- Lists: - item, 1. item, - [ ] / - [x] tasks\n" +
+		"- GFM tables with |---|---|\n" +
+		"- Fenced code blocks with language tag\n" +
+		"- > blockquote\n" +
+		"- <details><summary>Title</summary>…</details> collapsible\n" +
+		"- Footnotes: Text[^1]. then [^1]: note\n\n" +
+		"WHEN TO USE WHAT:\n" +
+		"- Tables — comparisons/matrices (never ASCII tables)\n" +
+		"- Code fences — commands, configs, logs, copyable IDs\n" +
+		"- Math — formulas; prefer TeX over Unicode approximations\n" +
+		"- Spoilers — secrets or optional reveal\n" +
+		"- Mark/underline — key terms sparingly\n" +
+		"- Sub/sup — chemistry, indices, simple exponents when not full math\n" +
+		"- ask_user(confirm|choice) — decision buttons\n" +
+		"- Lead with the answer; long logs after a short summary\n\n" +
+		"DO NOT:\n" +
+		"- Rely on classic 4096 limits; stay scannable\n" +
+		"- Leave unclosed fences, tables, or $ math delimiters\n" +
+		"- Put block elements inside table cells (inline only)\n" +
+		"- Hide critical warnings inside spoilers\n" +
+		"- Emit thinking blocks yourself (channel owns streaming UI)"
 }
 
 func buildRuntimeSection(ctx PromptContext) string {
