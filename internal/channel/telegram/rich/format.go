@@ -880,3 +880,109 @@ func isRTLRune(r rune) bool {
 
 // Compile-time check that stdlib html is available if needed elsewhere.
 var _ = html.EscapeString
+
+
+// Image embeds an image in a Rich Message. src must be https:// or tg://photo?id=FILE_ID.
+func Image(src, alt string) string {
+	if src == "" {
+		return ""
+	}
+	tag := `<img src="` + escapeHTMLAttr(src) + `"`
+	if alt != "" {
+		tag += ` alt="` + escapeHTMLAttr(alt) + `"`
+	}
+	return tag + `/>`
+}
+
+// Video embeds a video. src: https:// or tg://video?id=FILE_ID.
+func Video(src string) string {
+	if src == "" {
+		return ""
+	}
+	return `<video src="` + escapeHTMLAttr(src) + `"/>`
+}
+
+// Audio embeds audio. src: https:// or tg://audio?id=FILE_ID.
+func Audio(src string) string {
+	if src == "" {
+		return ""
+	}
+	return `<audio src="` + escapeHTMLAttr(src) + `"/>`
+}
+
+// Figure wraps media with an optional caption/cite.
+func Figure(mediaHTML, caption, cite string) string {
+	var b strings.Builder
+	b.WriteString("<figure>")
+	b.WriteString(mediaHTML)
+	if caption != "" || cite != "" {
+		b.WriteString("<figcaption>")
+		b.WriteString(escapeHTML(caption))
+		if cite != "" {
+			b.WriteString("<cite>" + escapeHTML(cite) + "</cite>")
+		}
+		b.WriteString("</figcaption>")
+	}
+	b.WriteString("</figure>")
+	return b.String()
+}
+
+// Collage builds a <tg-collage> from media HTML fragments (img/video tags).
+func Collage(items []string, caption string) string {
+	var b strings.Builder
+	b.WriteString("<tg-collage>")
+	for _, it := range items {
+		b.WriteString(it)
+	}
+	if caption != "" {
+		b.WriteString("<figcaption>" + escapeHTML(caption) + "</figcaption>")
+	}
+	b.WriteString("</tg-collage>")
+	return b.String()
+}
+
+// Slideshow builds a <tg-slideshow> from media HTML fragments.
+func Slideshow(items []string, caption string) string {
+	var b strings.Builder
+	b.WriteString("<tg-slideshow>")
+	for _, it := range items {
+		b.WriteString(it)
+	}
+	if caption != "" {
+		b.WriteString("<figcaption>" + escapeHTML(caption) + "</figcaption>")
+	}
+	b.WriteString("</tg-slideshow>")
+	return b.String()
+}
+
+// Document embeds a file. src: https:// or tg://document?id=FILE_ID.
+func Document(src string) string {
+	if src == "" {
+		return ""
+	}
+	return `<tg-document src="` + escapeHTMLAttr(src) + `"/>`
+}
+
+// PhotoRef builds a tg://photo?id=… reference for embedding an uploaded Telegram photo.
+func PhotoRef(fileID string) string {
+	if fileID == "" {
+		return ""
+	}
+	return "tg://photo?id=" + fileID
+}
+
+// VideoRef builds tg://video?id=…
+func VideoRef(fileID string) string {
+	if fileID == "" {
+		return ""
+	}
+	return "tg://video?id=" + fileID
+}
+
+// DocumentRef builds tg://document?id=…
+func DocumentRef(fileID string) string {
+	if fileID == "" {
+		return ""
+	}
+	return "tg://document?id=" + fileID
+}

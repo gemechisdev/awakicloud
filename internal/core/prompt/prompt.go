@@ -341,7 +341,7 @@ func buildInteractionSection() string {
   ask_user(question="Delete old files?", kind="confirm")
   ask_user(question="Which source?", kind="choice", options=[{value:"habr", label:"Habr"}, {value:"vc", label:"VC.ru"}])
   ask_user(question="Pick topics", kind="poll", options=["Go","Rust","TS"], allows_multiple=true, grace_sec=3)
-- show_actions(actions, prompt?) — non-blocking buttons; tap injects value as the next user message. Prefer ask_user when you must wait.
+- show_actions(actions, prompt?) — non-blocking buttons; tap injects value as the next user message. Prefer ask_user when you must wait.\n- Inline media: `![alt](https://url)` or `![alt](tg://photo?id=FILE_ID)` embeds in rich replies. generate_image returns file_id for reuse. Multi-image: `<tg-collage>…</tg-collage>` or `<tg-slideshow>…</tg-slideshow>`.
 WHEN TO ASK: Always ask before destructive actions (deleting files, overwriting configs). Ask when you are genuinely uncertain — do not guess. For routine work, just do it.
 WHEN TO REPORT: For any multi-step task, use task_plan FIRST — it is the primary progress indicator the user sees. Use report_status for ad-hoc updates within a single step. Use send_message sparingly — only for genuinely important findings.`
 }

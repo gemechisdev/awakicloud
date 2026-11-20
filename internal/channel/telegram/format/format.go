@@ -273,7 +273,34 @@ func (w *htmlWriter) walkNode(n ast.Node, source []byte) {
 		}
 
 	case *ast.Image:
-		w.writeText(string(node.Text(source)))
+		dest := strings.TrimSpace(string(node.Destination))
+		alt := extractNodeText(n, source)
+		if dest == "" {
+			w.writeText(alt)
+			break
+		}
+		if isSafeMediaURL(dest) {
+			tag := `<img src="` + escapeHTMLAttr(dest) + `"`
+			if alt != "" {
+				tag += ` alt="` + escapeHTMLAttr(alt) + `"`
+			}
+			tag += `/>`
+			if w.nativeTable {
+				w.writeRaw(tag)
+				w.plain.WriteString(alt)
+			} else {
+				w.writeText(alt)
+				if alt == "" {
+					w.writeText(dest)
+				}
+			}
+		} else {
+			w.writeText(alt)
+			if alt == "" {
+				w.writeText(dest)
+			}
+		}
+
 
 	case *ast.Text:
 		w.writeInline(string(node.Segment.Value(source)))
@@ -540,7 +567,15 @@ func isTrustedRichHTML(s string) bool {
 		strings.Contains(s, "<sub") ||
 		strings.Contains(s, "<sup") ||
 		strings.Contains(s, "<u>") ||
-		strings.Contains(s, "</u>")
+		strings.Contains(s, "</u>") ||
+		strings.Contains(s, "<img") ||
+		strings.Contains(s, "<video") ||
+		strings.Contains(s, "<audio") ||
+		strings.Contains(s, "<figure") ||
+		strings.Contains(s, "<tg-collage") ||
+		strings.Contains(s, "<tg-slideshow") ||
+		strings.Contains(s, "<tg-document") ||
+		strings.Contains(s, "<figcaption")
 }
 
 // FormatHTMLChunks converts markdown into Telegram HTML chunks, each within
@@ -588,6 +623,19 @@ func extractTextRecursive(n ast.Node, source []byte, b *strings.Builder) {
 	for c := n.FirstChild(); c != nil; c = c.NextSibling() {
 		extractTextRecursive(c, source, b)
 	}
+}
+
+// isSafeMediaURL allows https/http and Telegram tg:// media/emoji references.
+func isSafeMediaURL(u string) bool {
+	u = strings.TrimSpace(u)
+	low := strings.ToLower(u)
+	return strings.HasPrefix(low, "https://") ||
+		strings.HasPrefix(low, "http://") ||
+		strings.HasPrefix(low, "tg://photo") ||
+		strings.HasPrefix(low, "tg://video") ||
+		strings.HasPrefix(low, "tg://document") ||
+		strings.HasPrefix(low, "tg://audio") ||
+		strings.HasPrefix(low, "tg://emoji")
 }
 
 func escapeHTML(s string) string {

@@ -5,6 +5,8 @@ import (
 	"github.com/gemechischala/awaki/internal/channel/telegram/rich"
 	"github.com/gemechischala/awaki/internal/transport"
 	"time"
+
+	"github.com/rs/zerolog/log"
 )
 
 const (
@@ -184,7 +186,7 @@ func (r *replier) ConsumeEvents(ctx context.Context, events <-chan transport.Eve
 					Percent: e.Percent,
 				})
 
-			case transport.MidMessageEvent:
+						case transport.MidMessageEvent:
 				cancelThinking()
 				flush()
 				_ = r.SendText(ctx, formatMessageWithLevel(e.Text, e.Level))
@@ -193,7 +195,16 @@ func (r *replier) ConsumeEvents(ctx context.Context, events <-chan transport.Eve
 				cancelThinking()
 				flush()
 				if len(e.Data) > 0 {
-					_ = r.SendPhotoBytes(ctx, e.Filename, e.Data, e.Caption)
+					fid, err := r.SendPhotoBytesFileID(ctx, e.Filename, e.Data, e.Caption)
+					if err != nil {
+						log.Warn().Err(err).Msg("telegram: send media photo failed")
+					}
+					if e.FileIDCh != nil && fid != "" {
+						select {
+						case e.FileIDCh <- fid:
+						default:
+						}
+					}
 				}
 
 			case transport.AskEvent:

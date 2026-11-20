@@ -35,10 +35,22 @@ func (c *Client) SendMessageThreaded(ctx context.Context, chatID int64, text str
 }
 
 func (c *Client) SendPhoto(ctx context.Context, chatID int64, photo *models.InputFileUpload, caption string) error {
-	_, err := c.b.SendPhoto(ctx, &bot.SendPhotoParams{
+	_, err := c.SendPhotoFileID(ctx, chatID, photo, caption)
+	return err
+}
+
+// SendPhotoFileID sends a photo and returns the largest size file_id for tg://photo embeds.
+func (c *Client) SendPhotoFileID(ctx context.Context, chatID int64, photo *models.InputFileUpload, caption string) (fileID string, err error) {
+	sent, err := c.b.SendPhoto(ctx, &bot.SendPhotoParams{
 		ChatID: chatID, Photo: photo, Caption: caption,
 	})
-	return err
+	if err != nil {
+		return "", err
+	}
+	if sent != nil && len(sent.Photo) > 0 {
+		return sent.Photo[len(sent.Photo)-1].FileID, nil
+	}
+	return "", nil
 }
 
 func (c *Client) SendVideo(ctx context.Context, chatID int64, video *models.InputFileUpload, caption string) error {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/gemechischala/awaki/internal/imagegen"
 	"github.com/gemechischala/awaki/internal/providers"
@@ -76,16 +77,26 @@ func ImageGenTools(store *providers.Store) []types.Tool {
 					filename = "generated.webp"
 				}
 
+				fileIDCh := make(chan string, 1)
 				if sink, ok := transport.SinkFromContext(ctx); ok {
 					sink.Emit(transport.MediaEvent{
 						Filename: filename,
 						MimeType: res.MimeType,
 						Data:     res.Data,
 						Caption:  caption,
+						FileIDCh: fileIDCh,
 					})
 				}
 
 				msg := fmt.Sprintf("Image generated with %s (%s) and sent to the user.", m.DisplayName, m.ModelID)
+				select {
+				case fid := <-fileIDCh:
+					if fid != "" {
+						msg += fmt.Sprintf("\nfile_id: %s\nEmbed in rich replies: ![img](tg://photo?id=%s)", fid, fid)
+					}
+				case <-ctx.Done():
+				case <-time.After(8 * time.Second):
+				}
 				if res.Revised != "" {
 					msg += "\nRevised prompt: " + res.Revised
 				}

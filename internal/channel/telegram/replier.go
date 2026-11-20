@@ -76,11 +76,17 @@ func (r *replier) SendFile(ctx context.Context, path, caption string) error {
 
 // SendPhotoBytes sends an in-memory image to the chat as a photo.
 func (r *replier) SendPhotoBytes(ctx context.Context, filename string, data []byte, caption string) error {
+	_, err := r.SendPhotoBytesFileID(ctx, filename, data, caption)
+	return err
+}
+
+// SendPhotoBytesFileID sends a photo and returns the Telegram file_id for rich embeds.
+func (r *replier) SendPhotoBytesFileID(ctx context.Context, filename string, data []byte, caption string) (string, error) {
 	if filename == "" {
 		filename = "image.png"
 	}
 	upload := &models.InputFileUpload{Filename: filename, Data: bytes.NewReader(data)}
-	return r.ch.client.SendPhoto(ctx, r.chatID, upload, caption)
+	return r.ch.client.SendPhotoFileID(ctx, r.chatID, upload, caption)
 }
 
 func (r *replier) SendAsk(ctx context.Context, prompt string, kind transport.AskKind, options []transport.AskOption) error {

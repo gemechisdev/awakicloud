@@ -103,6 +103,9 @@ type MediaEvent struct {
 	MimeType string // e.g. "image/png"
 	Data     []byte
 	Caption  string
+	// FileIDCh, when non-nil, receives the Telegram file_id after the channel
+	// uploads the media (for later <img src="tg://photo?id=…"> embeds). Buffered.
+	FileIDCh chan<- string
 }
 
 // LoopWarningEvent signals a detected tool-call loop (identical args repeated).

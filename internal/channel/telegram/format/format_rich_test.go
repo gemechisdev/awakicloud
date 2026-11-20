@@ -75,3 +75,23 @@ func TestFormatRichHTML_StrikethroughAndExtended(t *testing.T) {
 		}
 	}
 }
+
+func TestFormatRichHTML_MarkdownImage(t *testing.T) {
+	out := FormatRichHTML("See ![chart](https://example.com/a.png) here")
+	t.Log(out)
+	if !strings.Contains(out, `<img src="https://example.com/a.png"`) {
+		t.Fatalf("expected img tag, got %q", out)
+	}
+	if !strings.Contains(out, `alt="chart"`) {
+		t.Fatalf("expected alt, got %q", out)
+	}
+	// unsafe scheme dropped
+	out2 := FormatRichHTML("![x](javascript:alert(1))")
+	if strings.Contains(out2, "javascript:") || strings.Contains(out2, "<img") {
+		t.Fatalf("unsafe url should not become img: %q", out2)
+	}
+	out3 := FormatRichHTML("![p](tg://photo?id=ABC123)")
+	if !strings.Contains(out3, `src="tg://photo?id=ABC123"`) {
+		t.Fatalf("tg photo ref: %q", out3)
+	}
+}
