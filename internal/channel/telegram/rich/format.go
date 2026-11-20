@@ -473,6 +473,7 @@ func preprocessExtendedInText(s string, phs *[]InlinePlaceholder) string {
 		return tok
 	}
 
+	// Protect inline code so markers inside stay literal.
 	type keep struct{ key, val string }
 	var kept []keep
 	keepPut := func(val string) string {
@@ -480,9 +481,14 @@ func preprocessExtendedInText(s string, phs *[]InlinePlaceholder) string {
 		kept = append(kept, keep{key, val})
 		return key
 	}
-	s = strikeRE.ReplaceAllStringFunc(s, func(m string) string { return keepPut(m) })
 	s = codeRE.ReplaceAllStringFunc(s, func(m string) string { return keepPut(m) })
 
+	// ~~strikethrough~~ → <s> before single-tilde sub, so goldmark cannot
+	// mis-read ~~ as two single-tilde delimiters (it treats ~ as strike).
+	s = strikeRE.ReplaceAllStringFunc(s, func(m string) string {
+		inner := strikeRE.FindStringSubmatch(m)[1]
+		return put("<s>" + escapeHTML(inner) + "</s>")
+	})
 	s = spoilerRE.ReplaceAllStringFunc(s, func(m string) string {
 		inner := spoilerRE.FindStringSubmatch(m)[1]
 		return put("<tg-spoiler>" + escapeHTML(inner) + "</tg-spoiler>")
