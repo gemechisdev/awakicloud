@@ -120,6 +120,19 @@ type AskEvent struct {
 	Kind    AskKind
 	Options []AskOption
 	ReplyCh chan<- string
+
+	// Poll-only (Kind == AskPoll). Agent configures; channel sends sendPoll.
+	PollAllowsMultiple bool // multi-select
+	PollIsAnonymous    bool // default false so owner answers are visible
+	PollGraceSec       int  // wait after last vote change before closing answer (default 3)
+}
+
+// ButtonsEvent shows agent-authored action buttons. Each button injects its
+// Value as a synthetic user message (or ask_user reply if one is pending).
+type ButtonsEvent struct {
+	BaseEvent
+	Prompt  string // optional intro text above the buttons
+	Buttons []AskOption
 }
 
 // ErrorEvent carries a fatal run error and terminates the run.

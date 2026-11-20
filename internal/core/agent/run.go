@@ -441,22 +441,43 @@ func (a *Agent) handleAskUser(ctx context.Context, input map[string]any) (string
 			if m, ok := r.(map[string]any); ok {
 				val, _ := m["value"].(string)
 				lbl, _ := m["label"].(string)
-				if val != "" && lbl != "" {
+				if lbl == "" {
+					lbl = val
+				}
+				if val == "" {
+					val = lbl
+				}
+				if val != "" {
 					options = append(options, transport.AskOption{Value: val, Label: lbl})
 				}
+			} else if s, ok := r.(string); ok && s != "" {
+				options = append(options, transport.AskOption{Value: s, Label: s})
 			}
 		}
 	}
 
-	// The sink delivers AskEvent with a guarantee (it must not be dropped, or
-	// the agent would block here forever). If the run is cancelled the event is
-	// abandoned and the ctx.Done branch below unblocks us.
+	allowsMulti := false
+	if v, ok := input["allows_multiple"].(bool); ok {
+		allowsMulti = v
+	}
+	grace := 3
+	if v, ok := input["grace_sec"].(float64); ok && int(v) > 0 {
+		grace = int(v)
+	}
+	isAnon := false
+	if v, ok := input["is_anonymous"].(bool); ok {
+		isAnon = v
+	}
+
 	replyCh := make(chan string, 1)
 	a.emit(transport.AskEvent{
-		Prompt:  question,
-		Kind:    kind,
-		Options: options,
-		ReplyCh: replyCh,
+		Prompt:             question,
+		Kind:               kind,
+		Options:            options,
+		ReplyCh:            replyCh,
+		PollAllowsMultiple: allowsMulti,
+		PollIsAnonymous:    isAnon,
+		PollGraceSec:       grace,
 	})
 
 	select {

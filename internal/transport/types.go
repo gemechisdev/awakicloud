@@ -88,6 +88,7 @@ const (
 	AskFreeform AskKind = "freeform"
 	AskConfirm  AskKind = "confirm"
 	AskChoice   AskKind = "choice"
+	AskPoll     AskKind = "poll"
 )
 
 // AskOption is one selectable choice in a choice-type ask.

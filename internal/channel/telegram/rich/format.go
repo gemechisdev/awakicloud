@@ -255,9 +255,9 @@ func MarkdownToRichHTML(text string) string {
 				item = strings.TrimSpace(item[4:])
 			}
 			if checked {
-				b.WriteString(fmt.Sprintf(`<li><input type="checkbox" checked> %s</li>`, inlineMDToHTML(item)))
+				b.WriteString(fmt.Sprintf("<li>✅ %s</li>", inlineMDToHTML(item)))
 			} else if strings.HasPrefix(trimmed, "- [") || strings.HasPrefix(trimmed, "* [") {
-				b.WriteString(fmt.Sprintf(`<li><input type="checkbox"> %s</li>`, inlineMDToHTML(item)))
+				b.WriteString(fmt.Sprintf("<li>⬜ %s</li>", inlineMDToHTML(item)))
 			} else {
 				b.WriteString(fmt.Sprintf("<li>%s</li>", inlineMDToHTML(item)))
 			}

@@ -84,8 +84,7 @@ func (r *replier) SendPhotoBytes(ctx context.Context, filename string, data []by
 }
 
 func (r *replier) SendAsk(ctx context.Context, prompt string, kind transport.AskKind, options []transport.AskOption) error {
-	text := "❓ " + prompt
-
+	text := prompt
 	switch kind {
 	case transport.AskConfirm:
 		keyboard := [][]models.InlineKeyboardButton{{
@@ -103,6 +102,20 @@ func (r *replier) SendAsk(ctx context.Context, prompt string, kind transport.Ask
 			})
 		}
 		_, err := r.ch.client.SendMessageWithKeyboard(ctx, r.chatID, text, "", rows)
+		return err
+
+	case transport.AskPoll:
+		// Full AskEvent is handled via ConsumeEvents → sendPollAsk.
+		// Fallback if someone calls SendAsk directly with poll kind:
+		labels := make([]string, 0, len(options))
+		for _, o := range options {
+			lbl := o.Label
+			if lbl == "" {
+				lbl = o.Value
+			}
+			labels = append(labels, lbl)
+		}
+		_, err := r.ch.client.SendPoll(ctx, r.chatID, prompt, labels, false, false)
 		return err
 
 	default:

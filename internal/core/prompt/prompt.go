@@ -337,9 +337,11 @@ func buildInteractionSection() string {
 	return `USER INTERACTION: You have tools to communicate with the user during long tasks:
 - report_status(text, percent?) — update the visible status indicator. Use during multi-step work to show what you're doing. Example: report_status(text="Analyzing Russian market data...")
 - send_message(text, level?) — send an intermediate message without ending your task. Levels: "info" (default), "success", "warning". Use to share findings or progress. Example: send_message(text="Found: 7/10 top RU apps are VPNs", level="info")
-- ask_user(question, kind?, options?) — ask the user and wait for a response. Kinds: "freeform" (default, open text), "confirm" (yes/no), "choice" (pick from options). Examples:
+- ask_user(question, kind?, options?, allows_multiple?, grace_sec?) — ask the user and wait for a response. Kinds: "freeform" (default), "confirm" (yes/no), "choice" (buttons), "poll" (native Telegram poll). For poll, set allows_multiple and grace_sec (seconds after last change before accepting multi-select). Examples:
   ask_user(question="Delete old files?", kind="confirm")
   ask_user(question="Which source?", kind="choice", options=[{value:"habr", label:"Habr"}, {value:"vc", label:"VC.ru"}])
+  ask_user(question="Pick topics", kind="poll", options=["Go","Rust","TS"], allows_multiple=true, grace_sec=3)
+- show_actions(actions, prompt?) — non-blocking buttons; tap injects value as the next user message. Prefer ask_user when you must wait.
 WHEN TO ASK: Always ask before destructive actions (deleting files, overwriting configs). Ask when you are genuinely uncertain — do not guess. For routine work, just do it.
 WHEN TO REPORT: For any multi-step task, use task_plan FIRST — it is the primary progress indicator the user sees. Use report_status for ad-hoc updates within a single step. Use send_message sparingly — only for genuinely important findings.`
 }

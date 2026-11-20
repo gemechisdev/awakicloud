@@ -201,6 +201,21 @@ func (r *replier) ConsumeEvents(ctx context.Context, events <-chan transport.Eve
 				if statusID != 0 {
 					r.deleteStatus(ctx, statusID)
 				}
+
+				if e.Kind == transport.AskPoll {
+					if err := r.ch.sendPollAsk(ctx, r.chatID, e); err != nil {
+						if e.ReplyCh != nil {
+							e.ReplyCh <- "poll error: " + err.Error()
+						}
+					}
+					// Poll answers go directly to e.ReplyCh (agent waits there).
+					// Do not block on replyInbox; restore status and keep consuming.
+					statusID = restoreStatus()
+					lastText = ""
+					lastEditTime = time.Time{}
+					break
+				}
+
 				_ = r.SendAsk(ctx, e.Prompt, e.Kind, e.Options)
 
 				if replyInbox != nil {
@@ -223,6 +238,10 @@ func (r *replier) ConsumeEvents(ctx context.Context, events <-chan transport.Eve
 				statusID = restoreStatus()
 				lastText = ""
 				lastEditTime = time.Time{}
+
+			case transport.ButtonsEvent:
+				flush()
+				_ = r.ch.sendAgentButtons(ctx, r.chatID, e.Prompt, e.Buttons)
 
 			case transport.ErrorEvent:
 				if ctx.Err() != nil {

@@ -16,6 +16,11 @@ type mediaGroupBuffer struct {
 }
 
 func (c *Channel) defaultHandler(ctx context.Context, update *models.Update) {
+	if update.PollAnswer != nil {
+		c.handlePollAnswer(ctx, update.PollAnswer)
+		return
+	}
+
 	if update.CallbackQuery != nil {
 		c.handleCallback(ctx, update.CallbackQuery)
 		return
@@ -45,6 +50,17 @@ func (c *Channel) handleCallback(ctx context.Context, cb *models.CallbackQuery) 
 
 	// Read-only plan checklist buttons — acknowledge only
 	if strings.HasPrefix(cb.Data, "plan:noop") {
+		return
+	}
+
+	// Agent-authored action buttons → inject configured text as a user message.
+	if strings.HasPrefix(cb.Data, "agent:act:") {
+		id := strings.TrimPrefix(cb.Data, "agent:act:")
+		if text, ok := c.lookupAgentAction(id); ok {
+			c.dispatchAgentAction(ctx, text)
+			return
+		}
+		log.Warn().Str("id", id).Msg("telegram: unknown agent action id")
 		return
 	}
 

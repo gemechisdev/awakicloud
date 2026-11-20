@@ -24,12 +24,33 @@ type Channel struct {
 
 	mu          sync.Mutex
 	mediaGroups map[string]*mediaGroupBuffer
+
+	// agentActions maps short ids (callback suffix) → text injected on click.
+	agentActions map[string]string
+	actionSeq    int
+
+	// pollSessions tracks open polls waiting for answers (ask_user kind=poll).
+	pollSessions map[string]*pollSession // poll_id → session
+}
+
+// pollSession holds state for an ask_user poll with optional multi-select grace.
+type pollSession struct {
+	options   []string
+	replyCh   chan<- string
+	allowsMulti bool
+	graceSec  int
+
+	mu        sync.Mutex
+	optionIDs []int
+	timer     *time.Timer
 }
 
 func New(token string, ownerID int64) (*Channel, error) {
 	ch := &Channel{
-		ownerID:     ownerID,
-		mediaGroups: make(map[string]*mediaGroupBuffer),
+		ownerID:      ownerID,
+		mediaGroups:  make(map[string]*mediaGroupBuffer),
+		agentActions: make(map[string]string),
+		pollSessions: make(map[string]*pollSession),
 	}
 
 	cl, err := client.New(token, ch.defaultHandler)

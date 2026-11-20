@@ -128,3 +128,24 @@ func (c *Client) SendMessageWithReplyKeyboard(ctx context.Context, chatID int64,
 	}
 	return sent.ID, nil
 }
+
+// SendPoll creates a native Telegram poll. Returns message id of the poll message.
+func (c *Client) SendPoll(ctx context.Context, chatID int64, question string, options []string, allowsMultiple, isAnonymous bool) (int, error) {
+	opts := make([]models.InputPollOption, 0, len(options))
+	for _, o := range options {
+		opts = append(opts, models.InputPollOption{Text: o})
+	}
+	anon := isAnonymous
+	params := &bot.SendPollParams{
+		ChatID:                chatID,
+		Question:              question,
+		Options:               opts,
+		IsAnonymous:           &anon,
+		AllowsMultipleAnswers: allowsMultiple,
+	}
+	sent, err := c.b.SendPoll(ctx, params)
+	if err != nil {
+		return 0, err
+	}
+	return sent.ID, nil
+}
