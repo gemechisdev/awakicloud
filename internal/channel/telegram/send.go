@@ -300,6 +300,13 @@ func (c *Channel) sendRichScreen(ctx context.Context, chatID int64, markdownText
 				spec["url"] = btn.URL
 				delete(spec, "data")
 			}
+			// Tap-to-copy (rich messages only). Classic keyboards ignore CopyText
+			// and use CallbackData, so the button still works as a fallback.
+			if btn.CopyText != "" && btn.URL == "" {
+				spec["type"] = "copy_text"
+				spec["text"] = btn.CopyText
+				delete(spec, "data")
+			}
 			btns = append(btns, spec)
 		}
 		if len(btns) > 0 {

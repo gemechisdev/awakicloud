@@ -64,6 +64,15 @@ func (f *fakeChannel) SendOrEditKeyboardToOwner(_ context.Context, id int, km ch
 	f.edits = append(f.edits, id)
 	f.mu.Unlock()
 }
+// SendRichScreen completes the keyboardSender interface; rich screens are
+// recorded exactly like classic keyboards so tests see every screen.
+func (f *fakeChannel) SendRichScreen(_ context.Context, km channel.KeyboardMessage, editMsgID int) (int, error) {
+	f.mu.Lock()
+	f.all = append(f.all, km)
+	f.edits = append(f.edits, editMsgID)
+	f.mu.Unlock()
+	return editMsgID, nil
+}
 func (f *fakeChannel) last() channel.KeyboardMessage { return f.all[len(f.all)-1] }
 
 // ---- harness ---------------------------------------------------------------

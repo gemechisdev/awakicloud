@@ -41,6 +41,7 @@ const (
 	CmdMode           = "mode"
 	CmdExport         = "export"
 	CmdImport         = "import"
+	CmdFiles          = "files"
 )
 
 type Command struct {

@@ -34,6 +34,7 @@ func mainMenuKeyboard(current string) channel.KeyboardMessage {
 			"• /mode — auto · ask · plan permissions\n" +
 			"• /plan <task> — one-shot read-only plan\n" +
 			"• /tasks — background work with live progress\n" +
+			"• /files — browse and open project files\n" +
 			"• /help — full command list\n\n" +
 			"Just type when a model is configured.",
 		Rows: [][]channel.Button{
@@ -54,6 +55,7 @@ func mainMenuKeyboard(current string) channel.KeyboardMessage {
 				{Text: "⏰ Schedules", CallbackData: "ui:schedules"},
 			},
 			{
+				{Text: "📂 Files", CallbackData: "files:d:0"},
 				{Text: "🛡️ Mode", CallbackData: "ui:mode"},
 			},
 			{
@@ -71,7 +73,7 @@ func settingsKeyboard() channel.KeyboardMessage {
 	return channel.KeyboardMessage{
 		Text: "⚙️ Settings\n\nConfigure AI providers, models, and agent identity.",
 		Rows: [][]channel.Button{
-			{{Text: "📁 Projects", CallbackData: "ui:projects"}},
+			{{Text: "📁 Projects", CallbackData: "ui:projects"}, {Text: "📂 Files", CallbackData: "files:d:0"}},
 			{{Text: "🔌 Manage AI Providers", CallbackData: "ui:providers:0"}},
 			{{Text: "🧩 MCP Servers", CallbackData: "ui:mcp"}},
 			{{Text: "📚 Agent Skills", CallbackData: "ui:skills"}},

@@ -27,9 +27,6 @@ var Commands = []CommandSpec{
 	{Slash: "chat", Cmd: CmdChat, Description: "Current chat & actions", Help: "current chat card (rename, move, new chat in same project)", Menu: true},
 	{Slash: "move", Cmd: CmdMove, Description: "Move this chat to a project", Help: "[project|-] — move current chat into a project (or out with -)", Menu: true},
 	{Slash: "rename", Cmd: CmdRename, Description: "Rename this chat", Help: "<title> — rename current chat", Menu: true},
-	{Slash: "chat", Cmd: CmdChat, Description: "Current chat & actions", Help: "current chat card (rename, move, new chat in same project)", Menu: true},
-	{Slash: "move", Cmd: CmdMove, Description: "Move this chat to a project", Help: "[project|-] — move current chat into a project (or out with -)", Menu: true},
-	{Slash: "rename", Cmd: CmdRename, Description: "Rename this chat", Help: "<title> — rename current chat", Menu: true},
 	{Slash: "stop", Cmd: CmdStop, Description: "Cancel current task", Help: "cancel current agent run", Menu: true},
 	{Slash: "help", Cmd: CmdHelp, Description: "List all commands", Help: "this list", Menu: true},
 	{Slash: "health", Cmd: CmdHealth, Description: "Server health JSON", Help: "raw health endpoint payload as code", Menu: true},
@@ -54,6 +51,7 @@ var Commands = []CommandSpec{
 
 	{Slash: "projects", Cmd: CmdProjects, Description: "Projects and their chats", Help: "browse projects → their chats → new chat in project", Menu: true},
 	{Slash: "project", Cmd: CmdProject, Description: "Open or create a project", Help: "[name] — open/create a project and use it for the current chat", Menu: true},
+	{Slash: "files", Cmd: CmdFiles, Description: "Browse project files", Help: "[path] — browse and open files in the active workspace", Menu: true},
 	{Slash: "upgrade", Cmd: CmdProjectUpgrade, Description: "Upgrade chat to project", Help: "[name] — upgrade chat → project", Menu: true},
 	{Slash: "sync", Cmd: CmdProjectSync, Description: "Sync project to Telegram", Help: "sync active project to Telegram storage", Menu: true},
 	{Slash: "chatlink", Cmd: CmdChatLink, Description: "Link chat to project", Help: "<project> — alias of /move", Menu: false, HideHelp: true},

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/gemechischala/awaki/internal/channel"
+	"github.com/gemechischala/awaki/internal/filemgr"
 	"github.com/gemechischala/awaki/internal/providers"
 	"github.com/rs/zerolog/log"
 )
@@ -22,6 +23,9 @@ func (e *Engine) handleUICallback(ctx context.Context, msg channel.Message) bool
 	}
 	if strings.HasPrefix(text, "mode:") {
 		return e.handleModeCallback(ctx, msg, text)
+	}
+	if strings.HasPrefix(text, filemgr.CallbackPrefix) {
+		return e.handleFilesCallback(ctx, msg, text)
 	}
 
 	// Persistent reply-keyboard labels

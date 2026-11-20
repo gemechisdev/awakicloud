@@ -13,6 +13,7 @@ import (
 	"github.com/gemechischala/awaki/internal/core/chat"
 	"github.com/gemechischala/awaki/internal/core/prompt"
 	types "github.com/gemechischala/awaki/internal/domain"
+	"github.com/gemechischala/awaki/internal/filemgr"
 	"github.com/gemechischala/awaki/internal/mcp"
 	"github.com/gemechischala/awaki/internal/permission"
 	"github.com/gemechischala/awaki/internal/project"
@@ -62,6 +63,10 @@ type Engine struct {
 	navMu sync.Mutex
 	cloud          cloudCache
 	healthSnapshot func() map[string]any
+
+	// File manager (/files): lazily created, see ui_files.go.
+	filesOnce sync.Once
+	filesMgr  *filemgr.Manager
 }
 
 type Params struct {
@@ -241,6 +246,9 @@ func (e *Engine) handleCommand(ctx context.Context, msg channel.Message) {
 		e.cmdUpgradeProject(ctx, msg, name)
 	case channel.CmdProjectSync:
 		e.cmdSyncProject(ctx, msg)
+	case channel.CmdFiles:
+		cmd.Result.Handled = true
+		e.uiFiles(ctx, msg, cmdRaw(cmd))
 	case channel.CmdMCP:
 		e.cmdMCPList(ctx, msg)
 	case channel.CmdMCPAdd:

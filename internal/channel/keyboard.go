@@ -7,6 +7,10 @@ type Button struct {
 	Text         string
 	CallbackData string
 	URL          string // if set, Telegram shows a URL button (opens browser)
+	// CopyText, when set, is a tap-to-copy button on surfaces that support it
+	// (rich messages). CallbackData must still be set as the fallback for
+	// surfaces that do not.
+	CopyText string
 }
 
 // KeyboardMessage is a text reply with optional inline buttons (Telegram).
