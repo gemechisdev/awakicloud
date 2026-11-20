@@ -28,6 +28,9 @@ type Options struct {
 	// AllowDelete is false in plan mode: the Delete button is not shown and
 	// delete callbacks are refused.
 	AllowDelete bool
+	// AllowWrite is false in plan mode: creating and renaming are hidden and
+	// refused (it mirrors AllowDelete; both come from the permission mode).
+	AllowWrite bool
 	// Notice is a one-line status shown above the content.
 	Notice string
 }
@@ -41,6 +44,14 @@ type Result struct {
 	Copy string
 	// Inject, if set, is a user message to hand to the agent.
 	Inject string
+	// Prompt, if set, asks the engine to collect one line of text (new file /
+	// folder name, rename) and pass it to Submit.
+	Prompt *Prompt
+	// Retry keeps an already-open prompt open after a fixable mistake.
+	Retry bool
+	// SendPath, if set, is an absolute path the UI should upload as a file.
+	SendPath    string
+	SendCaption string
 }
 
 // ---------------------------------------------------------------- handling
@@ -94,6 +105,29 @@ func (m *Manager) Handle(a Action, opts Options) Result {
 		}
 		opts.Notice = "✏️ Agent has this file as context — send your edit instructions."
 		return Result{Screen: m.File(m.touch(abs), 0, opts), Inject: EditFocusText(m.Rel(abs))}
+	case KindSend:
+		abs, err := m.Resolve(a.ID)
+		if err != nil {
+			return errResult(err)
+		}
+		st, err := os.Stat(abs)
+		switch {
+		case err != nil:
+			return errResult(ErrNotFound)
+		case st.IsDir():
+			return errResult(errors.New("folders cannot be sent — open a file"))
+		case st.Size() == 0:
+			return errResult(errors.New("the file is empty — Telegram cannot send empty files"))
+		case st.Size() > MaxSendBytes:
+			return errResult(fmt.Errorf("file is %s — over Telegram's %s upload limit", HumanSize(st.Size()), HumanSize(MaxSendBytes)))
+		}
+		return Result{NoScreen: true, SendPath: abs, SendCaption: m.Rel(abs)}
+	case KindNewDir, KindNewFile, KindRename:
+		if !opts.AllowWrite {
+			opts.Notice = "🔒 Creating and renaming are disabled in plan mode."
+			return Result{Screen: m.File(a.ID, 0, opts)}
+		}
+		return m.prompt(a)
 	case KindDelAsk:
 		if !opts.AllowDelete {
 			opts.Notice = "🔒 Delete is disabled in plan mode."
@@ -183,18 +217,19 @@ func (m *Manager) Dir(id, page int, opts Options) Screen {
 		}
 	}
 
-	var rows [][]Button
+	var cells []Button
 	for _, e := range visible {
 		if e.Outside {
 			continue
 		}
 		childID := m.register(filepath.Join(abs, e.Name))
 		if e.Dir {
-			rows = append(rows, []Button{{Text: "📁 " + trunc(e.Name, 30) + "/", CallbackData: cbDir(childID, 0)}})
+			cells = append(cells, Button{Text: "📁 " + trunc(e.Name, GridLabelRunes), CallbackData: cbDir(childID, 0)})
 		} else {
-			rows = append(rows, []Button{{Text: "📄 " + trunc(e.Name, 30), CallbackData: cbFile(childID, 0)}})
+			cells = append(cells, Button{Text: "📄 " + trunc(e.Name, GridLabelRunes), CallbackData: cbFile(childID, 0)})
 		}
 	}
+	rows := gridRows(cells)
 	if pages > 1 {
 		var pager []Button
 		if page > 0 {
@@ -213,6 +248,16 @@ func (m *Manager) Dir(id, page int, opts Options) Screen {
 	}
 	nav = append(nav, Button{Text: "🔄 Refresh", CallbackData: cbDir(self, page)})
 	rows = append(rows, nav)
+	if opts.AllowWrite {
+		w := []Button{
+			{Text: "➕ File", CallbackData: cbSimple(KindNewFile, self)},
+			{Text: "➕ Folder", CallbackData: cbSimple(KindNewDir, self)},
+		}
+		if abs != root {
+			w = append(w, Button{Text: "✏️ Rename", CallbackData: cbSimple(KindRename, self)})
+		}
+		rows = append(rows, w)
+	}
 	var nav2 []Button
 	if abs != root {
 		nav2 = append(nav2, Button{Text: "🏠 Root", CallbackData: cbDir(0, 0)})
@@ -221,6 +266,28 @@ func (m *Manager) Dir(id, page int, opts Options) Screen {
 	rows = append(rows, nav2)
 
 	return Screen{Text: strings.TrimRight(b.String(), "\n"), Rows: rows}
+}
+
+// gridRows lays cells out GridCols per row. An odd last cell is padded with a
+// blank no-op button so every button in the grid has the same width.
+func gridRows(cells []Button) [][]Button {
+	var rows [][]Button
+	cols := GridCols
+	if len(cells) < cols {
+		cols = len(cells)
+	}
+	for i := 0; i < len(cells); i += cols {
+		end := i + cols
+		if end > len(cells) {
+			end = len(cells)
+		}
+		row := append([]Button(nil), cells[i:end]...)
+		for cols > 1 && len(row) < cols && len(cells) > 1 {
+			row = append(row, Button{Text: "\u2800", CallbackData: "ui:noop"})
+		}
+		rows = append(rows, row)
+	}
+	return rows
 }
 
 func entryLine(e Entry) string {
@@ -276,6 +343,9 @@ func (m *Manager) File(id, line int, opts Options) Screen {
 		head += fmt.Sprintf(" · lines %d–%d of %s", pg.First, pg.Last, fmtTotal(pg))
 	}
 	b.WriteString(head + "\n\n")
+	if pg.Size > 200<<10 && !pg.Binary {
+		b.WriteString("ℹ️ Large file — shown in pages. Tap 📤 Send file to get all of it.\n\n")
+	}
 	switch {
 	case pg.Binary:
 		b.WriteString("Binary file — use agent tools to process it (file_info, bash).\n")
@@ -294,7 +364,7 @@ func (m *Manager) File(id, line int, opts Options) Screen {
 	if pg.First > 1 {
 		reload = cbFile(self, pg.First)
 	}
-	rows = append(rows, []Button{copyBtn, {Text: "🔄 Reload", CallbackData: reload}})
+	rows = append(rows, []Button{copyBtn, {Text: "🔄 Reload", CallbackData: reload}, {Text: "📤 Send file", CallbackData: cbSimple(KindSend, self)}})
 	if !pg.Binary && !pg.Empty && (pg.First > 1 || pg.More) {
 		var paging []Button
 		if pg.First > 1 {
@@ -311,6 +381,9 @@ func (m *Manager) File(id, line int, opts Options) Screen {
 		{Text: "✏️ Ask agent to edit", CallbackData: cbSimple(KindEdit, self)},
 	})
 	last := []Button{}
+	if opts.AllowWrite {
+		last = append(last, Button{Text: "✏️ Rename", CallbackData: cbSimple(KindRename, self)})
+	}
 	if opts.AllowDelete {
 		last = append(last, Button{Text: "🗑 Delete", CallbackData: cbSimple(KindDelAsk, self)})
 	}

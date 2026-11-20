@@ -42,6 +42,9 @@ func (e *Engine) handleUICallback(ctx context.Context, msg channel.Message) bool
 	case navProfile:
 		e.uiProfile(ctx, msg)
 		return true
+	case navFiles:
+		e.uiFiles(ctx, msg, "")
+		return true
 	case navProjects:
 		e.uiProjects(ctx, msg, 0)
 		return true
@@ -558,6 +561,8 @@ func (e *Engine) handleWizardInput(ctx context.Context, msg channel.Message, w *
 		e.ui.clear()
 		e.createProject(ctx, msg, text, w.Draft["then"], w.Draft["ref"])
 		return true
+	case filemgr.WizardNewDir, filemgr.WizardNewFile, filemgr.WizardRename:
+		return e.wizardFiles(ctx, msg, w, text)
 	case "rename_chat":
 		e.ui.clear()
 		e.renameChat(ctx, msg, w.Draft["ref"], text)

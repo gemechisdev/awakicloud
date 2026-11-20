@@ -594,6 +594,9 @@ func (e *Engine) uiChatCard(ctx context.Context, msg channel.Message, fullID, ba
 	} else {
 		rows = append(rows, []channel.Button{{Text: "💬 New chat", CallbackData: cb("new")}})
 	}
+	if isCur {
+		rows = append(rows, []channel.Button{{Text: "📂 Files", CallbackData: "files:d:0"}})
+	}
 	back := scopeAll
 	if slug != "" {
 		back = scopeProject(slug)

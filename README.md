@@ -74,6 +74,7 @@ Commands are defined in **one catalog** (`internal/channel/commands.go`) that fe
 | `/models` | List / select models |
 | `/provider_add name\|protocol\|base_url\|api_key` | Quick-add provider |
 | `/model_add provider\|model_id\|Display Name` | Quick-add model |
+| `/files [path]` | Browse, view, create, rename, delete and send workspace files |
 | `/projects` | List projects |
 | `/project <name>` | Create project |
 | `/upgrade [name]` | Upgrade chat → project |

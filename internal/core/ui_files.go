@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"strconv"
 	"strings"
 
 	"github.com/gemechischala/awaki/internal/channel"
@@ -57,7 +58,8 @@ func (e *Engine) filesOptions() filemgr.Options {
 		}
 		mode = e.permStore.Get(chatID)
 	}
-	return filemgr.Options{AllowDelete: mode != permission.ModePlan}
+	writable := mode != permission.ModePlan
+	return filemgr.Options{AllowDelete: writable, AllowWrite: writable}
 }
 
 // uiFiles opens the browser (/files [path]).
@@ -78,6 +80,10 @@ func (e *Engine) handleFilesCallback(ctx context.Context, msg channel.Message, d
 		log.Debug().Err(err).Str("data", data).Msg("files: ignoring malformed callback")
 		return true
 	}
+	// Any files button (Cancel included) abandons an open name prompt.
+	if w := e.ui.get(); w != nil && strings.HasPrefix(w.Kind, "files_") {
+		e.ui.clear()
+	}
 	fm, opts, err := e.prepareFiles(ctx)
 	if err != nil {
 		e.deliverFileScreen(ctx, msg, filemgr.ErrorScreen(err))
@@ -96,9 +102,37 @@ func (e *Engine) applyFilesResult(ctx context.Context, msg channel.Message, res 
 		// A code span is tap-to-copy on mobile.
 		_ = msg.Reply.SendText(ctx, "📋 `"+strings.ReplaceAll(res.Copy, "`", "'")+"`")
 	}
+	if res.Prompt != nil {
+		e.ui.set(&uiWizard{Kind: res.Prompt.Kind, Step: "name", Draft: map[string]string{"id": strconv.Itoa(res.Prompt.ID)}})
+	}
+	if res.SendPath != "" && msg.Reply != nil {
+		if err := msg.Reply.SendFile(ctx, res.SendPath, "📄 "+res.SendCaption); err != nil {
+			_ = msg.Reply.SendText(ctx, "Could not send the file: "+err.Error())
+		}
+	}
 	if res.Inject != "" {
 		e.injectFilesFocus(ctx, msg, res.Inject)
 	}
+}
+
+// wizardFiles completes a new-file / new-folder / rename prompt.
+func (e *Engine) wizardFiles(ctx context.Context, msg channel.Message, w *uiWizard, text string) bool {
+	id, err := strconv.Atoi(w.Draft["id"])
+	e.ui.clear()
+	if err != nil {
+		return true
+	}
+	fm, opts, perr := e.prepareFiles(ctx)
+	if perr != nil {
+		e.deliverFileScreen(ctx, msg, filemgr.ErrorScreen(perr))
+		return true
+	}
+	res := fm.Submit(w.Kind, id, text, opts)
+	e.applyFilesResult(ctx, msg, res)
+	if res.Retry && res.Prompt == nil { // defensive: keep the prompt open
+		e.ui.set(w)
+	}
+	return true
 }
 
 // injectFilesFocus hands the focus message to the agent exactly as if the

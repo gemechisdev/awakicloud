@@ -19,6 +19,7 @@ const (
 	navProjects = "📁 Projects"
 	navSettings = "⚙️ Settings"
 	navProfile  = "👤 Profile"
+	navFiles    = "📂 Files"
 )
 
 func mainMenuKeyboard(current string) channel.KeyboardMessage {
@@ -64,7 +65,8 @@ func mainMenuKeyboard(current string) channel.KeyboardMessage {
 		},
 		ReplyKeyboard: [][]string{
 			{navNewChat, navChats},
-			{navProjects, navSettings, navProfile},
+			{navProjects, navFiles},
+			{navSettings, navProfile},
 		},
 	}
 }

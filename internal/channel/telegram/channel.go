@@ -25,6 +25,10 @@ type Channel struct {
 	mu          sync.Mutex
 	mediaGroups map[string]*mediaGroupBuffer
 
+	// msgSerial keeps ordinary (non-command, non-callback) messages in order
+	// while commands and button taps run concurrently on other workers.
+	msgSerial sync.Mutex
+
 	// agentActions maps short ids (callback suffix) → text injected on click.
 	agentActions map[string]string
 	actionSeq    int

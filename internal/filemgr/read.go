@@ -194,6 +194,19 @@ func clipRunes(s string, n int) string {
 	return string([]rune(s)[:n])
 }
 
+var langByExt = map[string]string{
+	"go": "go", "py": "python", "pyw": "python", "js": "javascript", "mjs": "javascript", "cjs": "javascript", "jsx": "javascript",
+	"ts": "typescript", "tsx": "typescript", "json": "json", "jsonc": "json", "yml": "yaml", "yaml": "yaml", "toml": "toml",
+	"md": "markdown", "markdown": "markdown", "sh": "bash", "bash": "bash", "zsh": "bash", "html": "html", "htm": "html",
+	"css": "css", "scss": "scss", "less": "less", "sql": "sql", "rs": "rust", "php": "php", "java": "java", "kt": "kotlin",
+	"kts": "kotlin", "swift": "swift", "c": "c", "h": "c", "cpp": "cpp", "cc": "cpp", "hpp": "cpp", "cs": "csharp",
+	"rb": "ruby", "xml": "xml", "svg": "xml", "env": "ini", "ini": "ini", "cfg": "ini", "conf": "ini", "lua": "lua",
+	"dart": "dart", "r": "r", "pl": "perl", "scala": "scala", "ex": "elixir", "exs": "elixir", "hs": "haskell",
+	"vue": "html", "svelte": "html", "graphql": "graphql", "gql": "graphql", "proto": "protobuf", "tf": "hcl",
+	"diff": "diff", "patch": "diff", "ps1": "powershell", "bat": "batch", "cmd": "batch", "csv": "csv", "tex": "latex",
+	"gradle": "groovy", "groovy": "groovy", "vim": "vim", "nginx": "nginx", "dockerfile": "dockerfile", "mk": "makefile",
+}
+
 // Lang maps a file name to a code-fence language hint ("" = none).
 func Lang(name string) string {
 	lower := strings.ToLower(name)
@@ -207,47 +220,8 @@ func Lang(name string) string {
 	if i < 0 {
 		return ""
 	}
-	switch lower[i+1:] {
-	case "go":
-		return "go"
-	case "py":
-		return "python"
-	case "js", "mjs", "cjs", "jsx":
-		return "javascript"
-	case "ts", "tsx":
-		return "typescript"
-	case "json":
-		return "json"
-	case "yml", "yaml":
-		return "yaml"
-	case "toml":
-		return "toml"
-	case "md", "markdown":
-		return "markdown"
-	case "sh", "bash", "zsh":
-		return "bash"
-	case "html", "htm":
-		return "html"
-	case "css":
-		return "css"
-	case "sql":
-		return "sql"
-	case "rs":
-		return "rust"
-	case "php":
-		return "php"
-	case "java":
-		return "java"
-	case "c", "h":
-		return "c"
-	case "cpp", "cc", "hpp":
-		return "cpp"
-	case "rb":
-		return "ruby"
-	case "xml":
-		return "xml"
-	case "env", "ini", "cfg", "conf":
-		return "ini"
+	if l, ok := langByExt[lower[i+1:]]; ok {
+		return l
 	}
 	return ""
 }

@@ -15,7 +15,37 @@ type mediaGroupBuffer struct {
 	timer    *time.Timer
 }
 
+// isPriorityUpdate reports updates that must never wait behind ordinary
+// messages: button taps and registered slash commands (/stop above all).
+func isPriorityUpdate(update *models.Update) bool {
+	if update == nil {
+		return false
+	}
+	if update.CallbackQuery != nil {
+		return true
+	}
+	if m := update.Message; m != nil && m.MediaGroupID == "" {
+		return isRegisteredCommand(m.Text)
+	}
+	return false
+}
+
+// defaultHandler is the single entry point for updates. The Telegram library
+// runs several workers (see client.New), so a slow handler no longer stalls
+// the whole update stream. Priority updates (commands, button taps) run
+// immediately on their worker; everything else is serialised so ordinary
+// messages keep their order.
 func (c *Channel) defaultHandler(ctx context.Context, update *models.Update) {
+	if isPriorityUpdate(update) {
+		c.dispatchUpdate(ctx, update)
+		return
+	}
+	c.msgSerial.Lock()
+	defer c.msgSerial.Unlock()
+	c.dispatchUpdate(ctx, update)
+}
+
+func (c *Channel) dispatchUpdate(ctx context.Context, update *models.Update) {
 	if update.PollAnswer != nil {
 		c.handlePollAnswer(ctx, update.PollAnswer)
 		return

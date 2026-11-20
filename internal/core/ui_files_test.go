@@ -99,3 +99,92 @@ func TestFilesStaleAndMalformedCallbacks(t *testing.T) {
 		t.Fatal("malformed callback must not send anything")
 	}
 }
+
+func TestReplyKeyboardHasFilesAndOpensBrowser(t *testing.T) {
+	h, _ := filesHarness(t)
+	h.cmd(channel.CmdStart, "")
+	flat := ""
+	for _, r := range h.ch.last().ReplyKeyboard {
+		flat += strings.Join(r, "|") + "\n"
+	}
+	if !strings.Contains(flat, navFiles) {
+		t.Fatalf("reply keyboard lacks Files: %q", flat)
+	}
+	h.tap(navFiles)
+	if !strings.Contains(h.ch.last().Text, "📂") || !hasCallback(h.ch.last(), "files:f:") {
+		t.Fatalf("Files label should open the browser:\n%s", h.ch.last().Text)
+	}
+}
+
+func TestCurrentChatAndProjectScreensOfferFiles(t *testing.T) {
+	h := newHarness(t)
+	slug := h.mkProject("Shop")
+	h.tap("ui:nc:" + slug)
+	h.say("hello")
+	h.cmd(channel.CmdChat, "")
+	if !hasCallback(h.ch.last(), "files:d:0") {
+		t.Fatalf("current chat card lacks Files: %+v", buttons(h.ch.last()))
+	}
+	h.tap("ui:pd:" + slug)
+	if !hasCallback(h.ch.last(), "files:d:0") {
+		t.Fatalf("open project's detail lacks Files: %+v", buttons(h.ch.last()))
+	}
+	other := h.mkProject("Other")
+	h.tap("ui:pd:" + other) // not the active workspace → no Files button
+	if hasCallback(h.ch.last(), "files:d:0") {
+		t.Fatal("Files must only be offered for the open project")
+	}
+}
+
+func TestFilesCreateRenameViaPrompts(t *testing.T) {
+	h, root := filesHarness(t)
+	h.tap("files:d:0")
+	h.tap("files:newfile:0")
+	if w := h.e.ui.get(); w == nil || w.Kind != "files_newfile" {
+		t.Fatalf("prompt wizard not open: %+v", w)
+	}
+	h.tap("notes/todo.md\n- [ ] ship it") // owner's reply is consumed by the wizard
+	if b, err := os.ReadFile(filepath.Join(root, "notes", "todo.md")); err != nil || string(b) != "- [ ] ship it\n" {
+		t.Fatalf("file not created: %q %v", b, err)
+	}
+	if h.e.ui.get() != nil {
+		t.Fatal("wizard must close after success")
+	}
+	// a taken name keeps the prompt open
+	h.tap("files:newfile:0")
+	h.tap("main.go")
+	if w := h.e.ui.get(); w == nil || !strings.Contains(h.ch.last().Text, "already exists") {
+		t.Fatalf("expected retry prompt:\n%s", h.ch.last().Text)
+	}
+	// Cancel button (a files callback) closes the prompt
+	h.tap(callbackFor(t, h.ch.last(), "files:d:"))
+	if h.e.ui.get() != nil {
+		t.Fatal("cancel must clear the prompt")
+	}
+	// rename via prompt
+	h.tap("files:d:0")
+	open := callbackFor(t, h.ch.last(), "files:f:")
+	h.tap(open)
+	h.tap(callbackFor(t, h.ch.last(), "files:ren:"))
+	h.tap("renamed.go")
+	entries, _ := os.ReadDir(root)
+	found := false
+	for _, e := range entries {
+		if e.Name() == "renamed.go" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("rename did not happen: %v", entries)
+	}
+}
+
+func TestFilesSendUploadsFile(t *testing.T) {
+	h, root := filesHarness(t)
+	h.tap("files:d:0")
+	h.tap(callbackFor(t, h.ch.last(), "files:f:"))
+	h.tap(callbackFor(t, h.ch.last(), "files:send:"))
+	if len(h.rep.files) != 1 || h.rep.files[0] != filepath.Join(root, "main.go") {
+		t.Fatalf("uploaded = %v", h.rep.files)
+	}
+}

@@ -20,6 +20,7 @@ import (
 type fakeReplier struct {
 	mu    sync.Mutex
 	texts []string
+	files []string
 }
 
 func (r *fakeReplier) SendText(_ context.Context, t string) error {
@@ -28,7 +29,12 @@ func (r *fakeReplier) SendText(_ context.Context, t string) error {
 	r.mu.Unlock()
 	return nil
 }
-func (r *fakeReplier) SendFile(context.Context, string, string) error { return nil }
+func (r *fakeReplier) SendFile(_ context.Context, path, _ string) error {
+	r.mu.Lock()
+	r.files = append(r.files, path)
+	r.mu.Unlock()
+	return nil
+}
 func (r *fakeReplier) SendTyping(context.Context) error               { return nil }
 func (r *fakeReplier) SendAsk(context.Context, string, transport.AskKind, []transport.AskOption) error {
 	return nil

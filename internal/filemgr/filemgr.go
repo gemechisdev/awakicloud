@@ -21,12 +21,18 @@ import (
 const (
 	CallbackPrefix = "files:"
 
-	PageSize     = 12   // entries per browse page
+	PageSize     = 24   // entries per browse page (2-column grid)
 	MaxList      = 500  // hard cap on entries listed from one directory
 	PreviewRunes = 4500 // visible runes of file content per screen
 	MaxLineRunes = 1000 // a single line is clipped past this
 	MaxNodes     = 2000 // path-index size before it is reset
 	maxCopyText  = 256  // Telegram copy_text limit
+
+	GridCols       = 2         // buttons per row in the folder grid
+	GridLabelRunes = 15        // label width that fits a 2-column row on phones
+	MaxSendBytes   = 50 << 20  // Telegram bot upload limit
+	MaxCreateBytes = 256 << 10 // initial content accepted when creating a file
+	MaxNameDepth   = 8
 )
 
 var (

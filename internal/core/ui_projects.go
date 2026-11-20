@@ -347,6 +347,10 @@ func (e *Engine) uiProjectDetail(ctx context.Context, msg channel.Message, slug,
 		second = append(second, channel.Button{Text: "☁ Sync now", CallbackData: cb("psync", slug)})
 	}
 	rows = append(rows, second)
+	if e.currentProjectSlug() == slug {
+		// the browser shows the active workspace, so only offer it for the open project
+		rows = append(rows, []channel.Button{{Text: "📂 Files", CallbackData: "files:d:0"}})
+	}
 	rows = append(rows, []channel.Button{
 		{Text: "📌 Use for current chat", CallbackData: cb("pmv", slug)},
 		{Text: "✏ Rename", CallbackData: cb("pren", slug)},

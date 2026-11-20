@@ -317,7 +317,7 @@ func TestDirScreenRoot(t *testing.T) {
 			t.Errorf("text missing %q:\n%s", want, s.Text)
 		}
 	}
-	for _, label := range []string{"🔄 Refresh", "⬅ Home", "📁 src/", "📄 main.go"} {
+	for _, label := range []string{"🔄 Refresh", "⬅ Home", "📁 src", "📄 main.go"} {
 		findBtn(t, s, label)
 	}
 	for _, b := range allButtons(s) {
@@ -330,7 +330,7 @@ func TestDirScreenRoot(t *testing.T) {
 func TestDirScreenSubdirHasUpAndRoot(t *testing.T) {
 	m, _ := newTree(t)
 	root := m.Dir(0, 0, Options{})
-	src := act(t, findBtn(t, root, "📁 src/").CallbackData)
+	src := act(t, findBtn(t, root, "📁 src").CallbackData)
 	s := m.Dir(src.ID, 0, Options{})
 	up := findBtn(t, s, "⬆️ Up")
 	if a := act(t, up.CallbackData); a.ID != 0 {
@@ -340,7 +340,7 @@ func TestDirScreenSubdirHasUpAndRoot(t *testing.T) {
 		t.Fatalf("Root button = %+v", a)
 	}
 	// nested
-	deep := act(t, findBtn(t, s, "📁 deep/").CallbackData)
+	deep := act(t, findBtn(t, s, "📁 deep").CallbackData)
 	ds := m.Dir(deep.ID, 0, Options{})
 	upDeep := act(t, findBtn(t, ds, "⬆️ Up").CallbackData)
 	if upDeep.ID != src.ID {
@@ -352,7 +352,7 @@ func TestEmptyDirectory(t *testing.T) {
 	m, root := newTree(t)
 	os.Mkdir(filepath.Join(root, "void"), 0o755)
 	s := m.Dir(0, 0, Options{})
-	void := act(t, findBtn(t, s, "📁 void/").CallbackData)
+	void := act(t, findBtn(t, s, "📁 void").CallbackData)
 	es := m.Dir(void.ID, 0, Options{})
 	if !strings.Contains(es.Text, "Empty directory") {
 		t.Fatalf("want Empty directory:\n%s", es.Text)
@@ -363,7 +363,7 @@ func TestEmptyDirectory(t *testing.T) {
 
 func TestPagination(t *testing.T) {
 	root := t.TempDir()
-	for i := 0; i < 30; i++ {
+	for i := 0; i < 60; i++ {
 		os.WriteFile(filepath.Join(root, fmt.Sprintf("f%02d.txt", i)), []byte("x"), 0o644)
 	}
 	m := New()
@@ -391,7 +391,7 @@ func TestPagination(t *testing.T) {
 		t.Fatalf("Next arg = %d, want 1", next.Arg)
 	}
 	p2 := m.Handle(next, Options{}).Screen
-	if !strings.Contains(p2.Text, "page 2/3") || !strings.Contains(p2.Text, "f12.txt") {
+	if !strings.Contains(p2.Text, "page 2/3") || !strings.Contains(p2.Text, "f24.txt") {
 		t.Fatalf("page 2:\n%s", p2.Text)
 	}
 	last := m.Dir(0, 99, Options{}) // clamps
@@ -697,7 +697,7 @@ func TestDeleteDisabledInPlanMode(t *testing.T) {
 func TestDeleteRefusesDirsAndRoot(t *testing.T) {
 	m, root := newTree(t)
 	opts := Options{AllowDelete: true}
-	src := act(t, findBtn(t, m.Dir(0, 0, opts), "📁 src/").CallbackData)
+	src := act(t, findBtn(t, m.Dir(0, 0, opts), "📁 src").CallbackData)
 	for _, kind := range []string{KindDelAsk, KindDelete} {
 		res := m.Handle(Action{Kind: kind, ID: src.ID}, opts)
 		if !strings.Contains(res.Screen.Text, "only files") {

@@ -8,12 +8,16 @@ import (
 
 // Action kinds (second segment of the callback).
 const (
-	KindDir     = "d"      // files:d:<id>[:<page>]
-	KindFile    = "f"      // files:f:<id>[:<line>]
-	KindCopy    = "copy"   // files:copy:<id>
-	KindEdit    = "edit"   // files:edit:<id>
-	KindDelAsk  = "delask" // files:delask:<id>
-	KindDelete  = "del"    // files:del:<id>
+	KindDir     = "d"       // files:d:<id>[:<page>]
+	KindFile    = "f"       // files:f:<id>[:<line>]
+	KindCopy    = "copy"    // files:copy:<id>
+	KindEdit    = "edit"    // files:edit:<id>
+	KindDelAsk  = "delask"  // files:delask:<id>
+	KindDelete  = "del"     // files:del:<id>
+	KindSend    = "send"    // files:send:<id>    send the file itself
+	KindNewDir  = "newdir"  // files:newdir:<id>  prompt: new folder in <id>
+	KindNewFile = "newfile" // files:newfile:<id> prompt: new file in <id>
+	KindRename  = "ren"     // files:ren:<id>     prompt: rename <id>
 	maxCbNumber = 1<<31 - 1
 )
 
@@ -38,7 +42,7 @@ func ParseCallback(data string) (Action, error) {
 	switch a.Kind {
 	case KindDir, KindFile:
 		// optional third segment
-	case KindCopy, KindEdit, KindDelAsk, KindDelete:
+	case KindCopy, KindEdit, KindDelAsk, KindDelete, KindSend, KindNewDir, KindNewFile, KindRename:
 		if len(parts) != 2 {
 			return Action{}, fmt.Errorf("malformed files callback %q", data)
 		}

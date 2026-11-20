@@ -77,6 +77,23 @@ func (w *htmlWriter) writeRaw(s string) {
 	w.plain.WriteString(s)
 }
 
+// safeCodeLang keeps only characters valid in a language class name.
+func safeCodeLang(b []byte) string {
+	lang := strings.ToLower(strings.TrimSpace(string(b)))
+	if i := strings.IndexAny(lang, " \t{"); i >= 0 {
+		lang = lang[:i]
+	}
+	if len(lang) == 0 || len(lang) > 30 {
+		return ""
+	}
+	for _, r := range lang {
+		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '+' || r == '#' || r == '-' || r == '_') {
+			return ""
+		}
+	}
+	return lang
+}
+
 func (w *htmlWriter) openTag(open, close string) {
 	w.html.WriteString(open)
 	w.tagStack = append(w.tagStack, tagEntry{open: open, close: close})
@@ -220,7 +237,14 @@ func (w *htmlWriter) walkNode(n ast.Node, source []byte) {
 		w.closeTag()
 
 	case *ast.FencedCodeBlock, *ast.CodeBlock:
-		w.openTag("<pre><code>", "</code></pre>")
+		openPre := "<pre><code>"
+		if fb, ok := n.(*ast.FencedCodeBlock); ok {
+			// Telegram highlights <code class="language-x"> blocks.
+			if lang := safeCodeLang(fb.Language(source)); lang != "" {
+				openPre = `<pre><code class="language-` + lang + `">`
+			}
+		}
+		w.openTag(openPre, "</code></pre>")
 		lines := n.Lines()
 		for i := 0; i < lines.Len(); i++ {
 			seg := lines.At(i)

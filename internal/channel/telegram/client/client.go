@@ -28,6 +28,9 @@ func New(token string, handler UpdateHandler) (*Client, error) {
 	httpClient := &http.Client{Timeout: pollTimeout}
 	b, err := bot.New(token,
 		bot.WithHTTPClient(pollTimeout, httpClient),
+		// Default is 1 worker: one slow handler would block every later update,
+		// including /stop. Ordinary messages are re-serialised in defaultHandler.
+		bot.WithWorkers(8),
 		bot.WithDefaultHandler(func(ctx context.Context, _ *bot.Bot, update *models.Update) {
 			handler(ctx, update)
 		}),
