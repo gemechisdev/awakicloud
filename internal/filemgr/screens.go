@@ -54,6 +54,8 @@ type Result struct {
 	// SendPath, if set, is an absolute path the UI should upload as a file.
 	SendPath    string
 	SendCaption string
+	// SendTemp means SendPath is a temporary file the UI must delete after sending.
+	SendTemp bool
 }
 
 // ---------------------------------------------------------------- handling
@@ -127,6 +129,16 @@ func (m *Manager) Handle(a Action, opts Options) Result {
 			return errResult(fmt.Errorf("file is %s — over Telegram's %s upload limit", HumanSize(st.Size()), HumanSize(MaxSendBytes)))
 		}
 		return Result{NoScreen: true, SendPath: abs, SendCaption: m.Rel(abs)}
+	case KindSearch: // read-only features stay available in plan mode
+		return m.prompt(a)
+	case KindRecent:
+		return Result{Screen: m.RecentScreen(opts)}
+	case KindZip:
+		zp, name, err := m.ZipFolder(a.ID)
+		if err != nil {
+			return errResult(err)
+		}
+		return Result{NoScreen: true, SendPath: zp, SendCaption: name, SendTemp: true}
 	case KindUndo:
 		if !opts.AllowWrite {
 			opts.Notice = "🔒 Undo is disabled in plan mode."
@@ -284,6 +296,11 @@ func (m *Manager) Dir(id, page int, opts Options) Screen {
 	}
 	nav = append(nav, Button{Text: "🔄 Refresh", CallbackData: cbDir(self, page)})
 	rows = append(rows, nav)
+	rows = append(rows, []Button{
+		{Text: "🔍 Search", CallbackData: cbSimple(KindSearch, self)},
+		{Text: "📦 ZIP", CallbackData: cbSimple(KindZip, self)},
+		{Text: "🕘 Recent", CallbackData: cbSimple(KindRecent, 0)},
+	})
 	if opts.AllowWrite {
 		w := []Button{
 			{Text: "➕ File", CallbackData: cbSimple(KindNewFile, self)},
@@ -367,6 +384,7 @@ func (m *Manager) File(id, line int, opts Options) Screen {
 		return m.Dir(id, 0, opts)
 	}
 	self := m.touch(abs)
+	m.noteRecent(abs)
 	pg, err := ReadPage(abs, line, PreviewRunes)
 	if err != nil {
 		return ErrorScreen(fmt.Errorf("cannot read file: %w", err))

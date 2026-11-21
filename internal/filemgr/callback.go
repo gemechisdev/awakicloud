@@ -23,6 +23,9 @@ const (
 	KindLines   = "lines"   // files:lines:<id>   prompt: +/- and range line edits
 	KindGetDoc  = "getdoc"  // files:getdoc:<id>  send the file, prompt for the edited copy
 	KindFileNum = "fn"      // files:fn:<id>[:<line>]  file view with line numbers
+	KindSearch  = "find"    // files:find:<id>    prompt: search under folder <id>
+	KindZip     = "zip"     // files:zip:<id>     send folder as a .zip
+	KindRecent  = "rec"     // files:rec:0        recently opened files
 	KindUndo    = "undo"    // files:undo:<seq>   revert an edit
 	KindRename  = "ren"     // files:ren:<id>     prompt: rename <id>
 	maxCbNumber = 1<<31 - 1
@@ -49,7 +52,7 @@ func ParseCallback(data string) (Action, error) {
 	switch a.Kind {
 	case KindDir, KindFile, KindFileNum:
 		// optional third segment
-	case KindCopy, KindEdit, KindDelAsk, KindDelete, KindSend, KindNewDir, KindNewFile, KindRename, KindUpload, KindReplace, KindPatch, KindUndo, KindLines, KindGetDoc:
+	case KindCopy, KindEdit, KindDelAsk, KindDelete, KindSend, KindNewDir, KindNewFile, KindRename, KindUpload, KindReplace, KindPatch, KindUndo, KindLines, KindGetDoc, KindSearch, KindZip, KindRecent:
 		if len(parts) != 2 {
 			return Action{}, fmt.Errorf("malformed files callback %q", data)
 		}

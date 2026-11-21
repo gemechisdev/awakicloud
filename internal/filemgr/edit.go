@@ -20,6 +20,7 @@ const (
 	WizardPatch       = "files_patch"
 	WizardLines       = "files_lines"
 	WizardDoc         = "files_doc"
+	WizardSearch      = "files_search"
 )
 
 // Prompt asks the engine to collect one line of text from the owner.
@@ -197,6 +198,16 @@ func (m *Manager) prompt(a Action) Result {
 			Screen: promptScreen("🔎 **Replace in** "+code(m.Rel(abs))+"\n\nSend the text to find (case-sensitive). Start with `re:` for a regular expression.", cancel),
 			Prompt: &Prompt{Kind: WizardReplaceFind, ID: self, CancelData: cancel},
 		}
+	case KindSearch:
+		if st, err := os.Stat(abs); err == nil && !st.IsDir() {
+			abs = filepath.Dir(abs)
+		}
+		self := m.touch(abs)
+		cancel := cbDir(self, 0)
+		return Result{
+			Screen: promptScreen("🔍 **Search in** "+code(m.Display(abs))+"\n\nSend text to find in file names and file contents (case-insensitive). Start with `re:` for a regular expression.", cancel),
+			Prompt: &Prompt{Kind: WizardSearch, ID: self, CancelData: cancel},
+		}
 	case KindLines:
 		if st, err := os.Stat(abs); err != nil || st.IsDir() {
 			return errResult(errors.New("open a file first, then tap Edit lines"))
@@ -258,6 +269,9 @@ func promptScreen(text, cancel string) Screen {
 // Submit completes a prompt with the owner's text. On a fixable mistake
 // (bad or taken name) Retry is set so the engine keeps the prompt open.
 func (m *Manager) Submit(kind string, id int, text string, opts Options) Result {
+	if kind == WizardSearch { // read-only: allowed in plan mode
+		return Result{Screen: m.SearchScreen(id, text, opts)}
+	}
 	if !opts.AllowWrite {
 		opts.Notice = "🔒 Creating and renaming are disabled in plan mode."
 		return Result{Screen: m.File(id, 0, opts)}

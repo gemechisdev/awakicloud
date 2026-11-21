@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/gemechischala/awaki/internal/channel"
+	"github.com/gemechischala/awaki/internal/permission"
 	"github.com/gemechischala/awaki/internal/transport"
 	"github.com/gemechischala/awaki/internal/workspace"
 )
@@ -308,5 +309,87 @@ func TestFilesLineEditAndManualEditFlows(t *testing.T) {
 	h.tap("File: gen/x.go\n```go\npackage gen\n```")
 	if b, _ := os.ReadFile(filepath.Join(root, "gen", "x.go")); string(b) != "package gen\n" {
 		t.Fatalf("path-header paste failed: %q", b)
+	}
+}
+
+func TestFilesSearchZipRecentFlows(t *testing.T) {
+	h, root := filesHarness(t)
+	os.WriteFile(filepath.Join(root, "src", "needle.txt"), []byte("find the NEEDLE here\n"), 0o644)
+	h.tap("files:d:0")
+
+	// search prompt → results → open the hit
+	h.tap("files:find:0")
+	if w := h.e.ui.get(); w == nil || w.Kind != "files_search" {
+		t.Fatalf("search wizard: %+v", w)
+	}
+	h.tap("needle")
+	if h.e.ui.get() != nil {
+		t.Fatal("wizard must close after the search")
+	}
+	if !strings.Contains(h.ch.last().Text, "src/needle.txt") {
+		t.Fatalf("results:\n%s", h.ch.last().Text)
+	}
+	h.tap(callbackFor(t, h.ch.last(), "files:fn:")) // content hit opens numbered view
+	if !strings.Contains(h.ch.last().Text, "NEEDLE") {
+		t.Fatalf("hit view:\n%s", h.ch.last().Text)
+	}
+
+	// recent
+	h.tap("files:rec:0")
+	if !strings.Contains(h.ch.last().Text, "needle.txt") {
+		t.Fatalf("recent:\n%s", h.ch.last().Text)
+	}
+
+	// zip: sent, and the temp file is gone afterwards
+	h.tap("files:d:0")
+	h.tap(callbackFor(t, h.ch.last(), "files:zip:"))
+	var zipPath string
+	for _, f := range h.rep.files {
+		if strings.HasSuffix(f, ".zip") {
+			zipPath = f
+		}
+	}
+	if zipPath == "" {
+		t.Fatalf("zip was not sent: %v", h.rep.files)
+	}
+	if _, err := os.Stat(zipPath); !os.IsNotExist(err) {
+		t.Fatalf("temp zip must be deleted after sending: %v", err)
+	}
+}
+
+func TestFilesPlanModeKeepsReadOnlyFeaturesAndBlocksWrites(t *testing.T) {
+	h, root := filesHarness(t)
+	store := permission.NewStore(t.TempDir())
+	h.e.permStore = store
+	if err := store.SetDefault(permission.ModePlan); err != nil {
+		t.Fatal(err)
+	}
+	h.tap("files:d:0")
+	for _, b := range buttons(h.ch.last()) {
+		for _, bad := range []string{"➕", "Upload", "patch", "Rename"} {
+			if strings.Contains(b.Text, bad) {
+				t.Fatalf("plan mode must hide %q", b.Text)
+			}
+		}
+	}
+	// read-only: search works
+	h.tap("files:find:0")
+	h.tap("main")
+	if !strings.Contains(h.ch.last().Text, "main.go") {
+		t.Fatalf("search in plan mode:\n%s", h.ch.last().Text)
+	}
+	// writes are refused even if someone forges the callback
+	h.tap("files:newfile:0")
+	if h.e.ui.get() != nil {
+		t.Fatal("no prompt may open in plan mode")
+	}
+	if !strings.Contains(h.ch.last().Text, "disabled in plan mode") {
+		t.Fatalf("refusal:\n%s", h.ch.last().Text)
+	}
+	h.tap("files:d:0")
+	h.tap("files:f:" + idOf(t, h, "main.go"))
+	h.tap("files:del:" + strings.TrimPrefix(callbackFor(t, h.ch.last(), "files:copy:"), "files:copy:"))
+	if _, err := os.Stat(filepath.Join(root, "main.go")); err != nil {
+		t.Fatal("forged delete must not work in plan mode")
 	}
 }

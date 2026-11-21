@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"os"
 	"strconv"
 	"strings"
 
@@ -109,9 +110,18 @@ func (e *Engine) applyFilesResult(ctx context.Context, msg channel.Message, res 
 		}
 		e.ui.set(&uiWizard{Kind: res.Prompt.Kind, Step: "input", Draft: draft})
 	}
-	if res.SendPath != "" && msg.Reply != nil {
-		if err := msg.Reply.SendFile(ctx, res.SendPath, "📄 "+res.SendCaption); err != nil {
-			_ = msg.Reply.SendText(ctx, "Could not send the file: "+err.Error())
+	if res.SendPath != "" {
+		if res.SendTemp {
+			defer os.Remove(res.SendPath) // temporary zip: always clean up
+		}
+		if msg.Reply != nil {
+			icon := "📄 "
+			if res.SendTemp {
+				icon = "📦 "
+			}
+			if err := msg.Reply.SendFile(ctx, res.SendPath, icon+res.SendCaption); err != nil {
+				_ = msg.Reply.SendText(ctx, "Could not send the file: "+err.Error())
+			}
 		}
 	}
 	if res.Inject != "" {

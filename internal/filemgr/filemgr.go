@@ -62,6 +62,8 @@ type Manager struct {
 	// undo history for edits (upload / replace / patch); see undo.go.
 	undo    []undoGroup
 	undoSeq int
+
+	recent []string // recently opened files this session (newest first)
 }
 
 // New returns an empty manager. Call SetRoot before use.
