@@ -147,6 +147,15 @@ func (e *Engine) wizardFiles(ctx context.Context, msg channel.Message, w *uiWiza
 			return true
 		}
 		res = fm.SubmitUpload(id, ups, opts)
+	case filemgr.WizardDoc:
+		if len(msg.Attachments) == 0 {
+			p := fm.Handle(filemgr.Action{Kind: filemgr.KindGetDoc, ID: id}, opts)
+			p.SendPath, p.SendCaption = "", "" // do not resend the file, just keep waiting
+			p.Screen.Text = "⚠️ Send the edited file as a document.\n\n" + p.Screen.Text
+			e.applyFilesResult(ctx, msg, p)
+			return true
+		}
+		res = fm.SubmitDoc(id, msg.Attachments[0].Data, opts)
 	case filemgr.WizardPatch:
 		if len(msg.Attachments) > 0 {
 			text = string(msg.Attachments[0].Data)

@@ -262,3 +262,51 @@ func (h *harness) say2(in channel.Message) {
 		h.t.Fatalf("message %q was not handled", in.Text)
 	}
 }
+
+func TestFilesLineEditAndManualEditFlows(t *testing.T) {
+	h, root := filesHarness(t)
+	os.WriteFile(filepath.Join(root, "t.txt"), []byte("a\nb\nc\n"), 0o644)
+	h.tap("files:d:0")
+	h.tap("files:f:" + idOf(t, h, "t.txt"))
+
+	// numbered view toggle
+	h.tap(callbackFor(t, h.ch.last(), "files:fn:"))
+	if !strings.Contains(h.ch.last().Text, "1│ a") {
+		t.Fatalf("numbers:\n%s", h.ch.last().Text)
+	}
+	// line edit via prompt
+	h.tap(callbackFor(t, h.ch.last(), "files:lines:"))
+	if w := h.e.ui.get(); w == nil || w.Kind != "files_lines" {
+		t.Fatalf("wizard: %+v", w)
+	}
+	h.tap("@2\n-b\n+BEE")
+	if b, _ := os.ReadFile(filepath.Join(root, "t.txt")); string(b) != "a\nBEE\nc\n" {
+		t.Fatalf("line edit failed: %q", b)
+	}
+	// manual edit: file is sent, then the edited document replaces it
+	h.tap(callbackFor(t, h.ch.last(), "files:getdoc:"))
+	if len(h.rep.files) != 1 || h.rep.files[0] != filepath.Join(root, "t.txt") {
+		t.Fatalf("file not sent for editing: %v", h.rep.files)
+	}
+	h.tap("some words") // text instead of a document: keep waiting
+	if h.e.ui.get() == nil || !strings.Contains(h.ch.last().Text, "Send the edited file") {
+		t.Fatalf("reminder:\n%s", h.ch.last().Text)
+	}
+	if len(h.rep.files) != 1 {
+		t.Fatal("reminder must not resend the file")
+	}
+	h.say2(channel.Message{Text: "[File: whatever.txt]", Attachments: []transport.Attachment{{Filename: "whatever.txt", Data: []byte("edited\n")}}})
+	if b, _ := os.ReadFile(filepath.Join(root, "t.txt")); string(b) != "edited\n" {
+		t.Fatalf("manual edit failed: %q", b)
+	}
+	h.tap(callbackFor(t, h.ch.last(), "files:undo:"))
+	if b, _ := os.ReadFile(filepath.Join(root, "t.txt")); string(b) != "a\nBEE\nc\n" {
+		t.Fatalf("undo failed: %q", b)
+	}
+	// pasted code block with a path header
+	h.tap("files:patch:0")
+	h.tap("File: gen/x.go\n```go\npackage gen\n```")
+	if b, _ := os.ReadFile(filepath.Join(root, "gen", "x.go")); string(b) != "package gen\n" {
+		t.Fatalf("path-header paste failed: %q", b)
+	}
+}

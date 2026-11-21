@@ -20,6 +20,9 @@ const (
 	KindUpload  = "upl"     // files:upl:<id>     prompt: upload files into folder <id>
 	KindReplace = "repl"    // files:repl:<id>    prompt: find & replace in file <id>
 	KindPatch   = "patch"   // files:patch:<id>   prompt: apply a unified diff
+	KindLines   = "lines"   // files:lines:<id>   prompt: +/- and range line edits
+	KindGetDoc  = "getdoc"  // files:getdoc:<id>  send the file, prompt for the edited copy
+	KindFileNum = "fn"      // files:fn:<id>[:<line>]  file view with line numbers
 	KindUndo    = "undo"    // files:undo:<seq>   revert an edit
 	KindRename  = "ren"     // files:ren:<id>     prompt: rename <id>
 	maxCbNumber = 1<<31 - 1
@@ -44,9 +47,9 @@ func ParseCallback(data string) (Action, error) {
 	}
 	a := Action{Kind: parts[0]}
 	switch a.Kind {
-	case KindDir, KindFile:
+	case KindDir, KindFile, KindFileNum:
 		// optional third segment
-	case KindCopy, KindEdit, KindDelAsk, KindDelete, KindSend, KindNewDir, KindNewFile, KindRename, KindUpload, KindReplace, KindPatch, KindUndo:
+	case KindCopy, KindEdit, KindDelAsk, KindDelete, KindSend, KindNewDir, KindNewFile, KindRename, KindUpload, KindReplace, KindPatch, KindUndo, KindLines, KindGetDoc:
 		if len(parts) != 2 {
 			return Action{}, fmt.Errorf("malformed files callback %q", data)
 		}
@@ -96,6 +99,13 @@ func cbFile(id, line int) string {
 		return fmt.Sprintf("files:f:%d:%d", id, line)
 	}
 	return fmt.Sprintf("files:f:%d", id)
+}
+
+func cbFileN(id, line int) string {
+	if line > 1 {
+		return fmt.Sprintf("files:fn:%d:%d", id, line)
+	}
+	return fmt.Sprintf("files:fn:%d", id)
 }
 
 func cbSimple(kind string, id int) string { return fmt.Sprintf("files:%s:%d", kind, id) }

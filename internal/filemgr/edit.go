@@ -18,6 +18,8 @@ const (
 	WizardReplaceFind = "files_replace_find"
 	WizardReplaceWith = "files_replace_with"
 	WizardPatch       = "files_patch"
+	WizardLines       = "files_lines"
+	WizardDoc         = "files_doc"
 )
 
 // Prompt asks the engine to collect one line of text from the owner.
@@ -195,6 +197,26 @@ func (m *Manager) prompt(a Action) Result {
 			Screen: promptScreen("🔎 **Replace in** "+code(m.Rel(abs))+"\n\nSend the text to find (case-sensitive). Start with `re:` for a regular expression.", cancel),
 			Prompt: &Prompt{Kind: WizardReplaceFind, ID: self, CancelData: cancel},
 		}
+	case KindLines:
+		if st, err := os.Stat(abs); err != nil || st.IsDir() {
+			return errResult(errors.New("open a file first, then tap Edit lines"))
+		}
+		self := m.touch(abs)
+		cancel := cbFileN(self, 0)
+		return Result{
+			Screen: promptScreen("🧮 **Edit lines** in "+code(m.Rel(abs))+"\n\nTap 🔢 Lines on the file to see line numbers. Send one or more blocks:\n\n```\n@12\n+new line inserted here\n-line to delete (must match)\n kept line (starts with a space)\n```\n`@40-45` followed by plain text replaces those lines (`"+EmptyReplacement+"` deletes them). Line numbers refer to the file as it is now.", cancel),
+			Prompt: &Prompt{Kind: WizardLines, ID: self, CancelData: cancel},
+		}
+	case KindGetDoc:
+		if st, err := os.Stat(abs); err != nil || st.IsDir() {
+			return errResult(errors.New("open a file first"))
+		}
+		self := m.touch(abs)
+		cancel := cbFile(self, 0)
+		return Result{
+			Screen: promptScreen("📝 **Edit as file** — "+code(m.Rel(abs))+"\n\nI sent you the file. Edit it, then send the edited document back; it replaces the original (↩ Undo available). The file name does not need to match.", cancel),
+			Prompt: &Prompt{Kind: WizardDoc, ID: self, CancelData: cancel},
+		}
 	case KindUpload, KindPatch:
 		if st, err := os.Stat(abs); err == nil && !st.IsDir() {
 			abs = filepath.Dir(abs)
@@ -208,7 +230,7 @@ func (m *Manager) prompt(a Action) Result {
 			}
 		}
 		return Result{
-			Screen: promptScreen("🩹 **Apply patch**\n\nPaste a unified diff or upload a `.patch` file. Paths start at the workspace root (git `a/…` `b/…` or plain). All hunks must match, otherwise nothing is changed.", cancel),
+			Screen: promptScreen("🩹 **Apply patch**\n\nPaste a unified diff or upload a `.patch` file. Paths start at the workspace root (git `a/…` `b/…` or plain). All hunks must match, otherwise nothing is changed.\n\nOr paste whole files as `File: path/to/x.go` followed by the code (optionally in a code block).", cancel),
 			Prompt: &Prompt{Kind: WizardPatch, ID: self, CancelData: cancel},
 		}
 	default:
@@ -253,6 +275,10 @@ func (m *Manager) Submit(kind string, id int, text string, opts Options) Result 
 			a = Action{Kind: KindPatch, ID: id}
 		case WizardReplaceFind:
 			a = Action{Kind: KindReplace, ID: id}
+		case WizardLines:
+			a = Action{Kind: KindLines, ID: id}
+		case WizardDoc:
+			a = Action{Kind: KindGetDoc, ID: id}
 		default:
 			a = Action{Kind: KindRename, ID: id}
 		}
@@ -275,8 +301,20 @@ func (m *Manager) Submit(kind string, id int, text string, opts Options) Result 
 			Screen: promptScreen("🔎 Find: "+code(trunc(text, 60))+"\n\nNow send the replacement text (send `"+EmptyReplacement+"` to delete the matches).", cancel),
 			Prompt: &Prompt{Kind: WizardReplaceWith, ID: id, CancelData: cancel, Data: text},
 		}
+	case WizardLines:
+		lr, err := m.ApplyLineEdits(id, text)
+		if err != nil {
+			msg := err
+			if r := []rune(msg.Error()); len(r) > 500 {
+				msg = errors.New(string(r[:500]) + "…")
+			}
+			return retry(msg)
+		}
+		opts.Notice = fmt.Sprintf("🧮 Edited %d block(s): +%d −%d", lr.Blocks, lr.Added, lr.Removed)
+		opts.Numbers = true
+		return Result{Screen: withUndo(m.File(id, 0, opts), lr.Seq)}
 	case WizardPatch:
-		pr, err := m.ApplyPatch(text)
+		pr, err := m.ApplyPatchOrBlocks(text)
 		if err != nil {
 			msg := err
 			if r := []rune(msg.Error()); len(r) > 500 {
@@ -378,4 +416,33 @@ func withUndo(s Screen, seq int) Screen {
 	row := []Button{{Text: "↩ Undo", CallbackData: cbSimple(KindUndo, seq)}}
 	s.Rows = append([][]Button{row}, s.Rows...)
 	return s
+}
+
+// ApplyPatchOrBlocks applies a unified diff, or — when the text is not a diff
+// — whole files given as "File: path" blocks.
+func (m *Manager) ApplyPatchOrBlocks(text string) (PatchResult, error) {
+	if _, perr := ParsePatch(text); perr != nil {
+		if blocks, berr := ParseFileBlocks(text); berr == nil {
+			return m.ApplyFileBlocks(blocks)
+		}
+		return PatchResult{}, perr
+	}
+	return m.ApplyPatch(text)
+}
+
+// SubmitDoc replaces a file with the edited document the owner sent back.
+func (m *Manager) SubmitDoc(id int, data []byte, opts Options) Result {
+	if !opts.AllowWrite {
+		opts.Notice = "🔒 Editing is disabled in plan mode."
+		return Result{Screen: m.File(id, 0, opts)}
+	}
+	seq, err := m.ReplaceWholeFile(id, data)
+	if err != nil {
+		p := m.prompt(Action{Kind: KindGetDoc, ID: id})
+		p.Screen.Text = "⚠️ " + err.Error() + "\n\n" + p.Screen.Text
+		p.Retry = true
+		return p
+	}
+	opts.Notice = "✅ File replaced with your edited copy"
+	return Result{Screen: withUndo(m.File(id, 0, opts), seq)}
 }

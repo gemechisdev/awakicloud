@@ -33,6 +33,8 @@ type Options struct {
 	AllowWrite bool
 	// Notice is a one-line status shown above the content.
 	Notice string
+	// Numbers renders file content with line numbers (no syntax colouring).
+	Numbers bool
 }
 
 // Result is what handling one callback produces.
@@ -92,6 +94,9 @@ func (m *Manager) Handle(a Action, opts Options) Result {
 		return Result{Screen: m.Dir(a.ID, a.Arg, opts)}
 	case KindFile:
 		return Result{Screen: m.File(a.ID, a.Arg, opts)}
+	case KindFileNum:
+		opts.Numbers = true
+		return Result{Screen: m.File(a.ID, a.Arg, opts)}
 	case KindCopy:
 		abs, err := m.Resolve(a.ID)
 		if err != nil {
@@ -143,12 +148,22 @@ func (m *Manager) Handle(a Action, opts Options) Result {
 		}
 		opts.Notice = b.String()
 		return Result{Screen: m.Dir(0, 0, opts)}
-	case KindNewDir, KindNewFile, KindRename, KindUpload, KindReplace, KindPatch:
+	case KindNewDir, KindNewFile, KindRename, KindUpload, KindReplace, KindPatch, KindLines, KindGetDoc:
 		if !opts.AllowWrite {
 			opts.Notice = "🔒 Creating and renaming are disabled in plan mode."
 			return Result{Screen: m.File(a.ID, 0, opts)}
 		}
-		return m.prompt(a)
+		r := m.prompt(a)
+		if a.Kind == KindGetDoc && r.Prompt != nil {
+			if abs, err := m.Resolve(a.ID); err == nil {
+				if st, err := os.Stat(abs); err == nil && st.Size() > 0 && st.Size() <= MaxSendBytes {
+					r.SendPath, r.SendCaption = abs, m.Rel(abs)
+				} else if err == nil && st.Size() == 0 {
+					r.Screen.Text += "\n\n(The file is empty, so there is nothing to send — just upload your new version.)"
+				}
+			}
+		}
+		return r
 	case KindDelAsk:
 		if !opts.AllowDelete {
 			opts.Notice = "🔒 Delete is disabled in plan mode."
@@ -315,6 +330,16 @@ func gridRows(cells []Button) [][]Button {
 	return rows
 }
 
+// numberLines prefixes each line of text (starting at first) with its number.
+func numberLines(text string, first, last int) string {
+	w := len(fmt.Sprintf("%d", last))
+	ls := strings.Split(text, "\n")
+	for i := range ls {
+		ls[i] = fmt.Sprintf("%*d│ %s", w, first+i, ls[i])
+	}
+	return strings.Join(ls, "\n")
+}
+
 func entryLine(e Entry) string {
 	switch {
 	case e.Outside:
@@ -377,7 +402,11 @@ func (m *Manager) File(id, line int, opts Options) Screen {
 	case pg.Empty:
 		b.WriteString("(empty file)\n")
 	default:
-		b.WriteString("```" + Lang(filepath.Base(abs)) + "\n" + pg.Text + "\n```\n")
+		body, lang := pg.Text, Lang(filepath.Base(abs))
+		if opts.Numbers {
+			body, lang = numberLines(pg.Text, pg.First, pg.Last), ""
+		}
+		b.WriteString("```" + lang + "\n" + body + "\n```\n")
 	}
 
 	var rows [][]Button
@@ -385,18 +414,27 @@ func (m *Manager) File(id, line int, opts Options) Screen {
 	if len(rel) <= maxCopyText {
 		copyBtn.CopyText = rel
 	}
-	reload := cbFile(self, 0)
+	cbF := cbFile
+	if opts.Numbers {
+		cbF = cbFileN
+	}
+	reload := cbF(self, 0)
 	if pg.First > 1 {
-		reload = cbFile(self, pg.First)
+		reload = cbF(self, pg.First)
 	}
 	rows = append(rows, []Button{copyBtn, {Text: "🔄 Reload", CallbackData: reload}, {Text: "📤 Send file", CallbackData: cbSimple(KindSend, self)}})
-	if !pg.Binary && !pg.Empty && (pg.First > 1 || pg.More) {
+	if !pg.Binary && !pg.Empty {
 		var paging []Button
+		toggle := Button{Text: "🔢 Lines", CallbackData: cbFileN(self, pg.First)}
+		if opts.Numbers {
+			toggle = Button{Text: "🔢 Off", CallbackData: cbFile(self, pg.First)}
+		}
+		paging = append(paging, toggle)
 		if pg.First > 1 {
-			paging = append(paging, Button{Text: "⏮ Start", CallbackData: cbFile(self, 0)})
+			paging = append(paging, Button{Text: "⏮ Start", CallbackData: cbF(self, 0)})
 		}
 		if pg.More {
-			paging = append(paging, Button{Text: "⬇ More", CallbackData: cbFile(self, pg.Next)})
+			paging = append(paging, Button{Text: "⬇ More", CallbackData: cbF(self, pg.Next)})
 		}
 		rows = append(rows, paging)
 	}
@@ -408,7 +446,10 @@ func (m *Manager) File(id, line int, opts Options) Screen {
 	last := []Button{}
 	if opts.AllowWrite {
 		if !pg.Binary {
-			rows = append(rows, []Button{{Text: "🔎 Replace", CallbackData: cbSimple(KindReplace, self)}, {Text: "🩹 Apply patch", CallbackData: cbSimple(KindPatch, self)}})
+			rows = append(rows,
+				[]Button{{Text: "🔎 Replace", CallbackData: cbSimple(KindReplace, self)}, {Text: "🧮 Edit lines", CallbackData: cbSimple(KindLines, self)}},
+				[]Button{{Text: "🩹 Apply patch", CallbackData: cbSimple(KindPatch, self)}, {Text: "📝 Edit as file", CallbackData: cbSimple(KindGetDoc, self)}},
+			)
 		}
 		last = append(last, Button{Text: "✏️ Rename", CallbackData: cbSimple(KindRename, self)})
 	}
