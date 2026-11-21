@@ -58,6 +58,10 @@ type Manager struct {
 	nodes map[int]string
 	ids   map[string]int
 	next  int
+
+	// undo history for edits (upload / replace / patch); see undo.go.
+	undo    []undoGroup
+	undoSeq int
 }
 
 // New returns an empty manager. Call SetRoot before use.

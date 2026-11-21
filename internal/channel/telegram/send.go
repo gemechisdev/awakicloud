@@ -326,15 +326,18 @@ func (c *Channel) sendRichScreen(ctx context.Context, chatID int64, markdownText
 		if editMsgID > 0 {
 			err := c.client.EditRichMessage(ctx, chatID, editMsgID, "html", body, isRTL)
 			if err != nil {
+				if isNotModified(err) {
+					return editMsgID, nil // same content (e.g. Refresh): nothing to do
+				}
 				log.Warn().Err(err).Int("msg_id", editMsgID).Msg("telegram: edit rich screen failed, falling back")
-				return c.sendScreenPlain(ctx, chatID, bodyHTML, rows, editMsgID)
+				return c.sendScreenPlain(ctx, chatID, classicHTML(markdownText), rows, editMsgID)
 			}
 			return editMsgID, nil
 		}
 		id, err := c.client.SendRichMessage(ctx, chatID, "html", body, isRTL, false)
 		if err != nil {
 			log.Warn().Err(err).Msg("telegram: send rich screen failed, falling back")
-			return c.sendScreenPlain(ctx, chatID, bodyHTML, rows, editMsgID)
+			return c.sendScreenPlain(ctx, chatID, classicHTML(markdownText), rows, editMsgID)
 		}
 		return id, nil
 	}
@@ -342,10 +345,27 @@ func (c *Channel) sendRichScreen(ctx context.Context, chatID int64, markdownText
 	// Short content — classic inline keyboard with already-converted HTML
 	_ = bodyPlain
 	if editMsgID > 0 {
-		_, err := c.sendScreenPlain(ctx, chatID, bodyHTML, rows, editMsgID)
+		_, err := c.sendScreenPlain(ctx, chatID, classicHTML(markdownText), rows, editMsgID)
 		return editMsgID, err
 	}
-	return c.sendScreenPlain(ctx, chatID, bodyHTML, rows, editMsgID)
+	return c.sendScreenPlain(ctx, chatID, classicHTML(markdownText), rows, editMsgID)
+}
+
+// isNotModified reports Telegram's harmless "message is not modified" error,
+// returned when an edit would not change the message.
+func isNotModified(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "message is not modified")
+}
+
+// classicHTML converts Markdown to HTML that the classic parse_mode=HTML API
+// accepts. Rich HTML (<p>, <table>, <tg-*>) is NOT valid there, so the
+// fallback paths must never reuse it.
+func classicHTML(md string) string {
+	md = rich.ConvertMathMarkdown(md)
+	if chunks := format.FormatHTMLChunks(md, 3800); len(chunks) > 0 && chunks[0].HTML != "" {
+		return chunks[0].HTML
+	}
+	return rich.EscapeHTML(md)
 }
 
 // sendScreenPlain falls back to legacy inline keyboard for short messages.
@@ -371,6 +391,9 @@ func (c *Channel) sendScreenPlain(ctx context.Context, chatID int64, html string
 			err = c.client.EditMessageWithKeyboard(ctx, chatID, editMsgID, html, models.ParseModeHTML, kbRows)
 		} else {
 			err = c.client.EditMessage(ctx, chatID, editMsgID, html, models.ParseModeHTML)
+		}
+		if err != nil && isNotModified(err) {
+			return editMsgID, nil
 		}
 		if err != nil {
 			log.Warn().Err(err).Int("msg_id", editMsgID).Msg("telegram: edit plain screen failed")

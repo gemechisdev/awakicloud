@@ -122,7 +122,28 @@ func (m *Manager) Handle(a Action, opts Options) Result {
 			return errResult(fmt.Errorf("file is %s — over Telegram's %s upload limit", HumanSize(st.Size()), HumanSize(MaxSendBytes)))
 		}
 		return Result{NoScreen: true, SendPath: abs, SendCaption: m.Rel(abs)}
-	case KindNewDir, KindNewFile, KindRename:
+	case KindUndo:
+		if !opts.AllowWrite {
+			opts.Notice = "🔒 Undo is disabled in plan mode."
+			return Result{Screen: m.Dir(0, 0, opts)}
+		}
+		restored, err := m.Undo(a.ID)
+		if err != nil {
+			opts.Notice = "⚠️ " + err.Error()
+			return Result{Screen: m.Dir(0, 0, opts)}
+		}
+		var b strings.Builder
+		b.WriteString("↩ Undone:")
+		for i, r := range restored {
+			if i == 8 {
+				fmt.Fprintf(&b, " … +%d more", len(restored)-8)
+				break
+			}
+			b.WriteString(" " + code(r))
+		}
+		opts.Notice = b.String()
+		return Result{Screen: m.Dir(0, 0, opts)}
+	case KindNewDir, KindNewFile, KindRename, KindUpload, KindReplace, KindPatch:
 		if !opts.AllowWrite {
 			opts.Notice = "🔒 Creating and renaming are disabled in plan mode."
 			return Result{Screen: m.File(a.ID, 0, opts)}
@@ -257,6 +278,10 @@ func (m *Manager) Dir(id, page int, opts Options) Screen {
 			w = append(w, Button{Text: "✏️ Rename", CallbackData: cbSimple(KindRename, self)})
 		}
 		rows = append(rows, w)
+		rows = append(rows, []Button{
+			{Text: "⬆️ Upload here", CallbackData: cbSimple(KindUpload, self)},
+			{Text: "🩹 Apply patch", CallbackData: cbSimple(KindPatch, self)},
+		})
 	}
 	var nav2 []Button
 	if abs != root {
@@ -382,6 +407,9 @@ func (m *Manager) File(id, line int, opts Options) Screen {
 	})
 	last := []Button{}
 	if opts.AllowWrite {
+		if !pg.Binary {
+			rows = append(rows, []Button{{Text: "🔎 Replace", CallbackData: cbSimple(KindReplace, self)}, {Text: "🩹 Apply patch", CallbackData: cbSimple(KindPatch, self)}})
+		}
 		last = append(last, Button{Text: "✏️ Rename", CallbackData: cbSimple(KindRename, self)})
 	}
 	if opts.AllowDelete {

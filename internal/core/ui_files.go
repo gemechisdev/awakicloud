@@ -103,7 +103,11 @@ func (e *Engine) applyFilesResult(ctx context.Context, msg channel.Message, res 
 		_ = msg.Reply.SendText(ctx, "📋 `"+strings.ReplaceAll(res.Copy, "`", "'")+"`")
 	}
 	if res.Prompt != nil {
-		e.ui.set(&uiWizard{Kind: res.Prompt.Kind, Step: "name", Draft: map[string]string{"id": strconv.Itoa(res.Prompt.ID)}})
+		draft := map[string]string{"id": strconv.Itoa(res.Prompt.ID)}
+		if res.Prompt.Data != "" {
+			draft["find"] = res.Prompt.Data
+		}
+		e.ui.set(&uiWizard{Kind: res.Prompt.Kind, Step: "input", Draft: draft})
 	}
 	if res.SendPath != "" && msg.Reply != nil {
 		if err := msg.Reply.SendFile(ctx, res.SendPath, "📄 "+res.SendCaption); err != nil {
@@ -115,7 +119,8 @@ func (e *Engine) applyFilesResult(ctx context.Context, msg channel.Message, res 
 	}
 }
 
-// wizardFiles completes a new-file / new-folder / rename prompt.
+// wizardFiles completes one step of a file-manager prompt (new file/folder,
+// rename, upload, find & replace, patch).
 func (e *Engine) wizardFiles(ctx context.Context, msg channel.Message, w *uiWizard, text string) bool {
 	id, err := strconv.Atoi(w.Draft["id"])
 	e.ui.clear()
@@ -127,11 +132,32 @@ func (e *Engine) wizardFiles(ctx context.Context, msg channel.Message, w *uiWiza
 		e.deliverFileScreen(ctx, msg, filemgr.ErrorScreen(perr))
 		return true
 	}
-	res := fm.Submit(w.Kind, id, text, opts)
-	e.applyFilesResult(ctx, msg, res)
-	if res.Retry && res.Prompt == nil { // defensive: keep the prompt open
-		e.ui.set(w)
+	var res filemgr.Result
+	switch w.Kind {
+	case filemgr.WizardUpload:
+		ups := make([]filemgr.Upload, 0, len(msg.Attachments))
+		for _, a := range msg.Attachments {
+			ups = append(ups, filemgr.Upload{Name: a.Filename, Data: a.Data})
+		}
+		if len(ups) == 0 {
+			// Nothing attached: keep waiting, remind what is expected.
+			p := fm.Handle(filemgr.Action{Kind: filemgr.KindUpload, ID: id}, opts)
+			p.Screen.Text = "⚠️ I need a file (send it as a document).\n\n" + p.Screen.Text
+			e.applyFilesResult(ctx, msg, p)
+			return true
+		}
+		res = fm.SubmitUpload(id, ups, opts)
+	case filemgr.WizardPatch:
+		if len(msg.Attachments) > 0 {
+			text = string(msg.Attachments[0].Data)
+		}
+		res = fm.Submit(w.Kind, id, text, opts)
+	case filemgr.WizardReplaceWith:
+		res = fm.SubmitReplace(id, w.Draft["find"], text, opts)
+	default:
+		res = fm.Submit(w.Kind, id, text, opts)
 	}
+	e.applyFilesResult(ctx, msg, res)
 	return true
 }
 

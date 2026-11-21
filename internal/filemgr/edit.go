@@ -13,6 +13,11 @@ const (
 	WizardNewDir  = "files_newdir"
 	WizardNewFile = "files_newfile"
 	WizardRename  = "files_rename"
+
+	WizardUpload      = "files_upload"
+	WizardReplaceFind = "files_replace_find"
+	WizardReplaceWith = "files_replace_with"
+	WizardPatch       = "files_patch"
 )
 
 // Prompt asks the engine to collect one line of text from the owner.
@@ -20,6 +25,7 @@ type Prompt struct {
 	Kind       string // Wizard* constant
 	ID         int    // folder id (new*) or item id (rename)
 	CancelData string // callback_data of the Cancel button
+	Data       string // carried value (the "find" text between the replace steps)
 }
 
 // ValidateName checks one path segment.
@@ -179,6 +185,32 @@ func (m *Manager) prompt(a Action) Result {
 			Screen: promptScreen("✏️ **Rename** "+code(m.Rel(abs))+"\n\nSend the new name (just the name, no slashes).", cancel),
 			Prompt: &Prompt{Kind: WizardRename, ID: self, CancelData: cancel},
 		}
+	case KindReplace:
+		if st, err := os.Stat(abs); err != nil || st.IsDir() {
+			return errResult(errors.New("open a file first, then tap Replace"))
+		}
+		self := m.touch(abs)
+		cancel := cbFile(self, 0)
+		return Result{
+			Screen: promptScreen("🔎 **Replace in** "+code(m.Rel(abs))+"\n\nSend the text to find (case-sensitive). Start with `re:` for a regular expression.", cancel),
+			Prompt: &Prompt{Kind: WizardReplaceFind, ID: self, CancelData: cancel},
+		}
+	case KindUpload, KindPatch:
+		if st, err := os.Stat(abs); err == nil && !st.IsDir() {
+			abs = filepath.Dir(abs)
+		}
+		self := m.touch(abs)
+		cancel := cbDir(self, 0)
+		if a.Kind == KindUpload {
+			return Result{
+				Screen: promptScreen("⬆️ **Upload to** "+code(m.Display(abs))+"\n\nSend one or more files as documents. Files with the same name are replaced (↩ Undo stays available).", cancel),
+				Prompt: &Prompt{Kind: WizardUpload, ID: self, CancelData: cancel},
+			}
+		}
+		return Result{
+			Screen: promptScreen("🩹 **Apply patch**\n\nPaste a unified diff or upload a `.patch` file. Paths start at the workspace root (git `a/…` `b/…` or plain). All hunks must match, otherwise nothing is changed.", cancel),
+			Prompt: &Prompt{Kind: WizardPatch, ID: self, CancelData: cancel},
+		}
 	default:
 		if st, err := os.Stat(abs); err == nil && !st.IsDir() {
 			abs = filepath.Dir(abs)
@@ -215,6 +247,12 @@ func (m *Manager) Submit(kind string, id int, text string, opts Options) Result 
 			a = Action{Kind: KindNewDir, ID: id}
 		case WizardNewFile:
 			a = Action{Kind: KindNewFile, ID: id}
+		case WizardUpload:
+			a = Action{Kind: KindUpload, ID: id}
+		case WizardPatch:
+			a = Action{Kind: KindPatch, ID: id}
+		case WizardReplaceFind:
+			a = Action{Kind: KindReplace, ID: id}
 		default:
 			a = Action{Kind: KindRename, ID: id}
 		}
@@ -224,6 +262,30 @@ func (m *Manager) Submit(kind string, id int, text string, opts Options) Result 
 		return p
 	}
 	switch kind {
+	case WizardReplaceFind:
+		if strings.TrimSpace(text) == "" {
+			return retry(errors.New("nothing to find"))
+		}
+		abs, err := m.Resolve(id)
+		if err != nil {
+			return errResult(err)
+		}
+		cancel := cbFile(m.touch(abs), 0)
+		return Result{
+			Screen: promptScreen("🔎 Find: "+code(trunc(text, 60))+"\n\nNow send the replacement text (send `"+EmptyReplacement+"` to delete the matches).", cancel),
+			Prompt: &Prompt{Kind: WizardReplaceWith, ID: id, CancelData: cancel, Data: text},
+		}
+	case WizardPatch:
+		pr, err := m.ApplyPatch(text)
+		if err != nil {
+			msg := err
+			if r := []rune(msg.Error()); len(r) > 500 {
+				msg = errors.New(string(r[:500]) + "…")
+			}
+			return retry(msg)
+		}
+		opts.Notice = patchNotice(pr)
+		return Result{Screen: withUndo(m.Dir(0, 0, opts), pr.Seq)}
 	case WizardNewDir, WizardNewFile:
 		name, content := text, ""
 		if i := strings.IndexByte(text, '\n'); i >= 0 {
@@ -248,4 +310,72 @@ func (m *Manager) Submit(kind string, id int, text string, opts Options) Result 
 		return Result{Screen: m.File(id, 0, opts)}
 	}
 	return errResult(fmt.Errorf("unknown prompt %q", kind))
+}
+
+// SubmitReplace runs the second replace step (find text came from the first).
+func (m *Manager) SubmitReplace(id int, find, with string, opts Options) Result {
+	if !opts.AllowWrite {
+		opts.Notice = "🔒 Editing is disabled in plan mode."
+		return Result{Screen: m.File(id, 0, opts)}
+	}
+	n, seq, err := m.ReplaceInFile(id, find, with)
+	if err != nil {
+		opts.Notice = "⚠️ " + err.Error()
+		return Result{Screen: m.File(id, 0, opts)}
+	}
+	opts.Notice = fmt.Sprintf("✅ Replaced %d occurrence(s) of %s", n, code(trunc(find, 40)))
+	return Result{Screen: withUndo(m.File(id, 0, opts), seq)}
+}
+
+// SubmitUpload saves received files into folder id.
+func (m *Manager) SubmitUpload(id int, ups []Upload, opts Options) Result {
+	if !opts.AllowWrite {
+		opts.Notice = "🔒 Uploading is disabled in plan mode."
+		return Result{Screen: m.Dir(id, 0, opts)}
+	}
+	saved, seq, err := m.SaveUploads(id, ups)
+	if err != nil {
+		p := m.prompt(Action{Kind: KindUpload, ID: id})
+		p.Screen.Text = "⚠️ " + err.Error() + "\n\n" + p.Screen.Text
+		p.Retry = true
+		return p
+	}
+	var b strings.Builder
+	b.WriteString("✅ Saved ")
+	for i, s := range saved {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		if i == 5 {
+			fmt.Fprintf(&b, "and %d more", len(saved)-5)
+			break
+		}
+		b.WriteString(code(s))
+	}
+	opts.Notice = b.String()
+	return Result{Screen: withUndo(m.Dir(id, 0, opts), seq)}
+}
+
+func patchNotice(pr PatchResult) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "🩹 Patched %d file(s):", len(pr.Files))
+	for i, f := range pr.Files {
+		if i == 8 {
+			fmt.Fprintf(&b, "\n… and %d more", len(pr.Files)-8)
+			break
+		}
+		icon := map[string]string{"created": "🆕", "deleted": "🗑", "modified": "✏️"}[f.Action]
+		fmt.Fprintf(&b, "\n%s %s +%d −%d", icon, code(f.Path), f.Added, f.Removed)
+	}
+	return b.String()
+}
+
+// withUndo puts an ↩ Undo button on top of a screen after an edit.
+func withUndo(s Screen, seq int) Screen {
+	if seq == 0 {
+		return s
+	}
+	row := []Button{{Text: "↩ Undo", CallbackData: cbSimple(KindUndo, seq)}}
+	s.Rows = append([][]Button{row}, s.Rows...)
+	return s
 }

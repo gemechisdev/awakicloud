@@ -17,6 +17,10 @@ const (
 	KindSend    = "send"    // files:send:<id>    send the file itself
 	KindNewDir  = "newdir"  // files:newdir:<id>  prompt: new folder in <id>
 	KindNewFile = "newfile" // files:newfile:<id> prompt: new file in <id>
+	KindUpload  = "upl"     // files:upl:<id>     prompt: upload files into folder <id>
+	KindReplace = "repl"    // files:repl:<id>    prompt: find & replace in file <id>
+	KindPatch   = "patch"   // files:patch:<id>   prompt: apply a unified diff
+	KindUndo    = "undo"    // files:undo:<seq>   revert an edit
 	KindRename  = "ren"     // files:ren:<id>     prompt: rename <id>
 	maxCbNumber = 1<<31 - 1
 )
@@ -42,7 +46,7 @@ func ParseCallback(data string) (Action, error) {
 	switch a.Kind {
 	case KindDir, KindFile:
 		// optional third segment
-	case KindCopy, KindEdit, KindDelAsk, KindDelete, KindSend, KindNewDir, KindNewFile, KindRename:
+	case KindCopy, KindEdit, KindDelAsk, KindDelete, KindSend, KindNewDir, KindNewFile, KindRename, KindUpload, KindReplace, KindPatch, KindUndo:
 		if len(parts) != 2 {
 			return Action{}, fmt.Errorf("malformed files callback %q", data)
 		}

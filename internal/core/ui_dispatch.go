@@ -69,6 +69,9 @@ func (e *Engine) handleUICallback(ctx context.Context, msg channel.Message) bool
 			e.ui.clear()
 			return false
 		}
+		if strings.HasPrefix(w.Kind, "files_") {
+			return e.wizardFiles(ctx, msg, w, text)
+		}
 		if w.Kind == "import" && w.Step == "wait_file" && len(msg.Attachments) > 0 {
 			return e.tryImportAttachment(ctx, msg)
 		}

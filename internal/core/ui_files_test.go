@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/gemechischala/awaki/internal/channel"
+	"github.com/gemechischala/awaki/internal/transport"
 	"github.com/gemechischala/awaki/internal/workspace"
 )
 
@@ -186,5 +187,78 @@ func TestFilesSendUploadsFile(t *testing.T) {
 	h.tap(callbackFor(t, h.ch.last(), "files:send:"))
 	if len(h.rep.files) != 1 || h.rep.files[0] != filepath.Join(root, "main.go") {
 		t.Fatalf("uploaded = %v", h.rep.files)
+	}
+}
+
+func TestFilesUploadReplacePatchUndoFlows(t *testing.T) {
+	h, root := filesHarness(t)
+	h.tap("files:d:0")
+
+	// upload: a document message is consumed by the wizard
+	h.tap("files:upl:0")
+	if w := h.e.ui.get(); w == nil || w.Kind != "files_upload" {
+		t.Fatalf("upload wizard not open: %+v", w)
+	}
+	h.say2(channel.Message{Text: "[File: notes.txt]\n```\nhello\n```", Attachments: []transport.Attachment{{Filename: "notes.txt", Data: []byte("hello\n")}}})
+	if b, err := os.ReadFile(filepath.Join(root, "notes.txt")); err != nil || string(b) != "hello\n" {
+		t.Fatalf("upload not saved: %q %v", b, err)
+	}
+	undo := callbackFor(t, h.ch.last(), "files:undo:")
+	h.tap(undo)
+	if _, err := os.Stat(filepath.Join(root, "notes.txt")); !os.IsNotExist(err) {
+		t.Fatal("undo should remove the uploaded file")
+	}
+
+	// a text message while waiting for a file keeps the prompt open
+	h.tap("files:upl:0")
+	h.tap("just words")
+	if h.e.ui.get() == nil || !strings.Contains(h.ch.last().Text, "need a file") {
+		t.Fatalf("expected reminder:\n%s", h.ch.last().Text)
+	}
+	h.tap("files:d:0") // cancel via navigation
+
+	// find & replace (two steps)
+	h.tap("files:f:" + idOf(t, h, "main.go"))
+	h.tap(callbackFor(t, h.ch.last(), "files:repl:"))
+	h.tap("package main")
+	if w := h.e.ui.get(); w == nil || w.Kind != "files_replace_with" || w.Draft["find"] != "package main" {
+		t.Fatalf("second step not armed: %+v", w)
+	}
+	h.tap("package app")
+	if b, _ := os.ReadFile(filepath.Join(root, "main.go")); string(b) != "package app\n" {
+		t.Fatalf("replace failed: %q", b)
+	}
+
+	// patch via a .patch attachment
+	h.tap("files:d:0")
+	h.tap("files:patch:0")
+	patch := "--- a/main.go\n+++ b/main.go\n@@ -1 +1 @@\n-package app\n+package core\n"
+	h.say2(channel.Message{Text: "[File: x.patch]", Attachments: []transport.Attachment{{Filename: "x.patch", Data: []byte(patch)}}})
+	if b, _ := os.ReadFile(filepath.Join(root, "main.go")); string(b) != "package core\n" {
+		t.Fatalf("patch failed: %q", b)
+	}
+	if !strings.Contains(h.ch.last().Text, "Patched 1 file") {
+		t.Fatalf("summary:\n%s", h.ch.last().Text)
+	}
+}
+
+func idOf(t *testing.T, h *harness, name string) string {
+	t.Helper()
+	for _, b := range buttons(h.ch.last()) {
+		if strings.Contains(b.Text, name) && strings.HasPrefix(b.CallbackData, "files:f:") {
+			return strings.TrimPrefix(b.CallbackData, "files:f:")
+		}
+	}
+	t.Fatalf("no button for %s: %+v", name, buttons(h.ch.last()))
+	return ""
+}
+
+// say2 delivers a full message (text + attachments) through the UI router.
+func (h *harness) say2(in channel.Message) {
+	h.t.Helper()
+	m := h.msg()
+	m.Text, m.Attachments = in.Text, in.Attachments
+	if !h.e.handleUICallback(h.ctx, m) {
+		h.t.Fatalf("message %q was not handled", in.Text)
 	}
 }
